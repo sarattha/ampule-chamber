@@ -42,7 +42,7 @@ The initial MVP focuses on one service deployed into AKS or local Kubernetes.
 ## Repository Layout
 
 ```text
-ampule-chambe/
+ampule-chamber/
 ├── docs/
 │   └── internal/
 │       └── PROJECT_DESIGN.md
