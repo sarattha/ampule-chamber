@@ -30,21 +30,17 @@ The core question every phase should serve is:
 - Do not skip evaluation metrics or acceptance criteria. If a criterion cannot
   be met yet, record the blocker in the active phase plan.
 
-## Relayna Gateway Skill Guidance
+## Karpathy Skill Guidance
 
-When work needs patterns, operating assumptions, or compatibility guidance from
-the local Relayna Gateway repository, use the `karpathy` skill from:
+When work needs Karpathy-inspired engineering discipline, use the repo-local
+`karpathy` skill from:
 
 ```text
-/Users/jobz/Works/relayna-gateway/.codex/skills/karpathy
+.codex/skills/karpathy
 ```
 
 If a task or prompt refers to this as `karparthy`, treat that as the same local
-skill unless a separate `karparthy` directory is later added. If the skill is
-not present in the local Relayna Gateway checkout, note that explicitly in the
-handoff and continue with the closest available Relayna Gateway repository
-guidance. Do not modify the Relayna Gateway repository unless the user asks for
-it.
+skill unless a separate `karparthy` directory is later added.
 
 ## Phase Map
 
