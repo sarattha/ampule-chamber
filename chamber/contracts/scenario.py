@@ -206,8 +206,17 @@ def validate_scenario_document(document: dict[str, Any], *, source: str = "<memo
     )
 
     safety = _mapping(document["safety"], f"{source}.safety")
+    _require_keys(
+        safety,
+        {"maxDuration", "maxVirtualUsers", "productionContextAllowed"},
+        f"{source}.safety",
+    )
     _require_non_empty_string(safety.get("maxDuration"), f"{source}.safety.maxDuration")
     _require_non_empty_string(safety.get("maxVirtualUsers"), f"{source}.safety.maxVirtualUsers")
+    _require_bool(
+        safety.get("productionContextAllowed"),
+        f"{source}.safety.productionContextAllowed",
+    )
 
 
 def _validate_conditions(value: Any, allowed_types: set[str], path: str) -> None:
@@ -258,6 +267,11 @@ def _string_list(value: Any, path: str) -> None:
 def _require_non_empty_string(value: Any, path: str) -> None:
     if not isinstance(value, str) or not value.strip():
         raise ScenarioValidationError(f"{path}: expected non-empty string")
+
+
+def _require_bool(value: Any, path: str) -> None:
+    if not isinstance(value, bool):
+        raise ScenarioValidationError(f"{path}: expected boolean")
 
 
 def _require_enum(value: Any, allowed: set[str], path: str) -> None:

@@ -23,7 +23,7 @@ The executable parser and validation rules live in
 | `observability` | Signals required to evaluate the scenario. |
 | `failureConditions` | Structured conditions that make the service risky or the scenario fail. |
 | `successConditions` | Structured conditions required for acceptable behavior. |
-| `safety` | Maximum duration, load budget, and production-context guardrail. |
+| `safety` | Maximum duration, load budget, and explicit production-context guardrail. |
 
 ## MVP Vocabularies
 
@@ -97,4 +97,8 @@ Success condition types:
   and success conditions must be non-empty lists.
 - Traffic stages must include `duration` and non-negative `targetVus`.
 - Condition and signal types must come from the MVP vocabularies above.
-- Safety must include `maxDuration` and `maxVirtualUsers`.
+- Safety must include `maxDuration`, `maxVirtualUsers`, and
+  `productionContextAllowed`.
+- `safety.productionContextAllowed` must be an explicit boolean. The MVP
+  fixtures set it to `false`; later intake code must treat `true` as requiring
+  a deliberate production-context approval path.

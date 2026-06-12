@@ -110,6 +110,19 @@ class ScenarioContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ScenarioValidationError, "traffic.tool"):
             validate_scenario_document(scenario)
 
+    def test_safety_requires_explicit_production_context_boolean(self) -> None:
+        scenario = load_scenario(SCENARIO_DIR / "baseline-health.yaml").document
+        del scenario["safety"]["productionContextAllowed"]
+
+        with self.assertRaisesRegex(ScenarioValidationError, "productionContextAllowed"):
+            validate_scenario_document(scenario)
+
+        scenario = load_scenario(SCENARIO_DIR / "baseline-health.yaml").document
+        scenario["safety"]["productionContextAllowed"] = "false"
+
+        with self.assertRaisesRegex(ScenarioValidationError, "expected boolean"):
+            validate_scenario_document(scenario)
+
     def test_vocabularies_include_docker_and_load_tools(self) -> None:
         self.assertIn("docker", ENVIRONMENT_PROVIDERS)
         self.assertIn("kind", ENVIRONMENT_PROVIDERS)
