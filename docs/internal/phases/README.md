@@ -24,6 +24,7 @@ agent.
 6. `phase-06-live-manual-chamber-mvp`
 7. `phase-07-agent-assisted-analysis`
 8. `phase-08-expanded-fault-injection-recovery`
+9. `phase-09-multi-service-chamber`
 
 Phases may overlap during exploration, but acceptance criteria should be closed
 in order so later work has stable contracts to build on.
