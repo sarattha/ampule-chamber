@@ -57,6 +57,9 @@ telemetry.
       dependency-failure traffic/fault/timeline plan.
 - [x] Installed k6 locally and captured real Docker-backed k6 smoke and
       dependency-fault evidence in `artifacts/live-k6-results.md`.
+- [x] Addressed PR review findings by materializing generated fault manifests
+      before `kubectl apply` and using a local port-forward target for host-run
+      k6 plans.
 
 ## Surprises And Discoveries
 
@@ -88,8 +91,12 @@ telemetry.
 - Traffic plans now expose staged VU configuration, target URL, generated k6
   script text, runner command, summary path, total duration, and expected
   result metrics including request count, error rate, p95, and p99 latency.
+- Host-run k6 traffic plans now target deterministic `127.0.0.1` ports and
+  include `kubectl port-forward` setup and cleanup commands for kind services.
 - The dependency-failure scenario produces a reversible fault plan with
   explicit inject/remove commands and timeline events at 120 and 180 seconds.
+- Dependency fault plans now write the generated `NetworkPolicy` manifest into
+  the phase artifact directory before returning apply/delete commands.
 - Experiment timelines are structured enough for phase 04 observability and
   phase 05 reporting to correlate runtime evidence against traffic and fault
   windows.
@@ -104,7 +111,7 @@ telemetry.
   - `make format` passes.
   - `make lint` passes.
   - `make typecheck` passes.
-  - `make test` passes 33 tests.
+  - `make test` passes 37 tests.
   - `make validate-scenarios` validates all five scenario files.
   - `make check` passes format, lint, typecheck, tests, 90% coverage,
     scenario validation, and package build.

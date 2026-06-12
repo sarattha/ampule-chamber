@@ -5,9 +5,13 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
+from hashlib import sha1
 from pathlib import Path
 from typing import Any, Protocol
+from urllib.error import URLError
+from urllib.request import urlopen
 
 from chamber.contracts.scenario import Scenario
 from chamber.environment import EnvironmentMetadata
@@ -47,6 +51,8 @@ class TrafficPlan:
     script_path: str
     summary_path: str
     command: tuple[str, ...]
+    port_forward_command: tuple[str, ...]
+    port_forward_cleanup_command: tuple[str, ...]
     script: str
     result_fields: tuple[str, ...]
 
@@ -101,7 +107,13 @@ class K6TrafficAdapter:
         script_path = artifact_path / f"{scenario.scenario_id}-k6.js"
         summary_path = artifact_path / f"{scenario.scenario_id}-k6-summary.json"
         stages = _traffic_stages(scenario)
-        target_url = _target_url(scenario, environment=environment)
+        service_name = environment.resource_names.get(
+            "service",
+            str(scenario.document["target"]["service"]["name"]),
+        )
+        service_port = _service_port(scenario)
+        local_port = _local_forward_port(scenario.scenario_id, environment.run_id)
+        target_url = _target_url(scenario, local_port=local_port)
         script = _k6_script(stages=stages, target_url=target_url)
         command = (
             "k6",
@@ -109,6 +121,19 @@ class K6TrafficAdapter:
             "--summary-export",
             str(summary_path),
             str(script_path),
+        )
+        port_forward_command = (
+            "kubectl",
+            "-n",
+            environment.namespace,
+            "port-forward",
+            f"service/{service_name}",
+            f"{local_port}:{service_port}",
+        )
+        port_forward_cleanup_command = (
+            "pkill",
+            "-f",
+            " ".join(port_forward_command),
         )
         return TrafficPlan(
             run_id=environment.run_id,
@@ -120,6 +145,8 @@ class K6TrafficAdapter:
             script_path=str(script_path),
             summary_path=str(summary_path),
             command=command,
+            port_forward_command=port_forward_command,
+            port_forward_cleanup_command=port_forward_cleanup_command,
             script=script,
             result_fields=RESULT_FIELDS,
         )
@@ -138,20 +165,24 @@ class K6TrafficAdapter:
         script_path = Path(plan.script_path)
         script_path.parent.mkdir(parents=True, exist_ok=True)
         script_path.write_text(plan.script, encoding="utf-8")
-        completed = subprocess.run(
-            plan.command,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        return TrafficExecutionResult(
-            success=completed.returncode == 0,
-            command=plan.command,
-            exit_status=completed.returncode,
-            stdout=completed.stdout,
-            stderr=completed.stderr,
-            error=None if completed.returncode == 0 else "k6 exited with a non-zero status.",
-        )
+        port_forward = _start_port_forward(plan)
+        try:
+            completed = subprocess.run(
+                plan.command,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            return TrafficExecutionResult(
+                success=completed.returncode == 0,
+                command=plan.command,
+                exit_status=completed.returncode,
+                stdout=completed.stdout,
+                stderr=completed.stderr,
+                error=None if completed.returncode == 0 else "k6 exited with a non-zero status.",
+            )
+        finally:
+            _stop_port_forward(port_forward)
 
 
 def plan_traffic(
@@ -255,13 +286,65 @@ def _traffic_stages(scenario: Scenario) -> tuple[TrafficStage, ...]:
     return tuple(stages)
 
 
-def _target_url(scenario: Scenario, *, environment: EnvironmentMetadata) -> str:
-    service = scenario.document["target"]["service"]
-    port = service["ports"][0]["port"]
+def _target_url(scenario: Scenario, *, local_port: int) -> str:
     entrypoint = str(scenario.document["traffic"]["entrypoint"])
     path = entrypoint if entrypoint.startswith("/") else f"/{entrypoint}"
-    service_name = environment.resource_names.get("service", str(service["name"]))
-    return f"http://{service_name}.{environment.namespace}.svc.cluster.local:{port}{path}"
+    return f"http://127.0.0.1:{local_port}{path}"
+
+
+def _service_port(scenario: Scenario) -> int:
+    return int(scenario.document["target"]["service"]["ports"][0]["port"])
+
+
+def _local_forward_port(scenario_id: str, run_id: str) -> int:
+    digest = sha1(f"{scenario_id}:{run_id}:k6".encode()).hexdigest()
+    return 20000 + (int(digest[:6], 16) % 10000)
+
+
+def _start_port_forward(plan: TrafficPlan) -> subprocess.Popen[str] | None:
+    if not plan.port_forward_command:
+        return None
+    if shutil.which("kubectl") is None:
+        raise TrafficPlanningError(
+            "kubectl executable was not found on PATH; install kubectl to port-forward "
+            "cluster services for local k6 execution."
+        )
+    process = subprocess.Popen(
+        plan.port_forward_command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    _wait_for_target(plan.target_url, process)
+    return process
+
+
+def _wait_for_target(target_url: str, process: subprocess.Popen[str]) -> None:
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            _, stderr = process.communicate()
+            raise TrafficPlanningError(
+                "kubectl port-forward exited before k6 could run: " + stderr.strip()
+            )
+        try:
+            with urlopen(target_url, timeout=0.5):
+                return
+        except (OSError, URLError):
+            time.sleep(0.2)
+    _stop_port_forward(process)
+    raise TrafficPlanningError(f"timed out waiting for port-forward target {target_url}")
+
+
+def _stop_port_forward(process: subprocess.Popen[str] | None) -> None:
+    if process is None or process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
 
 
 def _k6_script(*, stages: tuple[TrafficStage, ...], target_url: str) -> str:

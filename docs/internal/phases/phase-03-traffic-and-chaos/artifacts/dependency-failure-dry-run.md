@@ -6,7 +6,9 @@ Generated from `scenarios/dependency-failure.yaml` with run id
 ## Traffic
 
 - Target URL:
-  `http://sample-service-svc-ac334bed.chamber-local-dependency-failure-001-ac334bed.svc.cluster.local:8080/dependency`
+  `http://127.0.0.1:27038/dependency`
+- Port-forward:
+  `kubectl -n chamber-local-dependency-failure-001-ac334bed port-forward service/sample-service-svc-ac334bed 27038:8080`
 - Command:
   `k6 run --summary-export docs/internal/phases/phase-03-traffic-and-chaos/artifacts/dependency-failure-001-k6-summary.json docs/internal/phases/phase-03-traffic-and-chaos/artifacts/dependency-failure-001-k6.js`
 - Total duration: `420` seconds
@@ -19,6 +21,8 @@ Generated from `scenarios/dependency-failure.yaml` with run id
   from pods labeled with `chamber.ampule.dev/run-id=phase03-artifact`.
 - At `180` seconds: delete the same `NetworkPolicy` with
   `--ignore-not-found=true` so cleanup is explicit and reversible.
+- Manifest:
+  `docs/internal/phases/phase-03-traffic-and-chaos/artifacts/dependency-failure-001-deny-egress-downstream-api.yaml`
 
 ## Timeline
 

@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from chamber.contracts.scenario import Scenario
 from chamber.environment import EnvironmentMetadata
 from chamber.load.planning import parse_duration_seconds
@@ -28,6 +30,7 @@ class FaultAction:
     offset_seconds: int
     command: tuple[str, ...]
     manifest: dict[str, Any] | None = None
+    manifest_path: str | None = None
 
 
 @dataclass(frozen=True)
@@ -112,6 +115,7 @@ def _append_dependency_unavailable(
         namespace=environment.namespace,
         labels=environment.labels,
     )
+    _write_manifest(manifest_path, manifest)
     apply_command = ("kubectl", "apply", "-f", str(manifest_path))
     delete_command = ("kubectl", "delete", "-f", str(manifest_path), "--ignore-not-found=true")
     description = str(fault["description"])
@@ -125,6 +129,7 @@ def _append_dependency_unavailable(
                 offset_seconds=start_after,
                 command=apply_command,
                 manifest=manifest,
+                manifest_path=str(manifest_path),
             ),
             FaultAction(
                 action_type="remove",
@@ -133,6 +138,7 @@ def _append_dependency_unavailable(
                 offset_seconds=remove_at,
                 command=delete_command,
                 manifest=manifest,
+                manifest_path=str(manifest_path),
             ),
         )
     )
@@ -180,6 +186,11 @@ def _network_policy_manifest(
             "egress": [],
         },
     }
+
+
+def _write_manifest(path: Path, manifest: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
 
 
 def _duration_field(fault: dict[str, Any], key: str, *, index: int) -> int:
