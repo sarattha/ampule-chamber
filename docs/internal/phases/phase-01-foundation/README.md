@@ -29,3 +29,21 @@ observability, analysis, and reporting without redefining the core vocabulary.
   metadata.
 - Store exploratory sketches, schema examples, and notes in `artifacts/`.
 
+## Phase Outputs
+
+- Run lifecycle states and allowed transitions:
+  `artifacts/run-lifecycle.md` and `chamber/contracts/lifecycle.py`.
+- MVP scenario schema and validation rules:
+  `artifacts/scenario-schema.md` and `chamber/contracts/scenario.py`.
+- Package and module ownership:
+  `artifacts/package-ownership.md`.
+- Local setup, validation, test, and Docker sample-service commands:
+  `artifacts/local-development.md`.
+- Root quality commands for formatting, linting, type checking, tests,
+  coverage, scenario validation, and package build: `Makefile`.
+- Example scenarios:
+  `scenarios/baseline-health.yaml`, `scenarios/oom-stress.yaml`,
+  `scenarios/dependency-failure.yaml`, `scenarios/retry-storm.yaml`, and
+  `scenarios/soak-test.yaml`.
+- Docker-first sample service contract:
+  `examples/sample-service/`.

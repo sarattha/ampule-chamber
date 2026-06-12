@@ -1,0 +1,19 @@
+services:
+  sample-service:
+    build:
+      context: .
+    image: ampule/sample-service:local
+    ports:
+      - "8080:8080"
+    environment:
+      DOWNSTREAM_URL: http://downstream-api:8081
+    depends_on:
+      - downstream-api
+
+  downstream-api:
+    build:
+      context: .
+    image: ampule/sample-service:local
+    command: ["python", "/app/server.py", "--port", "8081", "--mode", "downstream"]
+    ports:
+      - "8081:8081"
