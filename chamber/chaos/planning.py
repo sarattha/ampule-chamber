@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,8 @@ from chamber.environment import EnvironmentMetadata
 from chamber.load.planning import parse_duration_seconds
 
 DEPENDENCY_UNAVAILABLE = "dependency_unavailable"
+DEPENDENCY_DEGRADATION = {"dependency_errors", "dependency_rate_limit"}
+MEMORY_PRESSURE = "memory_pressure"
 NO_FAULT = "none"
 
 
@@ -69,6 +72,28 @@ def plan_faults(
         fault_type = fault["type"]
         if fault_type == NO_FAULT:
             continue
+        if fault_type == MEMORY_PRESSURE:
+            _append_memory_pressure(
+                scenario,
+                fault,
+                index=index,
+                environment=environment,
+                actions=actions,
+                events=events,
+            )
+            continue
+        if fault_type in DEPENDENCY_DEGRADATION:
+            _append_dependency_unavailable(
+                scenario,
+                fault,
+                index=index,
+                environment=environment,
+                artifact_dir=Path(artifact_dir),
+                actions=actions,
+                events=events,
+                approximation=fault_type,
+            )
+            continue
         if fault_type != DEPENDENCY_UNAVAILABLE:
             raise FaultPlanningError(
                 f"faults[{index}].type: {fault_type!r} is reserved for a later phase"
@@ -101,6 +126,7 @@ def _append_dependency_unavailable(
     artifact_dir: Path,
     actions: list[FaultAction],
     events: list[FaultEvent],
+    approximation: str | None = None,
 ) -> None:
     target = fault.get("target")
     if not isinstance(target, str) or not target.strip():
@@ -109,6 +135,8 @@ def _append_dependency_unavailable(
     duration = _duration_field(fault, "duration", index=index)
     remove_at = start_after + duration
     policy_name = f"deny-egress-{_dns_fragment(target)}"
+    if approximation is not None:
+        policy_name = f"{policy_name}-{_dns_fragment(approximation)}"
     manifest_path = artifact_dir / f"{scenario.scenario_id}-{policy_name}.yaml"
     manifest = _network_policy_manifest(
         name=policy_name,
@@ -119,6 +147,11 @@ def _append_dependency_unavailable(
     apply_command = ("kubectl", "apply", "-f", str(manifest_path))
     delete_command = ("kubectl", "delete", "-f", str(manifest_path), "--ignore-not-found=true")
     description = str(fault["description"])
+    if approximation is not None:
+        description = (
+            f"{description} Approximated in phase 06 as egress denial; exact 500/429 "
+            "injection requires a future dependency workload or proxy."
+        )
 
     actions.extend(
         (
@@ -146,17 +179,148 @@ def _append_dependency_unavailable(
         (
             FaultEvent(
                 event_type="fault_start",
-                name=f"{target}-unavailable-start",
+                name=f"{target}-{approximation or 'unavailable'}-start",
                 offset_seconds=start_after,
                 description=description,
                 target=target,
             ),
             FaultEvent(
                 event_type="fault_removed",
-                name=f"{target}-unavailable-removed",
+                name=f"{target}-{approximation or 'unavailable'}-removed",
                 offset_seconds=remove_at,
                 description=f"{target} dependency-unavailable fault removed.",
                 target=target,
+            ),
+        )
+    )
+
+
+def _append_memory_pressure(
+    scenario: Scenario,
+    fault: dict[str, Any],
+    *,
+    index: int,
+    environment: EnvironmentMetadata,
+    actions: list[FaultAction],
+    events: list[FaultEvent],
+) -> None:
+    start_after = _optional_duration_field(fault, "startAfter", index=index, default=0)
+    duration = _optional_duration_field(
+        fault,
+        "duration",
+        index=index,
+        default=_scenario_max_duration(scenario),
+    )
+    remove_at = start_after + duration
+    deployment = environment.resource_names["deployment"]
+    namespace = environment.namespace
+    service = scenario.document["target"]["service"]
+    container_name = str(service["name"])
+    resources = scenario.document["environment"]["resources"]
+    pressure_patch = json.dumps(
+        {
+            "spec": {
+                "template": {
+                    "spec": {
+                        "containers": [
+                            {
+                                "name": container_name,
+                                "resources": {
+                                    "requests": {
+                                        "cpu": str(resources["cpuRequest"]),
+                                        "memory": "64Mi",
+                                    },
+                                    "limits": {
+                                        "cpu": str(resources["cpuLimit"]),
+                                        "memory": "96Mi",
+                                    },
+                                },
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+    )
+    restore_patch = json.dumps(
+        {
+            "spec": {
+                "template": {
+                    "spec": {
+                        "containers": [
+                            {
+                                "name": container_name,
+                                "resources": {
+                                    "requests": {
+                                        "cpu": str(resources["cpuRequest"]),
+                                        "memory": str(resources["memoryRequest"]),
+                                    },
+                                    "limits": {
+                                        "cpu": str(resources["cpuLimit"]),
+                                        "memory": str(resources["memoryLimit"]),
+                                    },
+                                },
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+    )
+    description = str(fault["description"])
+    actions.extend(
+        (
+            FaultAction(
+                action_type="inject",
+                name="inject-memory-pressure",
+                description=description,
+                offset_seconds=start_after,
+                command=(
+                    "kubectl",
+                    "-n",
+                    namespace,
+                    "patch",
+                    "deployment",
+                    deployment,
+                    "--type=merge",
+                    "-p",
+                    pressure_patch,
+                ),
+            ),
+            FaultAction(
+                action_type="remove",
+                name="remove-memory-pressure",
+                description="Restore the sample-service memory limit after pressure window.",
+                offset_seconds=remove_at,
+                command=(
+                    "kubectl",
+                    "-n",
+                    namespace,
+                    "patch",
+                    "deployment",
+                    deployment,
+                    "--type=merge",
+                    "-p",
+                    restore_patch,
+                ),
+            ),
+        )
+    )
+    events.extend(
+        (
+            FaultEvent(
+                event_type="fault_start",
+                name="memory-pressure-start",
+                offset_seconds=start_after,
+                description=description,
+                target=deployment,
+            ),
+            FaultEvent(
+                event_type="fault_removed",
+                name="memory-pressure-removed",
+                offset_seconds=remove_at,
+                description="Memory pressure patch removed.",
+                target=deployment,
             ),
         )
     )
@@ -198,6 +362,28 @@ def _duration_field(fault: dict[str, Any], key: str, *, index: int) -> int:
         return parse_duration_seconds(fault.get(key))
     except ValueError as exc:
         raise FaultPlanningError(f"faults[{index}].{key}: {exc}") from exc
+
+
+def _optional_duration_field(
+    fault: dict[str, Any],
+    key: str,
+    *,
+    index: int,
+    default: int,
+) -> int:
+    if key not in fault:
+        return default
+    return _duration_field(fault, key, index=index)
+
+
+def _scenario_max_duration(scenario: Scenario) -> int:
+    safety = scenario.document.get("safety")
+    if not isinstance(safety, dict):
+        return 0
+    try:
+        return parse_duration_seconds(safety.get("maxDuration"))
+    except ValueError as exc:
+        raise FaultPlanningError(f"safety.maxDuration: {exc}") from exc
 
 
 def _faults(scenario: Scenario) -> tuple[dict[str, Any], ...]:

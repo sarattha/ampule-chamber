@@ -203,7 +203,7 @@ class Phase03ChaosPlanningTests(unittest.TestCase):
         self.assertEqual(plan.actions, ())
         self.assertEqual(plan.events, ())
 
-    def test_invalid_and_reserved_fault_definitions_are_reported(self) -> None:
+    def test_invalid_fault_definitions_are_reported(self) -> None:
         scenario = load_scenario(SCENARIO_DIR / "dependency-failure.yaml")
         environment = plan_environment(scenario, run_id="phase03-test").metadata
         del scenario.document["faults"][0]["target"]
@@ -212,10 +212,25 @@ class Phase03ChaosPlanningTests(unittest.TestCase):
             with TemporaryDirectory() as artifact_dir:
                 plan_faults(scenario, environment=environment, artifact_dir=artifact_dir)
 
+    def test_phase06_fault_mappings_cover_current_mvp_scenarios(self) -> None:
         scenario = load_scenario(SCENARIO_DIR / "oom-stress.yaml")
-        with self.assertRaisesRegex(FaultPlanningError, "reserved for a later phase"):
-            with TemporaryDirectory() as artifact_dir:
-                plan_faults(scenario, environment=environment, artifact_dir=artifact_dir)
+        environment = plan_environment(scenario, run_id="phase03-test").metadata
+        with TemporaryDirectory() as artifact_dir:
+            plan = plan_faults(scenario, environment=environment, artifact_dir=artifact_dir)
+        self.assertEqual([action.action_type for action in plan.actions], ["inject", "remove"])
+        self.assertEqual(
+            plan.actions[0].command[:4], ("kubectl", "-n", environment.namespace, "patch")
+        )
+
+        scenario = load_scenario(SCENARIO_DIR / "retry-storm.yaml")
+        environment = plan_environment(scenario, run_id="phase03-test").metadata
+        with TemporaryDirectory() as artifact_dir:
+            plan = plan_faults(scenario, environment=environment, artifact_dir=artifact_dir)
+        self.assertEqual(
+            [event.event_type for event in plan.events],
+            ["fault_start", "fault_removed", "fault_start", "fault_removed"],
+        )
+        self.assertIn("Approximated in phase 06", plan.actions[0].description)
 
 
 class Phase03TimelineTests(unittest.TestCase):
