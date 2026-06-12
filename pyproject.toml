@@ -1,0 +1,48 @@
+[build-system]
+requires = ["uv_build>=0.11.10,<0.12.0"]
+build-backend = "uv_build"
+
+[project]
+name = "ampule-chamber"
+version = "0.2.0"
+description = "Agent-driven reliability testing chamber contracts and MVP tooling."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "PyYAML>=6.0.2",
+]
+
+[project.optional-dependencies]
+dev = []
+
+[dependency-groups]
+dev = [
+  "coverage>=7.10.0",
+  "mypy>=1.17.0",
+  "ruff>=0.12.0",
+  "types-PyYAML>=6.0.12.20250516",
+]
+
+[tool.uv.build-backend]
+module-name = "chamber"
+module-root = ""
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["chamber", "scripts", "tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["chamber"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 90

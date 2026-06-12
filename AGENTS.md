@@ -86,5 +86,13 @@ it.
 - Add tests when implementation changes behavior.
 - Use real command output, Kubernetes events, logs, metrics, or fixture data as
   evidence for reports and acceptance notes.
+- Before creating a PR, always bump the project version using SemVer format.
+  Keep the version change scoped to the package or metadata files that define
+  the project version.
+- Before creating a PR, always run `make check` and verify it completes with no
+  errors. Do not create the PR if any format, lint, typecheck, test, coverage,
+  scenario validation, or build step fails.
+- After a PR is created, always run `make clean` to remove local build and
+  coverage artifacts.
 - For docs-only changes, a structural check such as `find docs/internal/phases
   -maxdepth 3 -type f | sort` is sufficient unless the user requests more.

@@ -1,0 +1,35 @@
+apiVersion: chamber.ampule.dev/v1alpha1
+kind: SampleServiceContract
+metadata:
+  name: sample-service
+  description: Docker-first target contract for phase 01 scenario fixtures.
+runtime:
+  provider: docker
+  composeFile: examples/sample-service/docker-compose.yml
+service:
+  name: sample-service
+  image: ampule/sample-service:local
+  port: 8080
+  healthEndpoint: /healthz
+  readinessEndpoint: /readyz
+  userJourneys:
+    - name: health
+      method: GET
+      path: /healthz
+      expectedStatus: 200
+    - name: work
+      method: GET
+      path: /work
+      expectedStatus: 200
+    - name: dependency
+      method: GET
+      path: /dependency
+      expectedStatus: 200
+dependencies:
+  - name: downstream-api
+    type: http
+    endpoint: http://downstream-api:8081
+observability:
+  logs: stdout
+  metrics: not-yet-implemented
+  traces: not-yet-implemented
