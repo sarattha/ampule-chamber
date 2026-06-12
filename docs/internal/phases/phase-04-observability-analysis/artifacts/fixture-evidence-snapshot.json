@@ -1,0 +1,41 @@
+{
+  "run_id": "phase04-test",
+  "scenario_id": "oom-stress-001",
+  "evidence": [
+    {
+      "source": "kubernetes",
+      "signal_type": "pod_status",
+      "resource": "sample-service-abc",
+      "facts": [
+        "lastState.terminated.reason=OOMKilled",
+        "state.waiting.reason=CrashLoopBackOff",
+        "restartCount=4"
+      ]
+    },
+    {
+      "source": "prometheus",
+      "signal_type": "memory_usage",
+      "resource": "target-pods",
+      "value": 94
+    },
+    {
+      "source": "prometheus",
+      "signal_type": "cpu_throttling",
+      "resource": "target-pods",
+      "value": 22
+    },
+    {
+      "source": "k6",
+      "signal_type": "traffic_summary",
+      "resource": "live-dependency-fault-k6-summary.json",
+      "http_failure_rate_percent": 47.98534798534799
+    }
+  ],
+  "expected_findings": [
+    "oom_killed",
+    "restart_loop",
+    "memory_usage",
+    "cpu_throttling",
+    "error_rate"
+  ]
+}
