@@ -212,7 +212,7 @@ class Phase03ChaosPlanningTests(unittest.TestCase):
             with TemporaryDirectory() as artifact_dir:
                 plan_faults(scenario, environment=environment, artifact_dir=artifact_dir)
 
-    def test_phase06_fault_mappings_cover_current_mvp_scenarios(self) -> None:
+    def test_phase06_fault_mappings_cover_supported_current_mvp_scenarios(self) -> None:
         scenario = load_scenario(SCENARIO_DIR / "oom-stress.yaml")
         environment = plan_environment(scenario, run_id="phase03-test").metadata
         with TemporaryDirectory() as artifact_dir:
@@ -225,12 +225,8 @@ class Phase03ChaosPlanningTests(unittest.TestCase):
         scenario = load_scenario(SCENARIO_DIR / "retry-storm.yaml")
         environment = plan_environment(scenario, run_id="phase03-test").metadata
         with TemporaryDirectory() as artifact_dir:
-            plan = plan_faults(scenario, environment=environment, artifact_dir=artifact_dir)
-        self.assertEqual(
-            [event.event_type for event in plan.events],
-            ["fault_start", "fault_removed", "fault_start", "fault_removed"],
-        )
-        self.assertIn("Approximated in phase 06", plan.actions[0].description)
+            with self.assertRaisesRegex(FaultPlanningError, "reserved for a later phase"):
+                plan_faults(scenario, environment=environment, artifact_dir=artifact_dir)
 
 
 class Phase03TimelineTests(unittest.TestCase):

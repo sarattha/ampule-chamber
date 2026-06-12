@@ -14,7 +14,6 @@ from chamber.environment import EnvironmentMetadata
 from chamber.load.planning import parse_duration_seconds
 
 DEPENDENCY_UNAVAILABLE = "dependency_unavailable"
-DEPENDENCY_DEGRADATION = {"dependency_errors", "dependency_rate_limit"}
 MEMORY_PRESSURE = "memory_pressure"
 NO_FAULT = "none"
 
@@ -82,18 +81,6 @@ def plan_faults(
                 events=events,
             )
             continue
-        if fault_type in DEPENDENCY_DEGRADATION:
-            _append_dependency_unavailable(
-                scenario,
-                fault,
-                index=index,
-                environment=environment,
-                artifact_dir=Path(artifact_dir),
-                actions=actions,
-                events=events,
-                approximation=fault_type,
-            )
-            continue
         if fault_type != DEPENDENCY_UNAVAILABLE:
             raise FaultPlanningError(
                 f"faults[{index}].type: {fault_type!r} is reserved for a later phase"
@@ -126,7 +113,6 @@ def _append_dependency_unavailable(
     artifact_dir: Path,
     actions: list[FaultAction],
     events: list[FaultEvent],
-    approximation: str | None = None,
 ) -> None:
     target = fault.get("target")
     if not isinstance(target, str) or not target.strip():
@@ -135,8 +121,6 @@ def _append_dependency_unavailable(
     duration = _duration_field(fault, "duration", index=index)
     remove_at = start_after + duration
     policy_name = f"deny-egress-{_dns_fragment(target)}"
-    if approximation is not None:
-        policy_name = f"{policy_name}-{_dns_fragment(approximation)}"
     manifest_path = artifact_dir / f"{scenario.scenario_id}-{policy_name}.yaml"
     manifest = _network_policy_manifest(
         name=policy_name,
@@ -147,11 +131,6 @@ def _append_dependency_unavailable(
     apply_command = ("kubectl", "apply", "-f", str(manifest_path))
     delete_command = ("kubectl", "delete", "-f", str(manifest_path), "--ignore-not-found=true")
     description = str(fault["description"])
-    if approximation is not None:
-        description = (
-            f"{description} Approximated in phase 06 as egress denial; exact 500/429 "
-            "injection requires a future dependency workload or proxy."
-        )
 
     actions.extend(
         (
@@ -179,14 +158,14 @@ def _append_dependency_unavailable(
         (
             FaultEvent(
                 event_type="fault_start",
-                name=f"{target}-{approximation or 'unavailable'}-start",
+                name=f"{target}-unavailable-start",
                 offset_seconds=start_after,
                 description=description,
                 target=target,
             ),
             FaultEvent(
                 event_type="fault_removed",
-                name=f"{target}-{approximation or 'unavailable'}-removed",
+                name=f"{target}-unavailable-removed",
                 offset_seconds=remove_at,
                 description=f"{target} dependency-unavailable fault removed.",
                 target=target,

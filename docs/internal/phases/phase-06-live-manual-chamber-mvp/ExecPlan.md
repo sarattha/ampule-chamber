@@ -77,8 +77,10 @@ and emits an evidence-backed markdown report.
 - [x] Reused the phase 02 environment plan for Namespace, Deployment, Service,
       readiness, and cleanup metadata.
 - [x] Reused the phase 03 k6 traffic plan with exact scenario durations and VUs.
-- [x] Added phase 06 Kubernetes-primitive fault mappings for memory pressure,
-      dependency errors, and dependency rate limiting.
+- [x] Added phase 06 Kubernetes-primitive fault mappings for memory pressure
+      and dependency-unavailable faults.
+- [x] Gated dependency error and rate-limit scenarios from live runs until a
+      downstream dependency workload or fault proxy exists.
 - [x] Required live Prometheus reachability before live actions.
 - [x] Wired Kubernetes, Prometheus, and k6 evidence into phase 04 analysis.
 - [x] Rendered live reports through the phase 05 markdown report contracts.
@@ -90,15 +92,16 @@ and emits an evidence-backed markdown report.
 
 ## Surprises And Discoveries
 
-- The initial phase 06 README proposed a narrow baseline path, but the
-  implementation request expanded the phase boundary to all current MVP
-  scenarios with exact durations and VUs.
+- The initial phase 06 README proposed a narrow baseline path, while the
+  implementation request explored all current MVP scenarios with exact
+  durations and VUs. Review showed dependency response fault scenarios need
+  dependency/proxy provisioning before live execution can be evidence-backed.
 - Existing fault planning treated `memory_pressure`, `dependency_errors`, and
-  `dependency_rate_limit` as reserved. Phase 06 maps these to Kubernetes
-  primitives so every current scenario can produce a live plan.
+  `dependency_rate_limit` as reserved. Phase 06 maps `memory_pressure` to a
+  Kubernetes resource patch but keeps dependency response faults gated.
 - `memory_pressure` has no explicit timing fields in `oom-stress.yaml`, so the
   live mapping starts at offset 0 and restores after `safety.maxDuration`.
-- Dependency 500/429 and rate-limit behavior cannot be represented exactly with
+- Dependency 500/429 and rate-limit behavior cannot be represented with
   Kubernetes primitives alone because no downstream dependency workload or
   fault proxy exists yet.
 - Exporting the live runner from `chamber.orchestrator.__init__` created a
@@ -124,8 +127,8 @@ and emits an evidence-backed markdown report.
 - Chose exact scenario durations and VUs, including long soak and high-VU
   scenarios, instead of a smoke scaling override.
 - Chose Kubernetes-primitives-only live fault support for phase 06.
-- Chose to approximate dependency error and rate-limit faults as scoped network
-  degradation and report that limitation explicitly.
+- Chose to refuse dependency error and rate-limit live scenarios until the
+  chamber provisions a downstream dependency workload or fault proxy.
 - Chose automatic cleanup by default, with `--retain` and `--retain-on-failure`
   for debugging.
 
@@ -140,8 +143,7 @@ and emits an evidence-backed markdown report.
   - `kubectl`, `kind`, `docker`, and `k6` are installed on `PATH`.
   - `docker exec ampule-chamber-control-plane crictl images -q
     ampule/sample-service:local` returns image ids.
-  - `PROMETHEUS_URL` is not set, so the required live all-scenarios run was
-    not attempted.
+  - `PROMETHEUS_URL` is not set, so live scenario execution was not attempted.
   - `env -u PROMETHEUS_URL uv run ampule-chamber run --scenario
     scenarios/baseline-health.yaml --output
     docs/internal/phases/phase-06-live-manual-chamber-mvp/artifacts/live-baseline-report.md`

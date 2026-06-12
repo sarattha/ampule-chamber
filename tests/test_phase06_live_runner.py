@@ -34,8 +34,76 @@ class FakeRunner:
         self.commands.append(command)
         return self.responses.get(command, _completed(command, returncode=0))
 
-    def popen(self, command: tuple[str, ...]) -> subprocess.Popen[str]:
+    def popen(
+        self,
+        command: tuple[str, ...],
+        *,
+        stdout: object | None = subprocess.PIPE,
+        stderr: object | None = subprocess.PIPE,
+    ) -> subprocess.Popen[str]:
         raise AssertionError(f"unexpected popen call: {command}")
+
+
+class FakeProcess:
+    def __init__(self, *, returncode: int = 0, polls: list[int | None] | None = None) -> None:
+        self.returncode = returncode
+        self.polls = polls or [0]
+        self.terminated = False
+        self.killed = False
+
+    def poll(self) -> int | None:
+        if len(self.polls) > 1:
+            return self.polls.pop(0)
+        return self.polls[0]
+
+    def wait(self, timeout: float | None = None) -> int:
+        return self.returncode
+
+    def terminate(self) -> None:
+        self.terminated = True
+        self.returncode = -15
+        self.polls = [-15]
+
+    def kill(self) -> None:
+        self.killed = True
+        self.returncode = -9
+        self.polls = [-9]
+
+    def communicate(self) -> tuple[str, str]:
+        return ("", "")
+
+
+class TrafficRunner:
+    def __init__(self, *, fault_returncode: int = 0) -> None:
+        self.fault_returncode = fault_returncode
+        self.port_forward = FakeProcess(returncode=0, polls=[None])
+        traffic_polls: list[int | None] = [None] if fault_returncode else [None, 0]
+        self.traffic = FakeProcess(returncode=0, polls=traffic_polls)
+        self.popen_stdout: list[object | None] = []
+        self.commands: list[tuple[str, ...]] = []
+
+    def run(
+        self,
+        command: tuple[str, ...],
+        *,
+        input_text: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        self.commands.append(command)
+        return _completed(command, returncode=self.fault_returncode, stderr="fault failed")
+
+    def popen(
+        self,
+        command: tuple[str, ...],
+        *,
+        stdout: object | None = subprocess.PIPE,
+        stderr: object | None = subprocess.PIPE,
+    ) -> subprocess.Popen[str]:
+        self.popen_stdout.append(stdout)
+        if command and command[0] == "k6":
+            if hasattr(stdout, "write"):
+                stdout.write("k6 output\n")
+            return self.traffic  # type: ignore[return-value]
+        return self.port_forward  # type: ignore[return-value]
 
 
 class Phase06SafetyTests(unittest.TestCase):
@@ -126,8 +194,14 @@ class Phase06RunnerWiringTests(unittest.TestCase):
         self.assertFalse(live.should_cleanup(retain=False, retain_on_failure=True, success=False))
         self.assertTrue(live.should_cleanup(retain=False, retain_on_failure=True, success=True))
 
-    def test_report_wiring_includes_live_evidence_cleanup_and_limitations(self) -> None:
+    def test_live_runner_gates_dependency_response_faults(self) -> None:
         scenario = load_scenario(SCENARIO_DIR / "retry-storm.yaml")
+
+        with self.assertRaisesRegex(live.LiveRunError, "does not provision"):
+            live._validate_live_fault_support(scenario)
+
+    def test_report_wiring_includes_live_evidence_cleanup_and_limitations(self) -> None:
+        scenario = load_scenario(SCENARIO_DIR / "dependency-failure.yaml")
         environment = plan_environment(scenario, run_id="phase06-test").metadata
         with TemporaryDirectory() as artifact_dir:
             traffic_plan = plan_traffic(
@@ -151,7 +225,7 @@ class Phase06RunnerWiringTests(unittest.TestCase):
             )
             report = live._report_input(
                 scenario=scenario,
-                scenario_path=SCENARIO_DIR / "retry-storm.yaml",
+                scenario_path=SCENARIO_DIR / "dependency-failure.yaml",
                 environment=environment,
                 traffic_plan=traffic_plan,
                 traffic_result=TrafficExecutionResult(
@@ -198,10 +272,72 @@ class Phase06RunnerWiringTests(unittest.TestCase):
 
         markdown = render_markdown_report(report)
 
-        self.assertIn("retry-storm-001", markdown)
+        self.assertIn("dependency-failure-001", markdown)
         self.assertIn("phase06-test:kubernetes:pod_status:ns", markdown)
-        self.assertIn("Dependency error and rate-limit faults are approximated", markdown)
+        self.assertIn("No phase-specific limitations recorded", markdown)
         self.assertIn("Cleanup completed", markdown)
+
+    def test_traffic_execution_redirects_k6_output_away_from_pipes(self) -> None:
+        scenario = load_scenario(SCENARIO_DIR / "baseline-health.yaml")
+        environment = plan_environment(scenario, run_id="phase06-test").metadata
+        with TemporaryDirectory() as artifact_dir:
+            traffic_plan = plan_traffic(
+                scenario,
+                environment=environment,
+                artifact_dir=artifact_dir,
+            )
+            fault_plan = plan_faults(
+                scenario,
+                environment=environment,
+                artifact_dir=artifact_dir,
+            )
+            runner = TrafficRunner()
+            with (
+                patch("chamber.orchestrator.live.shutil.which", return_value="/usr/bin/k6"),
+                patch("chamber.orchestrator.live._wait_for_target"),
+            ):
+                result = live._execute_traffic_with_faults(
+                    traffic_plan,
+                    fault_plan=fault_plan,
+                    runner=runner,
+                    commands=[],
+                )
+
+        self.assertTrue(result.success)
+        self.assertIn("k6 output", result.stdout)
+        self.assertIs(subprocess.PIPE, runner.popen_stdout[0])
+        self.assertIsNot(subprocess.PIPE, runner.popen_stdout[1])
+
+    def test_traffic_process_stops_when_fault_action_fails(self) -> None:
+        scenario = load_scenario(SCENARIO_DIR / "dependency-failure.yaml")
+        environment = plan_environment(scenario, run_id="phase06-test").metadata
+        with TemporaryDirectory() as artifact_dir:
+            traffic_plan = plan_traffic(
+                scenario,
+                environment=environment,
+                artifact_dir=artifact_dir,
+            )
+            fault_plan = plan_faults(
+                scenario,
+                environment=environment,
+                artifact_dir=artifact_dir,
+            )
+            runner = TrafficRunner(fault_returncode=1)
+            with (
+                patch("chamber.orchestrator.live.shutil.which", return_value="/usr/bin/k6"),
+                patch("chamber.orchestrator.live._wait_for_target"),
+                patch("chamber.orchestrator.live.time.monotonic", side_effect=[0.0, 999.0]),
+            ):
+                with self.assertRaisesRegex(live.LiveRunError, "fault failed"):
+                    live._execute_traffic_with_faults(
+                        traffic_plan,
+                        fault_plan=fault_plan,
+                        runner=runner,
+                        commands=[],
+                    )
+
+        self.assertTrue(runner.traffic.terminated)
+        self.assertTrue(runner.port_forward.terminated)
 
 
 def _completed(

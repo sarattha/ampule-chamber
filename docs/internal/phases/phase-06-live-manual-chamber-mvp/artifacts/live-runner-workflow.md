@@ -22,12 +22,11 @@ uv run ampule-chamber run \
   --output docs/internal/phases/phase-06-live-manual-chamber-mvp/artifacts/live-baseline-report.md
 ```
 
-Run all current MVP scenarios:
+Run all live-supported scenarios one at a time:
 
 ```bash
-PROMETHEUS_URL=http://localhost:9090 \
 uv run ampule-chamber run \
-  --all-scenarios \
+  --scenario scenarios/dependency-failure.yaml \
   --output-dir docs/internal/phases/phase-06-live-manual-chamber-mvp/artifacts
 ```
 
@@ -49,9 +48,10 @@ Each scenario writes:
 
 `dependency_unavailable` uses a chamber-scoped `NetworkPolicy` egress denial.
 
-`dependency_errors` and `dependency_rate_limit` are approximated as Kubernetes
-network degradation. Exact 500/429 response injection requires a future
-downstream dependency workload or fault proxy.
+`dependency_errors` and `dependency_rate_limit` are not live-supported in phase
+06. The runner refuses those scenarios before live Kubernetes actions because
+the chamber does not yet provision a downstream dependency workload or fault
+proxy for controlled 500/429 responses.
 
 `memory_pressure` patches the sample-service deployment memory limit for the
 scenario window and restores it afterward. It is not a general memory stress

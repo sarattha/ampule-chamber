@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import time
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -66,7 +67,13 @@ class CommandRunner(Protocol):
     ) -> subprocess.CompletedProcess[str]:
         """Run a command and return the completed process."""
 
-    def popen(self, command: tuple[str, ...]) -> subprocess.Popen[str]:
+    def popen(
+        self,
+        command: tuple[str, ...],
+        *,
+        stdout: Any | None = subprocess.PIPE,
+        stderr: Any | None = subprocess.PIPE,
+    ) -> subprocess.Popen[str]:
         """Start a long-running process."""
 
 
@@ -85,11 +92,17 @@ class SubprocessCommandRunner:
             text=True,
         )
 
-    def popen(self, command: tuple[str, ...]) -> subprocess.Popen[str]:  # pragma: no cover
+    def popen(  # pragma: no cover
+        self,
+        command: tuple[str, ...],
+        *,
+        stdout: Any | None = subprocess.PIPE,
+        stderr: Any | None = subprocess.PIPE,
+    ) -> subprocess.Popen[str]:
         return subprocess.Popen(
             command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stdout=stdout,
+            stderr=stderr,
             text=True,
         )
 
@@ -200,10 +213,12 @@ def run_live_scenarios(
     _require_current_context(options.context, command_runner)
     prometheus_url = _require_prometheus(options.prometheus_url)
     _verify_kind_image(options.context, options.image, command_runner)
+    scenarios = tuple((path, load_scenario(path)) for path in options.scenarios)
+    for _, scenario in scenarios:
+        _validate_live_fault_support(scenario)
 
     results = []
-    for scenario_path in options.scenarios:
-        scenario = load_scenario(scenario_path)
+    for scenario_path, scenario in scenarios:
         result = _run_one_scenario(
             scenario,
             scenario_path=scenario_path,
@@ -478,25 +493,41 @@ def _execute_traffic_with_faults(
     port_forward = runner.popen(traffic_plan.port_forward_command)
     try:
         _wait_for_target(traffic_plan.target_url, port_forward)
-        process = runner.popen(traffic_plan.command)
-        started = time.monotonic()
-        pending = list(sorted(fault_plan.actions, key=lambda action: action.offset_seconds))
-        while process.poll() is None:
-            elapsed = time.monotonic() - started
-            while pending and elapsed >= pending[0].offset_seconds:
-                action = pending.pop(0)
-                completed = _run_recorded(runner, action.command, commands)
-                _success(completed, action.description)
-            time.sleep(0.2)
-        stdout, stderr = process.communicate()
-        return TrafficExecutionResult(
-            success=process.returncode == 0,
-            command=traffic_plan.command,
-            exit_status=process.returncode,
-            stdout=stdout,
-            stderr=stderr,
-            error=None if process.returncode == 0 else "k6 exited with a non-zero status.",
-        )
+        with (
+            tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stdout_file,
+            tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stderr_file,
+        ):
+            process = runner.popen(
+                traffic_plan.command,
+                stdout=stdout_file,
+                stderr=stderr_file,
+            )
+            try:
+                started = time.monotonic()
+                pending = list(sorted(fault_plan.actions, key=lambda action: action.offset_seconds))
+                while process.poll() is None:
+                    elapsed = time.monotonic() - started
+                    while pending and elapsed >= pending[0].offset_seconds:
+                        action = pending.pop(0)
+                        completed = _run_recorded(runner, action.command, commands)
+                        _success(completed, action.description)
+                    time.sleep(0.2)
+            except Exception:
+                _stop_process(process)
+                raise
+            process.wait()
+            stdout_file.seek(0)
+            stderr_file.seek(0)
+            stdout = stdout_file.read()
+            stderr = stderr_file.read()
+            return TrafficExecutionResult(
+                success=process.returncode == 0,
+                command=traffic_plan.command,
+                exit_status=process.returncode,
+                stdout=stdout,
+                stderr=stderr,
+                error=None if process.returncode == 0 else "k6 exited with a non-zero status.",
+            )
     finally:
         _stop_process(port_forward)
 
@@ -591,6 +622,16 @@ def _require_tools(tools: tuple[str, ...]) -> None:  # pragma: no cover
     missing = [tool for tool in tools if shutil.which(tool) is None]
     if missing:
         raise LiveRunError("missing required executable(s): " + ", ".join(missing))
+
+
+def _validate_live_fault_support(scenario: Scenario) -> None:
+    unsupported = sorted(_dependency_response_faults(scenario))
+    if unsupported:
+        fault_list = ", ".join(unsupported)
+        raise LiveRunError(
+            f"{scenario.scenario_id} uses {fault_list}, but phase 06 does not provision "
+            "a downstream dependency or fault proxy for controlled 500/429 responses"
+        )
 
 
 def _report_input(
@@ -758,16 +799,11 @@ def _report_path(options: LiveRunOptions, scenario: Scenario, run_id: str) -> Pa
 
 def _scenario_limitations(scenario: Scenario) -> tuple[str, ...]:
     limitations = []
-    fault_types = {
-        str(fault.get("type"))
-        for fault in scenario.document.get("faults", [])
-        if isinstance(fault, dict)
-    }
-    if fault_types & {"dependency_errors", "dependency_rate_limit"}:
+    fault_types = _fault_types(scenario)
+    if _dependency_response_faults(scenario):
         limitations.append(
-            "Dependency error and rate-limit faults are approximated as Kubernetes "
-            "network degradation; exact 500/429 injection requires future dependency "
-            "workloads or a proxy."
+            "Dependency error and rate-limit faults require a future downstream dependency "
+            "workload or fault proxy before live execution."
         )
     if "memory_pressure" in fault_types:
         limitations.append(
@@ -775,6 +811,18 @@ def _scenario_limitations(scenario: Scenario) -> tuple[str, ...]:
             "sample service, not a general memory stress sidecar."
         )
     return tuple(limitations)
+
+
+def _dependency_response_faults(scenario: Scenario) -> set[str]:
+    return _fault_types(scenario) & {"dependency_errors", "dependency_rate_limit"}
+
+
+def _fault_types(scenario: Scenario) -> set[str]:
+    return {
+        str(fault.get("type"))
+        for fault in scenario.document.get("faults", [])
+        if isinstance(fault, dict)
+    }
 
 
 def _fault_summary(scenario: Scenario) -> str:
