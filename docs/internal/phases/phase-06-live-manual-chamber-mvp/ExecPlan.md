@@ -42,7 +42,7 @@ and emits an evidence-backed markdown report.
   status.
 - Kubernetes evidence includes pod status, events, logs, collection timestamps,
   resource identifiers, and run identifiers.
-- Missing Prometheus produces an explicit diagnostic evidence artifact.
+- Missing or unreachable Prometheus fails before live Kubernetes actions.
 - The generated report is based on live run metadata and evidence, not only a
   static fixture.
 - Cleanup removes chamber-owned resources in the normal success path.
@@ -68,11 +68,45 @@ and emits an evidence-backed markdown report.
 
 ## Progress
 
-- [ ] Phase directory created.
+- [x] Phase directory created.
+- [x] Reviewed phase 01-05 plans and artifacts before implementation.
+- [x] Defined the live runner CLI as `uv run ampule-chamber run`.
+- [x] Added required `kind-ampule-chamber` context safety checks.
+- [x] Added preloaded sample-service image verification for kind nodes.
+- [x] Implemented live kind orchestration for the current MVP scenarios.
+- [x] Reused the phase 02 environment plan for Namespace, Deployment, Service,
+      readiness, and cleanup metadata.
+- [x] Reused the phase 03 k6 traffic plan with exact scenario durations and VUs.
+- [x] Added phase 06 Kubernetes-primitive fault mappings for memory pressure
+      and dependency-unavailable faults.
+- [x] Gated dependency error and rate-limit scenarios from live runs until a
+      downstream dependency workload or fault proxy exists.
+- [x] Required live Prometheus reachability before live actions.
+- [x] Wired Kubernetes, Prometheus, and k6 evidence into phase 04 analysis.
+- [x] Rendered live reports through the phase 05 markdown report contracts.
+- [x] Added default cleanup plus retain and retain-on-failure options.
+- [x] Added focused unit tests for safety checks, image preflight, cleanup
+      decisions, report wiring, and current MVP fault mappings.
+- [x] Added a live workflow artifact describing prerequisites, command usage,
+      outputs, and limitations.
 
 ## Surprises And Discoveries
 
-- None yet.
+- The initial phase 06 README proposed a narrow baseline path, while the
+  implementation request explored all current MVP scenarios with exact
+  durations and VUs. Review showed dependency response fault scenarios need
+  dependency/proxy provisioning before live execution can be evidence-backed.
+- Existing fault planning treated `memory_pressure`, `dependency_errors`, and
+  `dependency_rate_limit` as reserved. Phase 06 maps `memory_pressure` to a
+  Kubernetes resource patch but keeps dependency response faults gated.
+- `memory_pressure` has no explicit timing fields in `oom-stress.yaml`, so the
+  live mapping starts at offset 0 and restores after `safety.maxDuration`.
+- Dependency 500/429 and rate-limit behavior cannot be represented with
+  Kubernetes primitives alone because no downstream dependency workload or
+  fault proxy exists yet.
+- Exporting the live runner from `chamber.orchestrator.__init__` created a
+  circular import through analysis contracts, so the console script points
+  directly at `chamber.orchestrator.live`.
 
 ## Decision Log
 
@@ -83,7 +117,43 @@ and emits an evidence-backed markdown report.
   the manual chamber MVP before agent-assisted analysis.
 - Chose the repository sample service as the first live target so phase 06 can
   validate existing contracts without requiring an external application.
+- Chose `codex/phase-06-live-manual-chamber-mvp` as the implementation branch.
+- Chose `kind-ampule-chamber` as the required safe live context. Other
+  contexts are refused by default.
+- Chose required externally provided Prometheus through `PROMETHEUS_URL`; the
+  runner does not install or configure Prometheus.
+- Chose preloaded image verification for `ampule/sample-service:local`; the
+  runner does not build or load images into kind.
+- Chose exact scenario durations and VUs, including long soak and high-VU
+  scenarios, instead of a smoke scaling override.
+- Chose Kubernetes-primitives-only live fault support for phase 06.
+- Chose to refuse dependency error and rate-limit live scenarios until the
+  chamber provisions a downstream dependency workload or fault proxy.
+- Chose automatic cleanup by default, with `--retain` and `--retain-on-failure`
+  for debugging.
 
 ## Outcomes And Retrospective
 
-- Pending.
+- Pending live execution with `kind-ampule-chamber`, preloaded
+  `ampule/sample-service:local`, `kubectl`, `kind`, `docker`, `k6`, and
+  reachable `PROMETHEUS_URL`.
+- Live prerequisite check on this machine:
+  - `kubectl config current-context` returns `kind-ampule-chamber`.
+  - `kind get clusters` includes `ampule-chamber`.
+  - `kubectl`, `kind`, `docker`, and `k6` are installed on `PATH`.
+  - `docker exec ampule-chamber-control-plane crictl images -q
+    ampule/sample-service:local` returns image ids.
+  - `PROMETHEUS_URL` is not set, so live scenario execution was not attempted.
+  - `env -u PROMETHEUS_URL uv run ampule-chamber run --scenario
+    scenarios/baseline-health.yaml --output
+    docs/internal/phases/phase-06-live-manual-chamber-mvp/artifacts/live-baseline-report.md`
+    fails cleanly with `error: PROMETHEUS_URL is required for phase 06 live
+    runs` before live Kubernetes actions.
+- Acceptance evidence recorded so far:
+  - `uv run python -m unittest tests/test_phase03_traffic_and_chaos.py
+    tests/test_phase06_live_runner.py` passes 18 focused tests.
+  - `make format` passes.
+  - `make lint` passes.
+  - `make typecheck` passes.
+  - `make check` passes format, lint, typecheck, 67 tests, 90% coverage,
+    scenario validation, and package build.
