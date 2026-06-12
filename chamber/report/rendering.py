@@ -13,6 +13,7 @@ SEVERITY_PENALTIES = {
     "medium": 10,
     "low": 5,
 }
+ALLOWED_SEVERITIES = frozenset(SEVERITY_PENALTIES)
 
 
 @dataclass(frozen=True)
@@ -126,8 +127,8 @@ def score_readiness(findings: tuple[ReportFinding, ...]) -> ReadinessScore:
     has_critical = False
     has_high = False
     for finding in findings:
-        severity = finding.severity.lower()
-        score -= SEVERITY_PENALTIES.get(severity, 0)
+        severity = _severity(finding.severity)
+        score -= SEVERITY_PENALTIES[severity]
         has_critical = has_critical or severity == "critical"
         has_high = has_high or severity == "high"
 
@@ -331,7 +332,7 @@ def _finding(raw: dict[str, Any]) -> ReportFinding:
         affected_resource=_string(raw, "affected_resource"),
         observed_facts=tuple(_string_list(raw, "observed_facts")),
         suspected_cause=_string(raw, "suspected_cause"),
-        severity=_string(raw, "severity"),
+        severity=_severity(_string(raw, "severity")),
         confidence=_string(raw, "confidence"),
         evidence_ids=tuple(_string_list(raw, "evidence_ids")),
         related_timeline_ids=tuple(_string_list(raw, "related_timeline_ids")),
@@ -386,3 +387,11 @@ def _integer(raw: dict[str, Any], key: str) -> int:
     if not isinstance(value, int):
         raise ValueError(f"report fixture field {key!r} must be an integer")
     return value
+
+
+def _severity(value: str) -> str:
+    severity = value.lower()
+    if severity not in ALLOWED_SEVERITIES:
+        allowed = ", ".join(sorted(ALLOWED_SEVERITIES))
+        raise ValueError(f"finding severity must be one of {allowed}; got {value!r}")
+    return severity

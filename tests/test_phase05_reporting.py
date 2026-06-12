@@ -8,6 +8,7 @@ from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import cast
 from unittest.mock import patch
 
 from chamber.report import (
@@ -50,6 +51,10 @@ class Phase05ReportingTests(unittest.TestCase):
         self.assertEqual(readiness.score, 95)
         self.assertEqual(readiness.label, "ready")
 
+    def test_readiness_score_rejects_unknown_severity(self) -> None:
+        with self.assertRaisesRegex(ValueError, "finding severity"):
+            score_readiness((_finding("sev-high"),))
+
     def test_rendered_report_is_deterministic_and_includes_required_sections(self) -> None:
         report = _report_input(findings=(_finding("high"),))
 
@@ -90,6 +95,17 @@ class Phase05ReportingTests(unittest.TestCase):
             fixture_path.write_text("[]", encoding="utf-8")
 
             with self.assertRaisesRegex(ValueError, "JSON object"):
+                load_report_input(fixture_path)
+
+    def test_load_report_input_rejects_unknown_finding_severity(self) -> None:
+        with TemporaryDirectory() as tmp:
+            fixture = _fixture_dict()
+            findings = cast(list[dict[str, object]], fixture["findings"])
+            findings[0]["severity"] = "sev-high"
+            fixture_path = Path(tmp) / "fixture.json"
+            fixture_path.write_text(json.dumps(fixture), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "finding severity"):
                 load_report_input(fixture_path)
 
     def test_cli_renders_fixture_to_output_file(self) -> None:

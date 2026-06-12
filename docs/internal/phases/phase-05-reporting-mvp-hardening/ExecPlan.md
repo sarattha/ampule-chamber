@@ -99,11 +99,11 @@ project ready for a first service validation run.
   - Live Prometheus collection is still required for real service metric
     evidence.
 - Acceptance evidence:
-  - `uv run python -m unittest tests/test_phase05_reporting.py` passes 7
+  - `uv run python -m unittest tests/test_phase05_reporting.py` passes 9
     focused phase 05 tests.
   - `uv run ampule-chamber-report --fixture docs/internal/phases/phase-05-reporting-mvp-hardening/artifacts/sample-report-input.json --output docs/internal/phases/phase-05-reporting-mvp-hardening/artifacts/sample-reliability-report.md`
     regenerates the sample markdown report.
   - `uv run mypy chamber/report tests/test_phase05_reporting.py` passes with no
     issues.
-  - `make check` passes format, lint, typecheck, 58 tests, 91% coverage,
+  - `make check` passes format, lint, typecheck, 60 tests, 91% coverage,
     scenario validation, and package build.
