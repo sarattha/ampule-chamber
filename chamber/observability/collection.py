@@ -113,17 +113,16 @@ def collect_kubernetes_evidence(
         "-o",
         "json",
     )
-    events = _kubectl_json(
+    namespace_events = _kubectl_json(
         kubectl,
         "-n",
         environment.namespace,
         "get",
         "events",
-        "-l",
-        selector,
         "-o",
         "json",
     )
+    events = _events_for_pods(namespace_events, pod_names=_pod_names(pods))
     collected_at = _now()
     evidence = [
         _artifact(
@@ -184,7 +183,8 @@ def collect_prometheus_evidence(
     collected_at = _now()
     evidence: list[EvidenceArtifact] = []
     for query in queries:
-        payload = _prometheus_query(base_url, query.query, timeout_seconds=timeout_seconds)
+        scoped_query = _prometheus_query_text(environment, query)
+        payload = _prometheus_query(base_url, scoped_query, timeout_seconds=timeout_seconds)
         if payload.get("status") != "success":
             raise ObservabilityCollectionError(
                 f"Prometheus query for {query.signal_type} did not succeed"
@@ -196,7 +196,7 @@ def collect_prometheus_evidence(
                 signal_type=query.signal_type,
                 resource=query.resource,
                 payload={
-                    "query": query.query,
+                    "query": scoped_query,
                     "result": payload,
                 },
                 collected_at=collected_at,
@@ -272,6 +272,29 @@ def _label_selector(labels: dict[str, str]) -> str:
     return ",".join(f"{key}={value}" for key, value in sorted(labels.items()))
 
 
+def _events_for_pods(events: dict[str, Any], *, pod_names: tuple[str, ...]) -> dict[str, Any]:
+    selected = set(pod_names)
+    filtered = dict(events)
+    items = events.get("items")
+    if not isinstance(items, list) or not selected:
+        filtered["items"] = []
+        return filtered
+    filtered["items"] = [
+        event
+        for event in items
+        if isinstance(event, dict) and _event_object_name(event) in selected
+    ]
+    return filtered
+
+
+def _event_object_name(event: dict[str, Any]) -> str | None:
+    for key in ("involvedObject", "regarding"):
+        value = event.get(key)
+        if isinstance(value, dict) and isinstance(value.get("name"), str):
+            return str(value["name"])
+    return None
+
+
 def _pod_names(pods: dict[str, Any]) -> tuple[str, ...]:
     items = pods.get("items")
     if not isinstance(items, list):
@@ -287,6 +310,47 @@ def _pod_names(pods: dict[str, Any]) -> tuple[str, ...]:
         if isinstance(name, str) and name.strip():
             names.append(name)
     return tuple(names)
+
+
+def _prometheus_query_text(environment: EnvironmentMetadata, query: PrometheusQuery) -> str:
+    if query not in DEFAULT_PROMETHEUS_QUERIES:
+        return query.query
+
+    namespace = _prometheus_string(environment.namespace)
+    deployment = environment.resource_names.get("deployment", "")
+    pod_regex = _prometheus_string(f"{deployment}.*" if deployment else ".+")
+    service = _prometheus_string(environment.resource_names.get("service", ""))
+    pod_matchers = f'namespace="{namespace}",pod=~"{pod_regex}"'
+    service_matchers = f'namespace="{namespace}",service="{service}"'
+
+    if query.signal_type == "memory_usage":
+        return (
+            f"100 * container_memory_working_set_bytes{{{pod_matchers}}}"
+            f" / container_spec_memory_limit_bytes{{{pod_matchers}}}"
+        )
+    if query.signal_type == "cpu_usage":
+        return f"100 * rate(container_cpu_usage_seconds_total{{{pod_matchers}}}[5m])"
+    if query.signal_type == "cpu_throttling":
+        return (
+            f"100 * rate(container_cpu_cfs_throttled_periods_total{{{pod_matchers}}}[5m])"
+            f" / rate(container_cpu_cfs_periods_total{{{pod_matchers}}}[5m])"
+        )
+    if query.signal_type == "request_latency":
+        return (
+            "histogram_quantile(0.95, "
+            f"sum(rate(http_request_duration_seconds_bucket{{{service_matchers}}}[5m])) "
+            "by (le)) * 1000"
+        )
+    if query.signal_type == "error_rate":
+        return (
+            f'100 * sum(rate(http_requests_total{{{service_matchers},status=~"5.."}}[5m]))'
+            f" / sum(rate(http_requests_total{{{service_matchers}}}[5m]))"
+        )
+    return query.query
+
+
+def _prometheus_string(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
 
 
 def _now() -> str:

@@ -15,6 +15,7 @@ from chamber.contracts.scenario import load_scenario
 from chamber.environment import EnvironmentMetadata, plan_environment
 from chamber.load import plan_traffic
 from chamber.observability import (
+    DEFAULT_PROMETHEUS_QUERIES,
     EvidenceArtifact,
     ObservabilityCollectionError,
     PrometheusQuery,
@@ -57,8 +58,57 @@ class Phase04CollectionTests(unittest.TestCase):
         )
         self.assertIn("-l", commands[0])
         self.assertIn("chamber.ampule.dev/run-id=phase04-test", commands[0][6])
+        self.assertEqual(
+            commands[1],
+            ("kubectl", "-n", environment.namespace, "get", "events", "-o", "json"),
+        )
         self.assertEqual(commands[2][:4], ("kubectl", "-n", environment.namespace, "logs"))
         self.assertEqual(evidence[2].resource, "sample-service-abc")
+
+    def test_kubernetes_collector_filters_namespace_events_to_selected_pods(self) -> None:
+        scenario = load_scenario(SCENARIO_DIR / "baseline-health.yaml")
+        environment = plan_environment(scenario, run_id="phase04-test").metadata
+        pods = {
+            "items": [
+                {
+                    "metadata": {"name": "sample-service-abc"},
+                    "status": {"containerStatuses": []},
+                }
+            ]
+        }
+        events = {
+            "items": [
+                {
+                    "reason": "OOMKilling",
+                    "message": "selected pod event",
+                    "involvedObject": {"name": "sample-service-abc"},
+                },
+                {
+                    "reason": "Killing",
+                    "message": "other pod event",
+                    "involvedObject": {"name": "other-pod"},
+                },
+                {
+                    "reason": "Unhealthy",
+                    "message": "events.k8s.io regarding object",
+                    "regarding": {"name": "sample-service-abc"},
+                },
+            ]
+        }
+        completed = [
+            subprocess.CompletedProcess(("kubectl",), 0, json.dumps(pods), ""),
+            subprocess.CompletedProcess(("kubectl",), 0, json.dumps(events), ""),
+            subprocess.CompletedProcess(("kubectl",), 0, "startup log", ""),
+        ]
+
+        with patch("chamber.observability.collection.subprocess.run", side_effect=completed):
+            evidence = collect_kubernetes_evidence(environment)
+
+        event_artifact = next(item for item in evidence if item.signal_type == "kubernetes_events")
+        self.assertEqual(
+            [item["message"] for item in event_artifact.payload["items"]],
+            ["selected pod event", "events.k8s.io regarding object"],
+        )
 
     def test_prometheus_collection_requires_endpoint_and_collects_queries(self) -> None:
         scenario = load_scenario(SCENARIO_DIR / "baseline-health.yaml")
@@ -87,6 +137,35 @@ class Phase04CollectionTests(unittest.TestCase):
         self.assertEqual(evidence[0].signal_type, "memory_usage")
         self.assertEqual(evidence[0].payload["query"], "up")
         self.assertIn("/api/v1/query", urlopen.call_args.args[0])
+
+    def test_default_prometheus_queries_are_scoped_to_environment_metadata(self) -> None:
+        scenario = load_scenario(SCENARIO_DIR / "baseline-health.yaml")
+        environment = plan_environment(scenario, run_id="phase04-test").metadata
+        response = _http_response(json.dumps({"status": "success", "data": {"result": []}}))
+
+        with patch("chamber.observability.collection.urlopen", return_value=response):
+            evidence = collect_prometheus_evidence(
+                environment,
+                prometheus_url="http://prometheus.local",
+                queries=DEFAULT_PROMETHEUS_QUERIES,
+            )
+
+        queries = [str(artifact.payload["query"]) for artifact in evidence]
+        self.assertTrue(all(f'namespace="{environment.namespace}"' in query for query in queries))
+        self.assertTrue(
+            all(
+                environment.resource_names["deployment"] in query
+                for query in queries
+                if "container_" in query
+            )
+        )
+        self.assertTrue(
+            all(
+                f'service="{environment.resource_names["service"]}"' in query
+                for query in queries
+                if "http_requests" in query or "http_request_duration" in query
+            )
+        )
 
     def test_kubernetes_collector_reports_command_and_json_failures(self) -> None:
         scenario = load_scenario(SCENARIO_DIR / "baseline-health.yaml")

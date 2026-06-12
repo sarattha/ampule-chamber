@@ -10,6 +10,15 @@ Queries use the Prometheus HTTP API:
 GET /api/v1/query?query=<promql>
 ```
 
+Built-in phase 04 queries are scoped before execution:
+
+- Pod/container metrics include `namespace="<chamber namespace>"` and
+  `pod=~"<target deployment name>.*"`.
+- HTTP service metrics include `namespace="<chamber namespace>"` and
+  `service="<target service name>"`.
+- Explicit custom `PrometheusQuery` values are sent unchanged so tests and
+  future adapters can provide backend-specific PromQL.
+
 ## MVP Signals
 
 | Signal | Default Query Intent |

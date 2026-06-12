@@ -20,9 +20,15 @@ internal `chamber.observability` API.
 
 ## Collector Behavior
 
-- Kubernetes evidence is scoped by `EnvironmentMetadata.cleanup_selectors`.
+- Kubernetes pod and log evidence is scoped by
+  `EnvironmentMetadata.cleanup_selectors`.
+- Kubernetes events are collected at namespace scope and filtered to selected
+  pod names through `involvedObject` or `regarding`, because system-generated
+  Events do not inherit pod labels.
 - Pod status and events are collected as raw Kubernetes JSON.
 - Logs are captured per selected pod with `--all-containers=true --tail=200`.
+- Built-in Prometheus queries are scoped to the chamber namespace and target
+  resource names from `EnvironmentMetadata` before collection.
 - Prometheus evidence is required for live metric collection in this phase.
 - Missing or unreachable Prometheus backends raise actionable diagnostics
   instead of returning empty metrics.
