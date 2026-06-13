@@ -1,0 +1,571 @@
+[
+  {
+    "evidence_id": "phase06-baseline-health-001-20260613063240:kubernetes:pod_status:chamber-local-baseline-health-001-2cfb47c6",
+    "run_id": "phase06-baseline-health-001-20260613063240",
+    "scenario_id": "baseline-health-001",
+    "source": "kubernetes",
+    "signal_type": "pod_status",
+    "resource": "chamber-local-baseline-health-001-2cfb47c6",
+    "collected_at": "2026-06-13T06:36:08.428531+00:00",
+    "start_time": null,
+    "end_time": null,
+    "payload": {
+      "apiVersion": "v1",
+      "items": [
+        {
+          "apiVersion": "v1",
+          "kind": "Pod",
+          "metadata": {
+            "creationTimestamp": "2026-06-13T06:32:40Z",
+            "generateName": "sample-service-deployment-2cfb47c6-7fb5954876-",
+            "generation": 1,
+            "labels": {
+              "app.kubernetes.io/managed-by": "ampule-chamber",
+              "app.kubernetes.io/name": "sample-service",
+              "app.kubernetes.io/part-of": "ampule-chamber",
+              "chamber.ampule.dev/run-id": "phase06-baseline-health-001-20260613063240",
+              "chamber.ampule.dev/scenario-id": "baseline-health-001",
+              "pod-template-hash": "7fb5954876"
+            },
+            "name": "sample-service-deployment-2cfb47c6-7fb5954876-5vzf4",
+            "namespace": "chamber-local-baseline-health-001-2cfb47c6",
+            "ownerReferences": [
+              {
+                "apiVersion": "apps/v1",
+                "blockOwnerDeletion": true,
+                "controller": true,
+                "kind": "ReplicaSet",
+                "name": "sample-service-deployment-2cfb47c6-7fb5954876",
+                "uid": "1afdbadb-612f-4d5b-bad1-693ff3f90477"
+              }
+            ],
+            "resourceVersion": "73565",
+            "uid": "0bd22d23-65ca-4f6b-9440-1906322ee5d0"
+          },
+          "spec": {
+            "containers": [
+              {
+                "image": "ampule/sample-service:local",
+                "imagePullPolicy": "IfNotPresent",
+                "livenessProbe": {
+                  "failureThreshold": 3,
+                  "httpGet": {
+                    "path": "/healthz",
+                    "port": "http",
+                    "scheme": "HTTP"
+                  },
+                  "initialDelaySeconds": 5,
+                  "periodSeconds": 10,
+                  "successThreshold": 1,
+                  "timeoutSeconds": 1
+                },
+                "name": "sample-service",
+                "ports": [
+                  {
+                    "containerPort": 8080,
+                    "name": "http",
+                    "protocol": "TCP"
+                  }
+                ],
+                "readinessProbe": {
+                  "failureThreshold": 3,
+                  "httpGet": {
+                    "path": "/readyz",
+                    "port": "http",
+                    "scheme": "HTTP"
+                  },
+                  "initialDelaySeconds": 5,
+                  "periodSeconds": 10,
+                  "successThreshold": 1,
+                  "timeoutSeconds": 1
+                },
+                "resources": {
+                  "limits": {
+                    "cpu": "1",
+                    "memory": "256Mi"
+                  },
+                  "requests": {
+                    "cpu": "100m",
+                    "memory": "128Mi"
+                  }
+                },
+                "terminationMessagePath": "/dev/termination-log",
+                "terminationMessagePolicy": "File",
+                "volumeMounts": [
+                  {
+                    "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                    "name": "kube-api-access-xhfk7",
+                    "readOnly": true
+                  }
+                ]
+              }
+            ],
+            "dnsPolicy": "ClusterFirst",
+            "enableServiceLinks": true,
+            "nodeName": "ampule-chamber-control-plane",
+            "preemptionPolicy": "PreemptLowerPriority",
+            "priority": 0,
+            "restartPolicy": "Always",
+            "schedulerName": "default-scheduler",
+            "securityContext": {},
+            "serviceAccount": "default",
+            "serviceAccountName": "default",
+            "terminationGracePeriodSeconds": 30,
+            "tolerations": [
+              {
+                "effect": "NoExecute",
+                "key": "node.kubernetes.io/not-ready",
+                "operator": "Exists",
+                "tolerationSeconds": 300
+              },
+              {
+                "effect": "NoExecute",
+                "key": "node.kubernetes.io/unreachable",
+                "operator": "Exists",
+                "tolerationSeconds": 300
+              }
+            ],
+            "volumes": [
+              {
+                "name": "kube-api-access-xhfk7",
+                "projected": {
+                  "defaultMode": 420,
+                  "sources": [
+                    {
+                      "serviceAccountToken": {
+                        "expirationSeconds": 3607,
+                        "path": "token"
+                      }
+                    },
+                    {
+                      "configMap": {
+                        "items": [
+                          {
+                            "key": "ca.crt",
+                            "path": "ca.crt"
+                          }
+                        ],
+                        "name": "kube-root-ca.crt"
+                      }
+                    },
+                    {
+                      "downwardAPI": {
+                        "items": [
+                          {
+                            "fieldRef": {
+                              "apiVersion": "v1",
+                              "fieldPath": "metadata.namespace"
+                            },
+                            "path": "namespace"
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "status": {
+            "allocatedResources": {
+              "cpu": "100m",
+              "memory": "128Mi"
+            },
+            "conditions": [
+              {
+                "lastProbeTime": null,
+                "lastTransitionTime": "2026-06-13T06:32:41Z",
+                "observedGeneration": 1,
+                "status": "True",
+                "type": "PodReadyToStartContainers"
+              },
+              {
+                "lastProbeTime": null,
+                "lastTransitionTime": "2026-06-13T06:32:40Z",
+                "observedGeneration": 1,
+                "status": "True",
+                "type": "Initialized"
+              },
+              {
+                "lastProbeTime": null,
+                "lastTransitionTime": "2026-06-13T06:32:52Z",
+                "observedGeneration": 1,
+                "status": "True",
+                "type": "Ready"
+              },
+              {
+                "lastProbeTime": null,
+                "lastTransitionTime": "2026-06-13T06:32:52Z",
+                "observedGeneration": 1,
+                "status": "True",
+                "type": "ContainersReady"
+              },
+              {
+                "lastProbeTime": null,
+                "lastTransitionTime": "2026-06-13T06:32:40Z",
+                "observedGeneration": 1,
+                "status": "True",
+                "type": "PodScheduled"
+              }
+            ],
+            "containerStatuses": [
+              {
+                "allocatedResources": {
+                  "cpu": "100m",
+                  "memory": "128Mi"
+                },
+                "containerID": "containerd://01dfb163dce339cdd25e423d46c4a53e9629617aaca00b1114580b2b591c9a5d",
+                "image": "docker.io/ampule/sample-service:local",
+                "imageID": "docker.io/library/import-2026-06-13@sha256:c1aeb41fc68900f52e8cadac98745490968007103a5de2ab5b5f90472d3f74b8",
+                "lastState": {},
+                "name": "sample-service",
+                "ready": true,
+                "resources": {
+                  "limits": {
+                    "cpu": "1",
+                    "memory": "256Mi"
+                  },
+                  "requests": {
+                    "cpu": "100m",
+                    "memory": "128Mi"
+                  }
+                },
+                "restartCount": 0,
+                "started": true,
+                "state": {
+                  "running": {
+                    "startedAt": "2026-06-13T06:32:41Z"
+                  }
+                },
+                "user": {
+                  "linux": {
+                    "gid": 0,
+                    "supplementalGroups": [
+                      0
+                    ],
+                    "uid": 0
+                  }
+                },
+                "volumeMounts": [
+                  {
+                    "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                    "name": "kube-api-access-xhfk7",
+                    "readOnly": true,
+                    "recursiveReadOnly": "Disabled"
+                  }
+                ]
+              }
+            ],
+            "hostIP": "172.21.0.2",
+            "hostIPs": [
+              {
+                "ip": "172.21.0.2"
+              }
+            ],
+            "observedGeneration": 1,
+            "phase": "Running",
+            "podIP": "10.244.0.7",
+            "podIPs": [
+              {
+                "ip": "10.244.0.7"
+              }
+            ],
+            "qosClass": "Burstable",
+            "resources": {
+              "limits": {
+                "cpu": "1",
+                "memory": "256Mi"
+              },
+              "requests": {
+                "cpu": "79m",
+                "memory": "128Mi"
+              }
+            },
+            "startTime": "2026-06-13T06:32:40Z"
+          }
+        }
+      ],
+      "kind": "List",
+      "metadata": {
+        "resourceVersion": ""
+      }
+    },
+    "diagnostics": []
+  },
+  {
+    "evidence_id": "phase06-baseline-health-001-20260613063240:kubernetes:kubernetes_events:chamber-local-baseline-health-001-2cfb47c6",
+    "run_id": "phase06-baseline-health-001-20260613063240",
+    "scenario_id": "baseline-health-001",
+    "source": "kubernetes",
+    "signal_type": "kubernetes_events",
+    "resource": "chamber-local-baseline-health-001-2cfb47c6",
+    "collected_at": "2026-06-13T06:36:08.428531+00:00",
+    "start_time": null,
+    "end_time": null,
+    "payload": {
+      "apiVersion": "v1",
+      "items": [
+        {
+          "apiVersion": "v1",
+          "count": 1,
+          "eventTime": null,
+          "firstTimestamp": "2026-06-13T06:32:40Z",
+          "involvedObject": {
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "name": "sample-service-deployment-2cfb47c6-7fb5954876-5vzf4",
+            "namespace": "chamber-local-baseline-health-001-2cfb47c6",
+            "resourceVersion": "73526",
+            "uid": "0bd22d23-65ca-4f6b-9440-1906322ee5d0"
+          },
+          "kind": "Event",
+          "lastTimestamp": "2026-06-13T06:32:40Z",
+          "message": "Successfully assigned chamber-local-baseline-health-001-2cfb47c6/sample-service-deployment-2cfb47c6-7fb5954876-5vzf4 to ampule-chamber-control-plane",
+          "metadata": {
+            "creationTimestamp": "2026-06-13T06:32:40Z",
+            "name": "sample-service-deployment-2cfb47c6-7fb5954876-5vzf4.18b8905816593544",
+            "namespace": "chamber-local-baseline-health-001-2cfb47c6",
+            "resourceVersion": "73531",
+            "uid": "996dd682-9b93-4914-ae1b-08171b872865"
+          },
+          "reason": "Scheduled",
+          "reportingComponent": "default-scheduler",
+          "reportingInstance": "",
+          "source": {
+            "component": "default-scheduler"
+          },
+          "type": "Normal"
+        },
+        {
+          "apiVersion": "v1",
+          "count": 1,
+          "eventTime": null,
+          "firstTimestamp": "2026-06-13T06:32:41Z",
+          "involvedObject": {
+            "apiVersion": "v1",
+            "fieldPath": "spec.containers{sample-service}",
+            "kind": "Pod",
+            "name": "sample-service-deployment-2cfb47c6-7fb5954876-5vzf4",
+            "namespace": "chamber-local-baseline-health-001-2cfb47c6",
+            "resourceVersion": "73528",
+            "uid": "0bd22d23-65ca-4f6b-9440-1906322ee5d0"
+          },
+          "kind": "Event",
+          "lastTimestamp": "2026-06-13T06:32:41Z",
+          "message": "Container image \"ampule/sample-service:local\" already present on machine and can be accessed by the pod",
+          "metadata": {
+            "creationTimestamp": "2026-06-13T06:32:41Z",
+            "name": "sample-service-deployment-2cfb47c6-7fb5954876-5vzf4.18b890582ecd1af5",
+            "namespace": "chamber-local-baseline-health-001-2cfb47c6",
+            "resourceVersion": "73541",
+            "uid": "06827a87-e873-4270-beb8-0a801a10e356"
+          },
+          "reason": "Pulled",
+          "reportingComponent": "kubelet",
+          "reportingInstance": "ampule-chamber-control-plane",
+          "source": {
+            "component": "kubelet",
+            "host": "ampule-chamber-control-plane"
+          },
+          "type": "Normal"
+        },
+        {
+          "apiVersion": "v1",
+          "count": 1,
+          "eventTime": null,
+          "firstTimestamp": "2026-06-13T06:32:41Z",
+          "involvedObject": {
+            "apiVersion": "v1",
+            "fieldPath": "spec.containers{sample-service}",
+            "kind": "Pod",
+            "name": "sample-service-deployment-2cfb47c6-7fb5954876-5vzf4",
+            "namespace": "chamber-local-baseline-health-001-2cfb47c6",
+            "resourceVersion": "73528",
+            "uid": "0bd22d23-65ca-4f6b-9440-1906322ee5d0"
+          },
+          "kind": "Event",
+          "lastTimestamp": "2026-06-13T06:32:41Z",
+          "message": "Container created",
+          "metadata": {
+            "creationTimestamp": "2026-06-13T06:32:41Z",
+            "name": "sample-service-deployment-2cfb47c6-7fb5954876-5vzf4.18b890582ffb7112",
+            "namespace": "chamber-local-baseline-health-001-2cfb47c6",
+            "resourceVersion": "73543",
+            "uid": "3ef0b80e-227e-41bb-af43-7f1d377e2ee6"
+          },
+          "reason": "Created",
+          "reportingComponent": "kubelet",
+          "reportingInstance": "ampule-chamber-control-plane",
+          "source": {
+            "component": "kubelet",
+            "host": "ampule-chamber-control-plane"
+          },
+          "type": "Normal"
+        },
+        {
+          "apiVersion": "v1",
+          "count": 1,
+          "eventTime": null,
+          "firstTimestamp": "2026-06-13T06:32:41Z",
+          "involvedObject": {
+            "apiVersion": "v1",
+            "fieldPath": "spec.containers{sample-service}",
+            "kind": "Pod",
+            "name": "sample-service-deployment-2cfb47c6-7fb5954876-5vzf4",
+            "namespace": "chamber-local-baseline-health-001-2cfb47c6",
+            "resourceVersion": "73528",
+            "uid": "0bd22d23-65ca-4f6b-9440-1906322ee5d0"
+          },
+          "kind": "Event",
+          "lastTimestamp": "2026-06-13T06:32:41Z",
+          "message": "Container started",
+          "metadata": {
+            "creationTimestamp": "2026-06-13T06:32:41Z",
+            "name": "sample-service-deployment-2cfb47c6-7fb5954876-5vzf4.18b890583714eb7c",
+            "namespace": "chamber-local-baseline-health-001-2cfb47c6",
+            "resourceVersion": "73544",
+            "uid": "fb7b477b-803b-412f-b838-4a50e1acaef1"
+          },
+          "reason": "Started",
+          "reportingComponent": "kubelet",
+          "reportingInstance": "ampule-chamber-control-plane",
+          "source": {
+            "component": "kubelet",
+            "host": "ampule-chamber-control-plane"
+          },
+          "type": "Normal"
+        }
+      ],
+      "kind": "List",
+      "metadata": {
+        "resourceVersion": ""
+      }
+    },
+    "diagnostics": []
+  },
+  {
+    "evidence_id": "phase06-baseline-health-001-20260613063240:kubernetes:logs:sample-service-deployment-2cfb47c6-7fb5954876-5vzf4",
+    "run_id": "phase06-baseline-health-001-20260613063240",
+    "scenario_id": "baseline-health-001",
+    "source": "kubernetes",
+    "signal_type": "logs",
+    "resource": "sample-service-deployment-2cfb47c6-7fb5954876-5vzf4",
+    "collected_at": "2026-06-13T06:36:08.428531+00:00",
+    "start_time": null,
+    "end_time": null,
+    "payload": {
+      "text": "{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/readyz\", \"message\": \"\\\"GET /readyz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/readyz\", \"message\": \"\\\"GET /readyz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/readyz\", \"message\": \"\\\"GET /readyz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/readyz\", \"message\": \"\\\"GET /readyz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/readyz\", \"message\": \"\\\"GET /readyz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/readyz\", \"message\": \"\\\"GET /readyz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/readyz\", \"message\": \"\\\"GET /readyz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/readyz\", \"message\": \"\\\"GET /readyz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/readyz\", \"message\": \"\\\"GET /readyz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/readyz\", \"message\": \"\\\"GET /readyz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/readyz\", \"message\": \"\\\"GET /readyz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/readyz\", \"message\": \"\\\"GET /readyz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/readyz\", \"message\": \"\\\"GET /readyz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/readyz\", \"message\": \"\\\"GET /readyz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/readyz\", \"message\": \"\\\"GET /readyz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/readyz\", \"message\": \"\\\"GET /readyz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/readyz\", \"message\": \"\\\"GET /readyz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/readyz\", \"message\": \"\\\"GET /readyz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/healthz\", \"message\": \"\\\"GET /healthz HTTP/1.1\\\" 200 -\"}\n{\"path\": \"/readyz\", \"message\": \"\\\"GET /readyz HTTP/1.1\\\" 200 -\"}\n"
+    },
+    "diagnostics": []
+  },
+  {
+    "evidence_id": "phase06-baseline-health-001-20260613063240:prometheus:memory_usage:target-pods",
+    "run_id": "phase06-baseline-health-001-20260613063240",
+    "scenario_id": "baseline-health-001",
+    "source": "prometheus",
+    "signal_type": "memory_usage",
+    "resource": "target-pods",
+    "collected_at": "2026-06-13T06:36:08.485197+00:00",
+    "start_time": null,
+    "end_time": null,
+    "payload": {
+      "query": "100 * container_memory_working_set_bytes{namespace=\"chamber-local-baseline-health-001-2cfb47c6\",pod=~\"sample-service-deployment-2cfb47c6.*\"} / container_spec_memory_limit_bytes{namespace=\"chamber-local-baseline-health-001-2cfb47c6\",pod=~\"sample-service-deployment-2cfb47c6.*\"}",
+      "result": {
+        "status": "success",
+        "data": {
+          "resultType": "vector",
+          "result": []
+        }
+      }
+    },
+    "diagnostics": []
+  },
+  {
+    "evidence_id": "phase06-baseline-health-001-20260613063240:prometheus:cpu_usage:target-pods",
+    "run_id": "phase06-baseline-health-001-20260613063240",
+    "scenario_id": "baseline-health-001",
+    "source": "prometheus",
+    "signal_type": "cpu_usage",
+    "resource": "target-pods",
+    "collected_at": "2026-06-13T06:36:08.485197+00:00",
+    "start_time": null,
+    "end_time": null,
+    "payload": {
+      "query": "100 * rate(container_cpu_usage_seconds_total{namespace=\"chamber-local-baseline-health-001-2cfb47c6\",pod=~\"sample-service-deployment-2cfb47c6.*\"}[5m])",
+      "result": {
+        "status": "success",
+        "data": {
+          "resultType": "vector",
+          "result": []
+        }
+      }
+    },
+    "diagnostics": []
+  },
+  {
+    "evidence_id": "phase06-baseline-health-001-20260613063240:prometheus:cpu_throttling:target-pods",
+    "run_id": "phase06-baseline-health-001-20260613063240",
+    "scenario_id": "baseline-health-001",
+    "source": "prometheus",
+    "signal_type": "cpu_throttling",
+    "resource": "target-pods",
+    "collected_at": "2026-06-13T06:36:08.485197+00:00",
+    "start_time": null,
+    "end_time": null,
+    "payload": {
+      "query": "100 * rate(container_cpu_cfs_throttled_periods_total{namespace=\"chamber-local-baseline-health-001-2cfb47c6\",pod=~\"sample-service-deployment-2cfb47c6.*\"}[5m]) / rate(container_cpu_cfs_periods_total{namespace=\"chamber-local-baseline-health-001-2cfb47c6\",pod=~\"sample-service-deployment-2cfb47c6.*\"}[5m])",
+      "result": {
+        "status": "success",
+        "data": {
+          "resultType": "vector",
+          "result": []
+        }
+      }
+    },
+    "diagnostics": []
+  },
+  {
+    "evidence_id": "phase06-baseline-health-001-20260613063240:prometheus:request_latency:target-service",
+    "run_id": "phase06-baseline-health-001-20260613063240",
+    "scenario_id": "baseline-health-001",
+    "source": "prometheus",
+    "signal_type": "request_latency",
+    "resource": "target-service",
+    "collected_at": "2026-06-13T06:36:08.485197+00:00",
+    "start_time": null,
+    "end_time": null,
+    "payload": {
+      "query": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{namespace=\"chamber-local-baseline-health-001-2cfb47c6\",service=\"sample-service-svc-2cfb47c6\"}[5m])) by (le)) * 1000",
+      "result": {
+        "status": "success",
+        "data": {
+          "resultType": "vector",
+          "result": []
+        }
+      }
+    },
+    "diagnostics": []
+  },
+  {
+    "evidence_id": "phase06-baseline-health-001-20260613063240:prometheus:error_rate:target-service",
+    "run_id": "phase06-baseline-health-001-20260613063240",
+    "scenario_id": "baseline-health-001",
+    "source": "prometheus",
+    "signal_type": "error_rate",
+    "resource": "target-service",
+    "collected_at": "2026-06-13T06:36:08.485197+00:00",
+    "start_time": null,
+    "end_time": null,
+    "payload": {
+      "query": "100 * sum(rate(http_requests_total{namespace=\"chamber-local-baseline-health-001-2cfb47c6\",service=\"sample-service-svc-2cfb47c6\",status=~\"5..\"}[5m])) / sum(rate(http_requests_total{namespace=\"chamber-local-baseline-health-001-2cfb47c6\",service=\"sample-service-svc-2cfb47c6\"}[5m]))",
+      "result": {
+        "status": "success",
+        "data": {
+          "resultType": "vector",
+          "result": []
+        }
+      }
+    },
+    "diagnostics": []
+  }
+]

@@ -9,27 +9,27 @@ and emits an evidence-backed markdown report.
 
 ## Task Checklist
 
-- [ ] Review `README.md`, `docs/internal/PROJECT_DESIGN.md`, and phase 01-05
+- [x] Review `README.md`, `docs/internal/PROJECT_DESIGN.md`, and phase 01-05
       outcomes.
-- [ ] Define the live run contract and command-line interface.
-- [ ] Add Kubernetes context safety checks and production-context denylist
+- [x] Define the live run contract and command-line interface.
+- [x] Add Kubernetes context safety checks and production-context denylist
       behavior.
-- [ ] Implement local `kind` chamber run orchestration for one scenario.
-- [ ] Deploy the sample service into an isolated chamber namespace.
-- [ ] Run readiness and baseline health checks against the Kubernetes service.
-- [ ] Run k6 traffic through deterministic local port-forwarding.
-- [ ] Collect Kubernetes pod status, events, and logs from the live namespace.
-- [ ] Query Prometheus metrics when configured and record actionable diagnostics
+- [x] Implement local `kind` chamber run orchestration for one scenario.
+- [x] Deploy the sample service into an isolated chamber namespace.
+- [x] Run readiness and baseline health checks against the Kubernetes service.
+- [x] Run k6 traffic through deterministic local port-forwarding.
+- [x] Collect Kubernetes pod status, events, and logs from the live namespace.
+- [x] Query Prometheus metrics when configured and record actionable diagnostics
       when unavailable.
-- [ ] Convert collected live evidence into analysis findings.
-- [ ] Render a markdown report from live run metadata, timeline, evidence, and
+- [x] Convert collected live evidence into analysis findings.
+- [x] Render a markdown report from live run metadata, timeline, evidence, and
       findings.
-- [ ] Add cleanup behavior with a retain-on-failure or retain-for-debug option.
-- [ ] Add unit tests for runner planning, safety checks, report wiring, and
+- [x] Add cleanup behavior with a retain-on-failure or retain-for-debug option.
+- [x] Add unit tests for runner planning, safety checks, report wiring, and
       cleanup decisions.
-- [ ] Add an optional live smoke test document or script for maintainers with
+- [x] Add an optional live smoke test document or script for maintainers with
       `kind`, `kubectl`, and `k6` installed.
-- [ ] Record live acceptance evidence and known limitations in this plan.
+- [x] Record live acceptance evidence and known limitations in this plan.
 
 ## Evaluation Metrics
 
@@ -107,6 +107,10 @@ and emits an evidence-backed markdown report.
 - Exporting the live runner from `chamber.orchestrator.__init__` created a
   circular import through analysis contracts, so the console script points
   directly at `chamber.orchestrator.live`.
+- `docker exec ampule-chamber-control-plane crictl images -q
+  ampule/sample-service:local` returned unrelated image ids before the sample
+  image was actually loaded. The reliable verification command is `docker exec
+  ampule-chamber-control-plane crictl images | rg 'ampule/sample-service|IMAGE'`.
 
 ## Decision Log
 
@@ -134,21 +138,77 @@ and emits an evidence-backed markdown report.
 
 ## Outcomes And Retrospective
 
-- Pending live execution with `kind-ampule-chamber`, preloaded
+- Completed live execution with `kind-ampule-chamber`, preloaded
   `ampule/sample-service:local`, `kubectl`, `kind`, `docker`, `k6`, and
-  reachable `PROMETHEUS_URL`.
+  reachable Prometheus at `http://127.0.0.1:9090`.
 - Live prerequisite check on this machine:
   - `kubectl config current-context` returns `kind-ampule-chamber`.
   - `kind get clusters` includes `ampule-chamber`.
   - `kubectl`, `kind`, `docker`, and `k6` are installed on `PATH`.
-  - `docker exec ampule-chamber-control-plane crictl images -q
-    ampule/sample-service:local` returns image ids.
-  - `PROMETHEUS_URL` is not set, so live scenario execution was not attempted.
+  - `docker build -t ampule/sample-service:local examples/sample-service`
+    builds image id
+    `sha256:8da98f990bc6511a0b250a3075e063c429363a188f5f3c6390fd13416219cd06`.
+  - `kind load docker-image ampule/sample-service:local --name ampule-chamber`
+    loads the image into `ampule-chamber-control-plane`.
+  - `docker exec ampule-chamber-control-plane crictl images | rg
+    'ampule/sample-service|IMAGE'` shows `docker.io/ampule/sample-service`
+    with tag `local`.
+  - A minimal Prometheus deployment is running in the `monitoring` namespace.
+  - `screen -ls` shows detached session `ampule-prometheus` holding the
+    Prometheus port-forward.
+  - `http://127.0.0.1:9090/api/v1/query?query=up` returns Prometheus
+    `status: success`.
+  - `uv run python` prerequisite check covering tools, context, Prometheus, and
+    the preloaded image prints `phase 06 prerequisites OK`.
   - `env -u PROMETHEUS_URL uv run ampule-chamber run --scenario
     scenarios/baseline-health.yaml --output
     docs/internal/phases/phase-06-live-manual-chamber-mvp/artifacts/live-baseline-report.md`
     fails cleanly with `error: PROMETHEUS_URL is required for phase 06 live
     runs` before live Kubernetes actions.
+- First live baseline attempt:
+  - Command:
+    `uv run ampule-chamber run --scenario scenarios/baseline-health.yaml
+    --output
+    docs/internal/phases/phase-06-live-manual-chamber-mvp/artifacts/live-baseline-report.md
+    --prometheus-url http://127.0.0.1:9090`.
+  - Result: failed during readiness with `error: failed to verify target
+    readiness: error: timed out waiting for the condition`.
+  - Kubernetes evidence during failure showed pod
+    `sample-service-deployment-39d4937a-65f5675548-6qct4` in
+    `ImagePullBackOff`; kubelet tried to pull
+    `docker.io/ampule/sample-service:local` and received `pull access denied`.
+  - Cleanup completed after the failed run; `kubectl get ns -l
+    app.kubernetes.io/part-of=ampule-chamber` returned `No resources found`.
+- Successful live baseline run:
+  - Command:
+    `uv run ampule-chamber run --scenario scenarios/baseline-health.yaml
+    --output
+    docs/internal/phases/phase-06-live-manual-chamber-mvp/artifacts/live-baseline-report.md
+    --prometheus-url http://127.0.0.1:9090`.
+  - Output: `baseline-health-001: report
+    docs/internal/phases/phase-06-live-manual-chamber-mvp/artifacts/live-baseline-report.md`.
+  - Run id: `phase06-baseline-health-001-20260613063240`.
+  - Namespace: `chamber-local-baseline-health-001-2cfb47c6`.
+  - Report:
+    `docs/internal/phases/phase-06-live-manual-chamber-mvp/artifacts/live-baseline-report.md`.
+  - Metadata:
+    `docs/internal/phases/phase-06-live-manual-chamber-mvp/artifacts/phase06-baseline-health-001-20260613063240/run-metadata.json`.
+  - Evidence:
+    `docs/internal/phases/phase-06-live-manual-chamber-mvp/artifacts/phase06-baseline-health-001-20260613063240/evidence.json`.
+  - k6 summary:
+    `docs/internal/phases/phase-06-live-manual-chamber-mvp/artifacts/phase06-baseline-health-001-20260613063240/baseline-health-001-k6-summary.json`.
+  - k6 metrics: `http_reqs` count `2188`, `http_req_failed` rate
+    `0.0031992687385740404`, and `http_req_duration` p95 `4.1332` ms.
+  - Runtime evidence includes 8 artifacts from Kubernetes and Prometheus:
+    pod status, Kubernetes events, logs, memory usage, CPU usage, CPU
+    throttling, request latency, and error rate.
+  - Report readiness score is `100/100`, lifecycle state is `completed`, and
+    no reliability findings were detected.
+  - Run metadata records `traffic_success: true`, `traffic_exit_status: 0`,
+    `cleanup_performed: true`, 8 recorded commands, and no phase-specific
+    limitations.
+  - Cleanup verified after success; `kubectl get ns -l
+    app.kubernetes.io/part-of=ampule-chamber` returned `No resources found`.
 - Acceptance evidence recorded so far:
   - `uv run python -m unittest tests/test_phase03_traffic_and_chaos.py
     tests/test_phase06_live_runner.py` passes 18 focused tests.

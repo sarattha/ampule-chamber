@@ -1,0 +1,265 @@
+{
+  "run_id": "phase06-baseline-health-001-20260613063240",
+  "scenario_id": "baseline-health-001",
+  "context": "kind-ampule-chamber",
+  "image": "ampule/sample-service:local",
+  "environment": {
+    "run_id": "phase06-baseline-health-001-20260613063240",
+    "scenario_id": "baseline-health-001",
+    "provider": "kind",
+    "source_provider": "docker",
+    "namespace": "chamber-local-baseline-health-001-2cfb47c6",
+    "labels": {
+      "app.kubernetes.io/managed-by": "ampule-chamber",
+      "app.kubernetes.io/part-of": "ampule-chamber",
+      "chamber.ampule.dev/scenario-id": "baseline-health-001",
+      "chamber.ampule.dev/run-id": "phase06-baseline-health-001-20260613063240"
+    },
+    "resource_names": {
+      "namespace": "chamber-local-baseline-health-001-2cfb47c6",
+      "deployment": "sample-service-deployment-2cfb47c6",
+      "service": "sample-service-svc-2cfb47c6"
+    },
+    "readiness_checks": [
+      {
+        "name": "deployment-rollout",
+        "description": "Deployment rollout completes with available replicas.",
+        "target": "deployment/sample-service-deployment-2cfb47c6 in namespace chamber-local-baseline-health-001-2cfb47c6"
+      },
+      {
+        "name": "service-endpoints",
+        "description": "Service has ready endpoints for the target pods.",
+        "target": "service/sample-service-svc-2cfb47c6:8080"
+      },
+      {
+        "name": "readiness-probe",
+        "description": "Target readiness endpoint returns HTTP 200 through the pod probe.",
+        "target": "/readyz"
+      },
+      {
+        "name": "health-probe",
+        "description": "Target health endpoint returns HTTP 200 through the pod probe.",
+        "target": "/healthz"
+      },
+      {
+        "name": "startup-logs",
+        "description": "Initial pod logs are collected for fatal startup errors.",
+        "target": "deployment/sample-service-deployment-2cfb47c6"
+      }
+    ],
+    "cleanup_selectors": {
+      "app.kubernetes.io/managed-by": "ampule-chamber",
+      "chamber.ampule.dev/run-id": "phase06-baseline-health-001-20260613063240"
+    }
+  },
+  "traffic_plan": {
+    "run_id": "phase06-baseline-health-001-20260613063240",
+    "scenario_id": "baseline-health-001",
+    "tool": "k6",
+    "target_url": "http://127.0.0.1:23726/healthz",
+    "stages": [
+      {
+        "duration": "1m",
+        "duration_seconds": 60,
+        "target_vus": 1
+      },
+      {
+        "duration": "1m",
+        "duration_seconds": 60,
+        "target_vus": 5
+      },
+      {
+        "duration": "1m",
+        "duration_seconds": 60,
+        "target_vus": 0
+      }
+    ],
+    "total_duration_seconds": 180,
+    "script_path": "docs/internal/phases/phase-06-live-manual-chamber-mvp/artifacts/phase06-baseline-health-001-20260613063240/baseline-health-001-k6.js",
+    "summary_path": "docs/internal/phases/phase-06-live-manual-chamber-mvp/artifacts/phase06-baseline-health-001-20260613063240/baseline-health-001-k6-summary.json",
+    "command": [
+      "k6",
+      "run",
+      "--summary-export",
+      "docs/internal/phases/phase-06-live-manual-chamber-mvp/artifacts/phase06-baseline-health-001-20260613063240/baseline-health-001-k6-summary.json",
+      "docs/internal/phases/phase-06-live-manual-chamber-mvp/artifacts/phase06-baseline-health-001-20260613063240/baseline-health-001-k6.js"
+    ],
+    "port_forward_command": [
+      "kubectl",
+      "-n",
+      "chamber-local-baseline-health-001-2cfb47c6",
+      "port-forward",
+      "service/sample-service-svc-2cfb47c6",
+      "23726:8080"
+    ],
+    "port_forward_cleanup_command": [
+      "pkill",
+      "-f",
+      "kubectl -n chamber-local-baseline-health-001-2cfb47c6 port-forward service/sample-service-svc-2cfb47c6 23726:8080"
+    ],
+    "script": "import http from 'k6/http';\nimport { check } from 'k6';\n\nexport const options = {\n  \"stages\": [\n    {\n      \"duration\": \"1m\",\n      \"target\": 1\n    },\n    {\n      \"duration\": \"1m\",\n      \"target\": 5\n    },\n    {\n      \"duration\": \"1m\",\n      \"target\": 0\n    }\n  ]\n};\n\nconst targetUrl = __ENV.TARGET_URL || \"http://127.0.0.1:23726/healthz\";\n\nexport default function () {\n  const response = http.get(targetUrl);\n  check(response, {\n    'status is below 500': (r) => r.status < 500,\n  });\n}\n",
+    "result_fields": [
+      "http_reqs",
+      "http_req_failed",
+      "http_req_duration.p95",
+      "http_req_duration.p99"
+    ]
+  },
+  "traffic_result": {
+    "success": true,
+    "command": [
+      "k6",
+      "run",
+      "--summary-export",
+      "docs/internal/phases/phase-06-live-manual-chamber-mvp/artifacts/phase06-baseline-health-001-20260613063240/baseline-health-001-k6-summary.json",
+      "docs/internal/phases/phase-06-live-manual-chamber-mvp/artifacts/phase06-baseline-health-001-20260613063240/baseline-health-001-k6.js"
+    ],
+    "exit_status": 0,
+    "stdout": "\n         /\\      Grafana   /\u203e\u203e/  \n    /\\  /  \\     |\\  __   /  /   \n   /  \\/    \\    | |/ /  /   \u203e\u203e\\ \n  /          \\   |   (  |  (\u203e)  |\n / __________ \\  |_|\\_\\  \\_____/ \n\n\n     execution: local\n        script: docs/internal/phases/phase-06-live-manual-chamber-mvp/artifacts/phase06-baseline-health-001-20260613063240/baseline-health-001-k6.js\n        output: -\n\n     scenarios: (100.00%) 1 scenario, 5 max VUs, 3m30s max duration (incl. graceful stop):\n              * default: Up to 5 looping VUs for 3m0s over 3 stages (gracefulRampDown: 30s, gracefulStop: 30s)\n\n\nrunning (0m01.0s), 1/5 VUs, 328 complete and 0 interrupted iterations\ndefault   [   1% ] 1/5 VUs  0m01.0s/3m00.0s\n\nrunning (0m02.0s), 1/5 VUs, 629 complete and 0 interrupted iterations\ndefault   [   1% ] 1/5 VUs  0m02.0s/3m00.0s\n\nrunning (0m03.0s), 1/5 VUs, 918 complete and 0 interrupted iterations\ndefault   [   2% ] 1/5 VUs  0m03.0s/3m00.0s\n\nrunning (0m04.0s), 1/5 VUs, 1246 complete and 0 interrupted iterations\ndefault   [   2% ] 1/5 VUs  0m04.0s/3m00.0s\n\nrunning (0m05.0s), 1/5 VUs, 1541 complete and 0 interrupted iterations\ndefault   [   3% ] 1/5 VUs  0m05.0s/3m00.0s\n\nrunning (0m06.0s), 1/5 VUs, 1838 complete and 0 interrupted iterations\ndefault   [   3% ] 1/5 VUs  0m06.0s/3m00.0s\n\nrunning (0m07.0s), 1/5 VUs, 2142 complete and 0 interrupted iterations\ndefault   [   4% ] 1/5 VUs  0m07.0s/3m00.0s\n\nrunning (0m08.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [   4% ] 1/5 VUs  0m08.0s/3m00.0s\n\nrunning (0m09.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [   5% ] 1/5 VUs  0m09.0s/3m00.0s\n\nrunning (0m10.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [   6% ] 1/5 VUs  0m10.0s/3m00.0s\n\nrunning (0m11.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [   6% ] 1/5 VUs  0m11.0s/3m00.0s\n\nrunning (0m12.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [   7% ] 1/5 VUs  0m12.0s/3m00.0s\n\nrunning (0m13.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [   7% ] 1/5 VUs  0m13.0s/3m00.0s\n\nrunning (0m14.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [   8% ] 1/5 VUs  0m14.0s/3m00.0s\n\nrunning (0m15.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [   8% ] 1/5 VUs  0m15.0s/3m00.0s\n\nrunning (0m16.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [   9% ] 1/5 VUs  0m16.0s/3m00.0s\n\nrunning (0m17.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [   9% ] 1/5 VUs  0m17.0s/3m00.0s\n\nrunning (0m18.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  10% ] 1/5 VUs  0m18.0s/3m00.0s\n\nrunning (0m19.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  11% ] 1/5 VUs  0m19.0s/3m00.0s\n\nrunning (0m20.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  11% ] 1/5 VUs  0m20.0s/3m00.0s\n\nrunning (0m21.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  12% ] 1/5 VUs  0m21.0s/3m00.0s\n\nrunning (0m22.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  12% ] 1/5 VUs  0m22.0s/3m00.0s\n\nrunning (0m23.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  13% ] 1/5 VUs  0m23.0s/3m00.0s\n\nrunning (0m24.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  13% ] 1/5 VUs  0m24.0s/3m00.0s\n\nrunning (0m25.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  14% ] 1/5 VUs  0m25.0s/3m00.0s\n\nrunning (0m26.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  14% ] 1/5 VUs  0m26.0s/3m00.0s\n\nrunning (0m27.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  15% ] 1/5 VUs  0m27.0s/3m00.0s\n\nrunning (0m28.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  16% ] 1/5 VUs  0m28.0s/3m00.0s\n\nrunning (0m29.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  16% ] 1/5 VUs  0m29.0s/3m00.0s\n\nrunning (0m30.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  17% ] 1/5 VUs  0m30.0s/3m00.0s\n\nrunning (0m31.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  17% ] 1/5 VUs  0m31.0s/3m00.0s\n\nrunning (0m32.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  18% ] 1/5 VUs  0m32.0s/3m00.0s\n\nrunning (0m33.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  18% ] 1/5 VUs  0m33.0s/3m00.0s\n\nrunning (0m34.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  19% ] 1/5 VUs  0m34.0s/3m00.0s\n\nrunning (0m35.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  19% ] 1/5 VUs  0m35.0s/3m00.0s\n\nrunning (0m36.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  20% ] 1/5 VUs  0m36.0s/3m00.0s\n\nrunning (0m37.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  21% ] 1/5 VUs  0m37.0s/3m00.0s\n\nrunning (0m38.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  21% ] 1/5 VUs  0m38.0s/3m00.0s\n\nrunning (0m39.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  22% ] 1/5 VUs  0m39.0s/3m00.0s\n\nrunning (0m40.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  22% ] 1/5 VUs  0m40.0s/3m00.0s\n\nrunning (0m41.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  23% ] 1/5 VUs  0m41.0s/3m00.0s\n\nrunning (0m42.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  23% ] 1/5 VUs  0m42.0s/3m00.0s\n\nrunning (0m43.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  24% ] 1/5 VUs  0m43.0s/3m00.0s\n\nrunning (0m44.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  24% ] 1/5 VUs  0m44.0s/3m00.0s\n\nrunning (0m45.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  25% ] 1/5 VUs  0m45.0s/3m00.0s\n\nrunning (0m46.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  26% ] 1/5 VUs  0m46.0s/3m00.0s\n\nrunning (0m47.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  26% ] 1/5 VUs  0m47.0s/3m00.0s\n\nrunning (0m48.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  27% ] 1/5 VUs  0m48.0s/3m00.0s\n\nrunning (0m49.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  27% ] 1/5 VUs  0m49.0s/3m00.0s\n\nrunning (0m50.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  28% ] 1/5 VUs  0m50.0s/3m00.0s\n\nrunning (0m51.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  28% ] 1/5 VUs  0m51.0s/3m00.0s\n\nrunning (0m52.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  29% ] 1/5 VUs  0m52.0s/3m00.0s\n\nrunning (0m53.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  29% ] 1/5 VUs  0m53.0s/3m00.0s\n\nrunning (0m54.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  30% ] 1/5 VUs  0m54.0s/3m00.0s\n\nrunning (0m55.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  31% ] 1/5 VUs  0m55.0s/3m00.0s\n\nrunning (0m56.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  31% ] 1/5 VUs  0m56.0s/3m00.0s\n\nrunning (0m57.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  32% ] 1/5 VUs  0m57.0s/3m00.0s\n\nrunning (0m58.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  32% ] 1/5 VUs  0m58.0s/3m00.0s\n\nrunning (0m59.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  33% ] 1/5 VUs  0m59.0s/3m00.0s\n\nrunning (1m00.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  33% ] 1/5 VUs  1m00.0s/3m00.0s\n\nrunning (1m01.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  34% ] 1/5 VUs  1m01.0s/3m00.0s\n\nrunning (1m02.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  34% ] 1/5 VUs  1m02.0s/3m00.0s\n\nrunning (1m03.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  35% ] 1/5 VUs  1m03.0s/3m00.0s\n\nrunning (1m04.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  36% ] 1/5 VUs  1m04.0s/3m00.0s\n\nrunning (1m05.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  36% ] 1/5 VUs  1m05.0s/3m00.0s\n\nrunning (1m06.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  37% ] 1/5 VUs  1m06.0s/3m00.0s\n\nrunning (1m07.0s), 1/5 VUs, 2181 complete and 0 interrupted iterations\ndefault   [  37% ] 1/5 VUs  1m07.0s/3m00.0s\n\nrunning (1m08.0s), 1/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  38% ] 1/5 VUs  1m08.0s/3m00.0s\n\nrunning (1m09.0s), 1/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  38% ] 1/5 VUs  1m09.0s/3m00.0s\n\nrunning (1m10.0s), 1/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  39% ] 1/5 VUs  1m10.0s/3m00.0s\n\nrunning (1m11.0s), 1/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  39% ] 1/5 VUs  1m11.0s/3m00.0s\n\nrunning (1m12.0s), 1/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  40% ] 1/5 VUs  1m12.0s/3m00.0s\n\nrunning (1m13.0s), 1/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  41% ] 1/5 VUs  1m13.0s/3m00.0s\n\nrunning (1m14.0s), 1/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  41% ] 1/5 VUs  1m14.0s/3m00.0s\n\nrunning (1m15.0s), 1/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  42% ] 1/5 VUs  1m15.0s/3m00.0s\n\nrunning (1m16.0s), 2/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  42% ] 2/5 VUs  1m16.0s/3m00.0s\n\nrunning (1m17.0s), 2/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  43% ] 2/5 VUs  1m17.0s/3m00.0s\n\nrunning (1m18.0s), 2/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  43% ] 2/5 VUs  1m18.0s/3m00.0s\n\nrunning (1m19.0s), 2/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  44% ] 2/5 VUs  1m19.0s/3m00.0s\n\nrunning (1m20.0s), 2/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  44% ] 2/5 VUs  1m20.0s/3m00.0s\n\nrunning (1m21.0s), 2/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  45% ] 2/5 VUs  1m21.0s/3m00.0s\n\nrunning (1m22.0s), 2/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  46% ] 2/5 VUs  1m22.0s/3m00.0s\n\nrunning (1m23.0s), 2/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  46% ] 2/5 VUs  1m23.0s/3m00.0s\n\nrunning (1m24.0s), 2/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  47% ] 2/5 VUs  1m24.0s/3m00.0s\n\nrunning (1m25.0s), 2/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  47% ] 2/5 VUs  1m25.0s/3m00.0s\n\nrunning (1m26.0s), 2/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  48% ] 2/5 VUs  1m26.0s/3m00.0s\n\nrunning (1m27.0s), 2/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  48% ] 2/5 VUs  1m27.0s/3m00.0s\n\nrunning (1m28.0s), 2/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  49% ] 2/5 VUs  1m28.0s/3m00.0s\n\nrunning (1m29.0s), 2/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  49% ] 2/5 VUs  1m29.0s/3m00.0s\n\nrunning (1m30.0s), 2/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  50% ] 2/5 VUs  1m30.0s/3m00.0s\n\nrunning (1m31.0s), 3/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  51% ] 3/5 VUs  1m31.0s/3m00.0s\n\nrunning (1m32.0s), 3/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  51% ] 3/5 VUs  1m32.0s/3m00.0s\n\nrunning (1m33.0s), 3/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  52% ] 3/5 VUs  1m33.0s/3m00.0s\n\nrunning (1m34.0s), 3/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  52% ] 3/5 VUs  1m34.0s/3m00.0s\n\nrunning (1m35.0s), 3/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  53% ] 3/5 VUs  1m35.0s/3m00.0s\n\nrunning (1m36.0s), 3/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  53% ] 3/5 VUs  1m36.0s/3m00.0s\n\nrunning (1m37.0s), 3/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  54% ] 3/5 VUs  1m37.0s/3m00.0s\n\nrunning (1m38.0s), 3/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  54% ] 3/5 VUs  1m38.0s/3m00.0s\n\nrunning (1m39.0s), 3/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  55% ] 3/5 VUs  1m39.0s/3m00.0s\n\nrunning (1m40.0s), 3/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  56% ] 3/5 VUs  1m40.0s/3m00.0s\n\nrunning (1m41.0s), 3/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  56% ] 3/5 VUs  1m41.0s/3m00.0s\n\nrunning (1m42.0s), 3/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  57% ] 3/5 VUs  1m42.0s/3m00.0s\n\nrunning (1m43.0s), 3/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  57% ] 3/5 VUs  1m43.0s/3m00.0s\n\nrunning (1m44.0s), 3/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  58% ] 3/5 VUs  1m44.0s/3m00.0s\n\nrunning (1m45.0s), 4/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  58% ] 4/5 VUs  1m45.0s/3m00.0s\n\nrunning (1m46.0s), 4/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  59% ] 4/5 VUs  1m46.0s/3m00.0s\n\nrunning (1m47.0s), 4/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  59% ] 4/5 VUs  1m47.0s/3m00.0s\n\nrunning (1m48.0s), 4/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  60% ] 4/5 VUs  1m48.0s/3m00.0s\n\nrunning (1m49.0s), 4/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  61% ] 4/5 VUs  1m49.0s/3m00.0s\n\nrunning (1m50.0s), 4/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  61% ] 4/5 VUs  1m50.0s/3m00.0s\n\nrunning (1m51.0s), 4/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  62% ] 4/5 VUs  1m51.0s/3m00.0s\n\nrunning (1m52.0s), 4/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  62% ] 4/5 VUs  1m52.0s/3m00.0s\n\nrunning (1m53.0s), 4/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  63% ] 4/5 VUs  1m53.0s/3m00.0s\n\nrunning (1m54.0s), 4/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  63% ] 4/5 VUs  1m54.0s/3m00.0s\n\nrunning (1m55.0s), 4/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  64% ] 4/5 VUs  1m55.0s/3m00.0s\n\nrunning (1m56.0s), 4/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  64% ] 4/5 VUs  1m56.0s/3m00.0s\n\nrunning (1m57.0s), 4/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  65% ] 4/5 VUs  1m57.0s/3m00.0s\n\nrunning (1m58.0s), 4/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  66% ] 4/5 VUs  1m58.0s/3m00.0s\n\nrunning (1m59.0s), 4/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  66% ] 4/5 VUs  1m59.0s/3m00.0s\n\nrunning (2m00.0s), 4/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  67% ] 4/5 VUs  2m00.0s/3m00.0s\n\nrunning (2m01.0s), 5/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  67% ] 5/5 VUs  2m01.0s/3m00.0s\n\nrunning (2m02.0s), 5/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  68% ] 5/5 VUs  2m02.0s/3m00.0s\n\nrunning (2m03.0s), 5/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  68% ] 5/5 VUs  2m03.0s/3m00.0s\n\nrunning (2m04.0s), 5/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  69% ] 5/5 VUs  2m04.0s/3m00.0s\n\nrunning (2m05.0s), 5/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  69% ] 5/5 VUs  2m05.0s/3m00.0s\n\nrunning (2m06.0s), 5/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  70% ] 5/5 VUs  2m06.0s/3m00.0s\n\nrunning (2m07.0s), 5/5 VUs, 2182 complete and 0 interrupted iterations\ndefault   [  71% ] 5/5 VUs  2m07.0s/3m00.0s\n\nrunning (2m08.0s), 5/5 VUs, 2183 complete and 0 interrupted iterations\ndefault   [  71% ] 5/5 VUs  2m08.0s/3m00.0s\n\nrunning (2m09.0s), 5/5 VUs, 2183 complete and 0 interrupted iterations\ndefault   [  72% ] 5/5 VUs  2m09.0s/3m00.0s\n\nrunning (2m10.0s), 5/5 VUs, 2183 complete and 0 interrupted iterations\ndefault   [  72% ] 5/5 VUs  2m10.0s/3m00.0s\n\nrunning (2m11.0s), 5/5 VUs, 2183 complete and 0 interrupted iterations\ndefault   [  73% ] 5/5 VUs  2m11.0s/3m00.0s\n\nrunning (2m12.0s), 5/5 VUs, 2183 complete and 0 interrupted iterations\ndefault   [  73% ] 5/5 VUs  2m12.0s/3m00.0s\n\nrunning (2m13.0s), 5/5 VUs, 2183 complete and 0 interrupted iterations\ndefault   [  74% ] 5/5 VUs  2m13.0s/3m00.0s\n\nrunning (2m14.0s), 5/5 VUs, 2183 complete and 0 interrupted iterations\ndefault   [  74% ] 5/5 VUs  2m14.0s/3m00.0s\n\nrunning (2m15.0s), 5/5 VUs, 2183 complete and 0 interrupted iterations\ndefault   [  75% ] 5/5 VUs  2m15.0s/3m00.0s\n\nrunning (2m16.0s), 5/5 VUs, 2184 complete and 0 interrupted iterations\ndefault   [  76% ] 5/5 VUs  2m16.0s/3m00.0s\n\nrunning (2m17.0s), 5/5 VUs, 2184 complete and 0 interrupted iterations\ndefault   [  76% ] 5/5 VUs  2m17.0s/3m00.0s\n\nrunning (2m18.0s), 5/5 VUs, 2184 complete and 0 interrupted iterations\ndefault   [  77% ] 5/5 VUs  2m18.0s/3m00.0s\n\nrunning (2m19.0s), 5/5 VUs, 2184 complete and 0 interrupted iterations\ndefault   [  77% ] 5/5 VUs  2m19.0s/3m00.0s\n\nrunning (2m20.0s), 5/5 VUs, 2184 complete and 0 interrupted iterations\ndefault   [  78% ] 5/5 VUs  2m20.0s/3m00.0s\n\nrunning (2m21.0s), 5/5 VUs, 2184 complete and 0 interrupted iterations\ndefault   [  78% ] 5/5 VUs  2m21.0s/3m00.0s\n\nrunning (2m22.0s), 5/5 VUs, 2184 complete and 0 interrupted iterations\ndefault   [  79% ] 5/5 VUs  2m22.0s/3m00.0s\n\nrunning (2m23.0s), 5/5 VUs, 2184 complete and 0 interrupted iterations\ndefault   [  79% ] 5/5 VUs  2m23.0s/3m00.0s\n\nrunning (2m24.0s), 5/5 VUs, 2184 complete and 0 interrupted iterations\ndefault   [  80% ] 5/5 VUs  2m24.0s/3m00.0s\n\nrunning (2m25.0s), 5/5 VUs, 2184 complete and 0 interrupted iterations\ndefault   [  81% ] 5/5 VUs  2m25.0s/3m00.0s\n\nrunning (2m26.0s), 5/5 VUs, 2184 complete and 0 interrupted iterations\ndefault   [  81% ] 5/5 VUs  2m26.0s/3m00.0s\n\nrunning (2m27.0s), 5/5 VUs, 2184 complete and 0 interrupted iterations\ndefault   [  82% ] 5/5 VUs  2m27.0s/3m00.0s\n\nrunning (2m28.0s), 5/5 VUs, 2184 complete and 0 interrupted iterations\ndefault   [  82% ] 5/5 VUs  2m28.0s/3m00.0s\n\nrunning (2m29.0s), 5/5 VUs, 2184 complete and 0 interrupted iterations\ndefault   [  83% ] 5/5 VUs  2m29.0s/3m00.0s\n\nrunning (2m30.0s), 5/5 VUs, 2184 complete and 0 interrupted iterations\ndefault   [  83% ] 5/5 VUs  2m30.0s/3m00.0s\n\nrunning (2m31.0s), 5/5 VUs, 2185 complete and 0 interrupted iterations\ndefault   [  84% ] 5/5 VUs  2m31.0s/3m00.0s\n\nrunning (2m32.0s), 5/5 VUs, 2185 complete and 0 interrupted iterations\ndefault   [  84% ] 5/5 VUs  2m32.0s/3m00.0s\n\nrunning (2m33.0s), 5/5 VUs, 2185 complete and 0 interrupted iterations\ndefault   [  85% ] 5/5 VUs  2m33.0s/3m00.0s\n\nrunning (2m34.0s), 5/5 VUs, 2185 complete and 0 interrupted iterations\ndefault   [  86% ] 5/5 VUs  2m34.0s/3m00.0s\n\nrunning (2m35.0s), 5/5 VUs, 2185 complete and 0 interrupted iterations\ndefault   [  86% ] 5/5 VUs  2m35.0s/3m00.0s\n\nrunning (2m36.0s), 5/5 VUs, 2185 complete and 0 interrupted iterations\ndefault   [  87% ] 5/5 VUs  2m36.0s/3m00.0s\n\nrunning (2m37.0s), 5/5 VUs, 2185 complete and 0 interrupted iterations\ndefault   [  87% ] 5/5 VUs  2m37.0s/3m00.0s\n\nrunning (2m38.0s), 5/5 VUs, 2185 complete and 0 interrupted iterations\ndefault   [  88% ] 5/5 VUs  2m38.0s/3m00.0s\n\nrunning (2m39.0s), 5/5 VUs, 2185 complete and 0 interrupted iterations\ndefault   [  88% ] 5/5 VUs  2m39.0s/3m00.0s\n\nrunning (2m40.0s), 5/5 VUs, 2185 complete and 0 interrupted iterations\ndefault   [  89% ] 5/5 VUs  2m40.0s/3m00.0s\n\nrunning (2m41.0s), 5/5 VUs, 2185 complete and 0 interrupted iterations\ndefault   [  89% ] 5/5 VUs  2m41.0s/3m00.0s\n\nrunning (2m42.0s), 5/5 VUs, 2185 complete and 0 interrupted iterations\ndefault   [  90% ] 5/5 VUs  2m42.0s/3m00.0s\n\nrunning (2m43.0s), 4/5 VUs, 2185 complete and 1 interrupted iterations\ndefault   [  91% ] 4/5 VUs  2m43.0s/3m00.0s\n\nrunning (2m44.0s), 4/5 VUs, 2185 complete and 1 interrupted iterations\ndefault   [  91% ] 4/5 VUs  2m44.0s/3m00.0s\n\nrunning (2m45.0s), 4/5 VUs, 2185 complete and 1 interrupted iterations\ndefault   [  92% ] 4/5 VUs  2m45.0s/3m00.0s\n\nrunning (2m46.0s), 3/5 VUs, 2186 complete and 1 interrupted iterations\ndefault   [  92% ] 3/5 VUs  2m46.0s/3m00.0s\n\nrunning (2m47.0s), 3/5 VUs, 2186 complete and 1 interrupted iterations\ndefault   [  93% ] 3/5 VUs  2m47.0s/3m00.0s\n\nrunning (2m48.0s), 3/5 VUs, 2186 complete and 1 interrupted iterations\ndefault   [  93% ] 3/5 VUs  2m48.0s/3m00.0s\n\nrunning (2m49.0s), 3/5 VUs, 2186 complete and 1 interrupted iterations\ndefault   [  94% ] 3/5 VUs  2m49.0s/3m00.0s\n\nrunning (2m50.0s), 3/5 VUs, 2186 complete and 1 interrupted iterations\ndefault   [  94% ] 3/5 VUs  2m50.0s/3m00.0s\n\nrunning (2m51.0s), 3/5 VUs, 2186 complete and 1 interrupted iterations\ndefault   [  95% ] 3/5 VUs  2m51.0s/3m00.0s\n\nrunning (2m52.0s), 3/5 VUs, 2186 complete and 1 interrupted iterations\ndefault   [  96% ] 3/5 VUs  2m52.0s/3m00.0s\n\nrunning (2m53.0s), 3/5 VUs, 2186 complete and 1 interrupted iterations\ndefault   [  96% ] 3/5 VUs  2m53.0s/3m00.0s\n\nrunning (2m54.0s), 3/5 VUs, 2186 complete and 1 interrupted iterations\ndefault   [  97% ] 3/5 VUs  2m54.0s/3m00.0s\n\nrunning (2m55.0s), 3/5 VUs, 2186 complete and 1 interrupted iterations\ndefault   [  97% ] 3/5 VUs  2m55.0s/3m00.0s\n\nrunning (2m56.0s), 3/5 VUs, 2186 complete and 1 interrupted iterations\ndefault   [  98% ] 3/5 VUs  2m56.0s/3m00.0s\n\nrunning (2m57.0s), 3/5 VUs, 2186 complete and 1 interrupted iterations\ndefault   [  98% ] 3/5 VUs  2m57.0s/3m00.0s\n\nrunning (2m58.0s), 3/5 VUs, 2186 complete and 1 interrupted iterations\ndefault   [  99% ] 3/5 VUs  2m58.0s/3m00.0s\n\nrunning (2m59.0s), 3/5 VUs, 2186 complete and 1 interrupted iterations\ndefault   [  99% ] 3/5 VUs  2m59.0s/3m00.0s\n\nrunning (3m00.0s), 3/5 VUs, 2186 complete and 1 interrupted iterations\ndefault   [ 100% ] 3/5 VUs  3m00.0s/3m00.0s\n\nrunning (3m01.0s), 3/5 VUs, 2186 complete and 1 interrupted iterations\ndefault \u2193 [ 100% ] 3/5 VUs  3m0s\n\nrunning (3m02.0s), 3/5 VUs, 2186 complete and 1 interrupted iterations\ndefault \u2193 [ 100% ] 3/5 VUs  3m0s\n\nrunning (3m03.0s), 3/5 VUs, 2186 complete and 1 interrupted iterations\ndefault \u2193 [ 100% ] 3/5 VUs  3m0s\n\nrunning (3m04.0s), 3/5 VUs, 2186 complete and 1 interrupted iterations\ndefault \u2193 [ 100% ] 3/5 VUs  3m0s\n\nrunning (3m05.0s), 3/5 VUs, 2186 complete and 1 interrupted iterations\ndefault \u2193 [ 100% ] 3/5 VUs  3m0s\n\nrunning (3m06.0s), 3/5 VUs, 2186 complete and 1 interrupted iterations\ndefault \u2193 [ 100% ] 3/5 VUs  3m0s\n\nrunning (3m07.0s), 2/5 VUs, 2186 complete and 2 interrupted iterations\ndefault \u2193 [ 100% ] 3/5 VUs  3m0s\n\nrunning (3m08.0s), 1/5 VUs, 2187 complete and 2 interrupted iterations\ndefault \u2193 [ 100% ] 3/5 VUs  3m0s\n\nrunning (3m09.0s), 1/5 VUs, 2187 complete and 2 interrupted iterations\ndefault \u2193 [ 100% ] 3/5 VUs  3m0s\n\nrunning (3m10.0s), 1/5 VUs, 2187 complete and 2 interrupted iterations\ndefault \u2193 [ 100% ] 3/5 VUs  3m0s\n\nrunning (3m11.0s), 1/5 VUs, 2187 complete and 2 interrupted iterations\ndefault \u2193 [ 100% ] 3/5 VUs  3m0s\n\nrunning (3m12.0s), 1/5 VUs, 2187 complete and 2 interrupted iterations\ndefault \u2193 [ 100% ] 3/5 VUs  3m0s\n\nrunning (3m13.0s), 1/5 VUs, 2187 complete and 2 interrupted iterations\ndefault \u2193 [ 100% ] 3/5 VUs  3m0s\n\nrunning (3m14.0s), 1/5 VUs, 2187 complete and 2 interrupted iterations\ndefault \u2193 [ 100% ] 3/5 VUs  3m0s\n\nrunning (3m15.0s), 1/5 VUs, 2187 complete and 2 interrupted iterations\ndefault \u2193 [ 100% ] 3/5 VUs  3m0s\n\n\n  \u2588 TOTAL RESULTS \n\n    checks_total.......: 2188    11.220111/s\n    checks_succeeded...: 100.00% 2188 out of 2188\n    checks_failed......: 0.00%   0 out of 2188\n\n    \u2713 status is below 500\n\n    HTTP\n    http_req_duration..............: avg=194.85ms min=1.74ms med=2.72ms max=1m0s    p(90)=3.77ms p(95)=4.13ms\n      { expected_response:true }...: avg=2.9ms    min=1.74ms med=2.72ms max=10.31ms p(90)=3.76ms p(95)=4.12ms\n    http_req_failed................: 0.31%  7 out of 2188\n    http_reqs......................: 2188   11.220111/s\n\n    EXECUTION\n    iteration_duration.............: avg=195.2ms  min=1.94ms med=3.04ms max=1m0s    p(90)=4.19ms p(95)=4.68ms\n    iterations.....................: 2188   11.220111/s\n    vus............................: 1      min=1         max=5\n    vus_max........................: 5      min=5         max=5\n\n    NETWORK\n    data_received..................: 362 kB 1.9 kB/s\n    data_sent......................: 171 kB 876 B/s\n\n\n\n\nrunning (3m15.0s), 0/5 VUs, 2188 complete and 2 interrupted iterations\ndefault \u2713 [ 100% ] 0/5 VUs  3m0s\n",
+    "stderr": "time=\"2026-06-13T13:33:59+07:00\" level=warning msg=\"Request Failed\" error=\"Get \\\"http://127.0.0.1:23726/healthz\\\": request timeout\"\ntime=\"2026-06-13T13:34:59+07:00\" level=warning msg=\"Request Failed\" error=\"Get \\\"http://127.0.0.1:23726/healthz\\\": request timeout\"\ntime=\"2026-06-13T13:35:07+07:00\" level=warning msg=\"Request Failed\" error=\"Get \\\"http://127.0.0.1:23726/healthz\\\": request timeout\"\ntime=\"2026-06-13T13:35:22+07:00\" level=warning msg=\"Request Failed\" error=\"Get \\\"http://127.0.0.1:23726/healthz\\\": request timeout\"\ntime=\"2026-06-13T13:35:37+07:00\" level=warning msg=\"Request Failed\" error=\"Get \\\"http://127.0.0.1:23726/healthz\\\": request timeout\"\ntime=\"2026-06-13T13:35:59+07:00\" level=warning msg=\"Request Failed\" error=\"Get \\\"http://127.0.0.1:23726/healthz\\\": request timeout\"\ntime=\"2026-06-13T13:36:07+07:00\" level=warning msg=\"Request Failed\" error=\"Get \\\"http://127.0.0.1:23726/healthz\\\": request timeout\"\n",
+    "error": null
+  },
+  "timeline": {
+    "run_id": "phase06-baseline-health-001-20260613063240",
+    "scenario_id": "baseline-health-001",
+    "events": [
+      {
+        "offset_seconds": 0,
+        "event_type": "traffic_start",
+        "name": "traffic-start",
+        "source": "load",
+        "description": "Start k6 traffic against http://127.0.0.1:23726/healthz.",
+        "details": {
+          "targetUrl": "http://127.0.0.1:23726/healthz"
+        }
+      },
+      {
+        "offset_seconds": 180,
+        "event_type": "traffic_stop",
+        "name": "traffic-stop",
+        "source": "load",
+        "description": "Stop traffic after all scenario stages complete.",
+        "details": {
+          "totalDurationSeconds": "180"
+        }
+      },
+      {
+        "offset_seconds": 180,
+        "event_type": "recovery_validate",
+        "name": "recovery-validate",
+        "source": "orchestrator",
+        "description": "Validate recovery conditions after traffic and fault windows.",
+        "details": {}
+      }
+    ]
+  },
+  "commands": [
+    {
+      "command": [
+        "kubectl",
+        "apply",
+        "-f",
+        "-"
+      ],
+      "exit_status": 0,
+      "stdout": "namespace/chamber-local-baseline-health-001-2cfb47c6 created\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "kubectl",
+        "apply",
+        "-f",
+        "-"
+      ],
+      "exit_status": 0,
+      "stdout": "deployment.apps/sample-service-deployment-2cfb47c6 created\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "kubectl",
+        "apply",
+        "-f",
+        "-"
+      ],
+      "exit_status": 0,
+      "stdout": "service/sample-service-svc-2cfb47c6 created\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "kubectl",
+        "-n",
+        "chamber-local-baseline-health-001-2cfb47c6",
+        "rollout",
+        "status",
+        "deployment/sample-service-deployment-2cfb47c6",
+        "--timeout=180s"
+      ],
+      "exit_status": 0,
+      "stdout": "Waiting for deployment \"sample-service-deployment-2cfb47c6\" rollout to finish: 0 of 1 updated replicas are available...\ndeployment \"sample-service-deployment-2cfb47c6\" successfully rolled out\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "kubectl",
+        "-n",
+        "chamber-local-baseline-health-001-2cfb47c6",
+        "wait",
+        "pod",
+        "-l",
+        "app.kubernetes.io/managed-by=ampule-chamber,chamber.ampule.dev/run-id=phase06-baseline-health-001-20260613063240",
+        "--for=condition=Ready",
+        "--timeout=180s"
+      ],
+      "exit_status": 0,
+      "stdout": "pod/sample-service-deployment-2cfb47c6-7fb5954876-5vzf4 condition met\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "kubectl",
+        "-n",
+        "chamber-local-baseline-health-001-2cfb47c6",
+        "get",
+        "endpoints",
+        "sample-service-svc-2cfb47c6",
+        "-o",
+        "json"
+      ],
+      "exit_status": 0,
+      "stdout": "{\n    \"apiVersion\": \"v1\",\n    \"kind\": \"Endpoints\",\n    \"metadata\": {\n        \"annotations\": {\n            \"endpoints.kubernetes.io/last-change-trigger-time\": \"2026-06-13T06:32:52Z\"\n        },\n        \"creationTimestamp\": \"2026-06-13T06:32:40Z\",\n        \"labels\": {\n            \"app.kubernetes.io/managed-by\": \"ampule-chamber\",\n            \"app.kubernetes.io/part-of\": \"ampule-chamber\",\n            \"chamber.ampule.dev/run-id\": \"phase06-baseline-health-001-20260613063240\",\n            \"chamber.ampule.dev/scenario-id\": \"baseline-health-001\",\n            \"endpoints.kubernetes.io/managed-by\": \"endpoint-controller\"\n        },\n        \"name\": \"sample-service-svc-2cfb47c6\",\n        \"namespace\": \"chamber-local-baseline-health-001-2cfb47c6\",\n        \"resourceVersion\": \"73567\",\n        \"uid\": \"4e1f41ae-a7ca-464b-84cf-b0cb379f4ac8\"\n    },\n    \"subsets\": [\n        {\n            \"addresses\": [\n                {\n                    \"ip\": \"10.244.0.7\",\n                    \"nodeName\": \"ampule-chamber-control-plane\",\n                    \"targetRef\": {\n                        \"kind\": \"Pod\",\n                        \"name\": \"sample-service-deployment-2cfb47c6-7fb5954876-5vzf4\",\n                        \"namespace\": \"chamber-local-baseline-health-001-2cfb47c6\",\n                        \"uid\": \"0bd22d23-65ca-4f6b-9440-1906322ee5d0\"\n                    }\n                }\n            ],\n            \"ports\": [\n                {\n                    \"name\": \"http\",\n                    \"port\": 8080,\n                    \"protocol\": \"TCP\"\n                }\n            ]\n        }\n    ]\n}\n",
+      "stderr": "Warning: v1 Endpoints is deprecated in v1.33+; use discovery.k8s.io/v1 EndpointSlice\n"
+    },
+    {
+      "command": [
+        "kubectl",
+        "-n",
+        "chamber-local-baseline-health-001-2cfb47c6",
+        "delete",
+        "networkpolicy,deployment,service",
+        "-l",
+        "app.kubernetes.io/managed-by=ampule-chamber,chamber.ampule.dev/run-id=phase06-baseline-health-001-20260613063240",
+        "--ignore-not-found=true"
+      ],
+      "exit_status": 0,
+      "stdout": "deployment.apps \"sample-service-deployment-2cfb47c6\" deleted from chamber-local-baseline-health-001-2cfb47c6 namespace\nservice \"sample-service-svc-2cfb47c6\" deleted from chamber-local-baseline-health-001-2cfb47c6 namespace\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "kubectl",
+        "delete",
+        "namespace",
+        "chamber-local-baseline-health-001-2cfb47c6",
+        "--ignore-not-found=true"
+      ],
+      "exit_status": 0,
+      "stdout": "namespace \"chamber-local-baseline-health-001-2cfb47c6\" deleted\n",
+      "stderr": ""
+    }
+  ],
+  "cleanup_performed": true,
+  "limitations": []
+}
