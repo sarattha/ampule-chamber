@@ -197,7 +197,10 @@ class Phase06RunnerWiringTests(unittest.TestCase):
     def test_live_runner_gates_dependency_response_faults(self) -> None:
         scenario = load_scenario(SCENARIO_DIR / "retry-storm.yaml")
 
-        with self.assertRaisesRegex(live.LiveRunError, "does not provision"):
+        live._validate_live_fault_support(scenario)
+
+        scenario.document["environment"]["dependencies"] = []
+        with self.assertRaisesRegex(live.LiveRunError, "declares no controlled dependency"):
             live._validate_live_fault_support(scenario)
 
     def test_report_wiring_includes_live_evidence_cleanup_and_limitations(self) -> None:
@@ -338,6 +341,41 @@ class Phase06RunnerWiringTests(unittest.TestCase):
 
         self.assertTrue(runner.traffic.terminated)
         self.assertTrue(runner.port_forward.terminated)
+
+    def test_traffic_process_has_deadline(self) -> None:
+        scenario = load_scenario(SCENARIO_DIR / "baseline-health.yaml")
+        environment = plan_environment(scenario, run_id="phase06-test").metadata
+        with TemporaryDirectory() as artifact_dir:
+            traffic_plan = plan_traffic(
+                scenario,
+                environment=environment,
+                artifact_dir=artifact_dir,
+            )
+            fault_plan = plan_faults(
+                scenario,
+                environment=environment,
+                artifact_dir=artifact_dir,
+            )
+            runner = TrafficRunner()
+            runner.traffic.polls = [None]
+            with (
+                patch("chamber.orchestrator.live.shutil.which", return_value="/usr/bin/k6"),
+                patch("chamber.orchestrator.live._wait_for_target"),
+                patch(
+                    "chamber.orchestrator.live.time.monotonic",
+                    side_effect=[0.0, 0.0, 999.0],
+                ),
+            ):
+                result = live._execute_traffic_with_faults(
+                    traffic_plan,
+                    fault_plan=fault_plan,
+                    runner=runner,
+                    commands=[],
+                )
+
+        self.assertFalse(result.success)
+        self.assertIn("exceeded planned traffic duration", result.error or "")
+        self.assertTrue(runner.traffic.terminated)
 
 
 def _completed(

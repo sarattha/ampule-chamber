@@ -225,8 +225,12 @@ class Phase03ChaosPlanningTests(unittest.TestCase):
         scenario = load_scenario(SCENARIO_DIR / "retry-storm.yaml")
         environment = plan_environment(scenario, run_id="phase03-test").metadata
         with TemporaryDirectory() as artifact_dir:
-            with self.assertRaisesRegex(FaultPlanningError, "reserved for a later phase"):
-                plan_faults(scenario, environment=environment, artifact_dir=artifact_dir)
+            plan = plan_faults(scenario, environment=environment, artifact_dir=artifact_dir)
+        self.assertEqual(
+            [action.action_type for action in plan.actions],
+            ["inject", "remove", "inject", "remove"],
+        )
+        self.assertIn("FAULT_STATUS", plan.actions[0].command[-1])
 
 
 class Phase03TimelineTests(unittest.TestCase):
@@ -246,11 +250,14 @@ class Phase03TimelineTests(unittest.TestCase):
         self.assertEqual(
             [(event.event_type, event.offset_seconds) for event in timeline.events],
             [
+                ("environment_setup", 0),
                 ("traffic_start", 0),
                 ("fault_start", 120),
                 ("fault_removed", 180),
                 ("traffic_stop", 420),
+                ("observation_stop", 420),
                 ("recovery_validate", 420),
+                ("cleanup_planned", 420),
             ],
         )
 

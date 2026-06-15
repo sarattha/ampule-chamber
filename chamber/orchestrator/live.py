@@ -35,6 +35,7 @@ from chamber.report import (
     EvidenceReference,
     ReportFinding,
     ReportInput,
+    ReportSection,
     ReproductionDetails,
     RunMetadata,
     ServiceMetadata,
@@ -179,7 +180,13 @@ def run_cli(argv: list[str] | None = None) -> int:  # pragma: no cover
         scenarios=scenarios,
         output=Path(args.output) if args.output else None,
         output_dir=Path(args.output_dir) if args.output_dir else None,
-        artifact_dir=Path(args.output_dir) if args.output_dir else PHASE06_ARTIFACT_DIR,
+        artifact_dir=(
+            Path(args.output_dir)
+            if args.output_dir
+            else Path(args.output).parent
+            if args.output
+            else PHASE06_ARTIFACT_DIR
+        ),
         context=args.context,
         image=args.image,
         retain=args.retain,
@@ -440,21 +447,26 @@ def _wait_for_readiness(
 ) -> None:  # pragma: no cover
     metadata = environment_plan.metadata
     namespace = metadata.namespace
-    deployment = metadata.resource_names["deployment"]
-    service = metadata.resource_names["service"]
     selector = ",".join(
         f"{key}={value}" for key, value in sorted(metadata.cleanup_selectors.items())
     )
-    checks = (
-        (
-            "kubectl",
-            "-n",
-            namespace,
-            "rollout",
-            "status",
-            f"deployment/{deployment}",
-            "--timeout=180s",
-        ),
+    checks: list[tuple[str, ...]] = []
+    for resource in metadata.service_resources:
+        checks.extend(
+            [
+                (
+                    "kubectl",
+                    "-n",
+                    namespace,
+                    "rollout",
+                    "status",
+                    f"deployment/{resource.deployment}",
+                    "--timeout=180s",
+                ),
+                ("kubectl", "-n", namespace, "get", "endpoints", resource.service, "-o", "json"),
+            ]
+        )
+    checks.append(
         (
             "kubectl",
             "-n",
@@ -465,8 +477,7 @@ def _wait_for_readiness(
             selector,
             "--for=condition=Ready",
             "--timeout=180s",
-        ),
-        ("kubectl", "-n", namespace, "get", "endpoints", service, "-o", "json"),
+        )
     )
     for command in checks:
         completed = _run_recorded(runner, command, commands)
@@ -504,6 +515,7 @@ def _execute_traffic_with_faults(
             )
             try:
                 started = time.monotonic()
+                deadline = started + traffic_plan.total_duration_seconds + 60
                 pending = list(sorted(fault_plan.actions, key=lambda action: action.offset_seconds))
                 while process.poll() is None:
                     elapsed = time.monotonic() - started
@@ -511,6 +523,18 @@ def _execute_traffic_with_faults(
                         action = pending.pop(0)
                         completed = _run_recorded(runner, action.command, commands)
                         _success(completed, action.description)
+                    if time.monotonic() > deadline:
+                        _stop_process(process)
+                        return TrafficExecutionResult(
+                            success=False,
+                            command=traffic_plan.command,
+                            exit_status=process.returncode,
+                            stdout="",
+                            stderr="",
+                            error=(
+                                "k6 exceeded planned traffic duration plus 60 second grace window."
+                            ),
+                        )
                     time.sleep(0.2)
             except Exception:
                 _stop_process(process)
@@ -625,12 +649,12 @@ def _require_tools(tools: tuple[str, ...]) -> None:  # pragma: no cover
 
 
 def _validate_live_fault_support(scenario: Scenario) -> None:
-    unsupported = sorted(_dependency_response_faults(scenario))
-    if unsupported:
-        fault_list = ", ".join(unsupported)
+    if _dependency_response_faults(scenario) and not scenario.document["environment"].get(
+        "dependencies"
+    ):
         raise LiveRunError(
-            f"{scenario.scenario_id} uses {fault_list}, but phase 06 does not provision "
-            "a downstream dependency or fault proxy for controlled 500/429 responses"
+            f"{scenario.scenario_id} uses dependency response faults but declares no "
+            "controlled dependency workload"
         )
 
 
@@ -707,6 +731,22 @@ def _report_input(
             else "Resources were retained for debugging.",
         ),
         limitations=limitations or ("No phase-specific limitations recorded.",),
+        agent_sections=(
+            ReportSection(
+                heading="Agent Analysis",
+                lines=(
+                    "No live phase 07 agent analysis was attached to this runner output.",
+                    "Agent outputs must cite supplied evidence before report inclusion.",
+                ),
+            ),
+        ),
+        dependency_graph=_dependency_graph_lines(environment),
+        recovery_status=_recovery_status_lines(
+            timeline=timeline,
+            traffic_success=traffic_result.success,
+            findings=findings,
+            cleanup_performed=cleanup_performed,
+        ),
     )
 
 
@@ -722,6 +762,41 @@ def _report_finding(finding: Finding) -> ReportFinding:
         evidence_ids=finding.evidence_ids,
         related_timeline_ids=finding.related_timeline_ids,
         recommendations=_recommendations(finding),
+    )
+
+
+def _dependency_graph_lines(environment: EnvironmentMetadata) -> tuple[str, ...]:
+    dependencies = [
+        resource for resource in environment.service_resources if resource.role == "dependency"
+    ]
+    if not dependencies:
+        return ()
+    target = next(
+        resource for resource in environment.service_resources if resource.role == "target"
+    )
+    return tuple(
+        f"{target.source_name} -> {dependency.source_name} "
+        f"(service/{dependency.service}:{dependency.port})"
+        for dependency in dependencies
+    )
+
+
+def _recovery_status_lines(
+    *,
+    timeline: ExperimentTimeline,
+    traffic_success: bool,
+    findings: tuple[Finding, ...],
+    cleanup_performed: bool,
+) -> tuple[str, ...]:
+    recovery_events = [
+        event for event in timeline.events if event.event_type == "recovery_validate"
+    ]
+    status = "recovered" if traffic_success and not findings else "degraded_or_inconclusive"
+    cleanup = "cleanup completed" if cleanup_performed else "resources retained"
+    return (
+        f"Status: {status}.",
+        f"Recovery checkpoints: {len(recovery_events)}.",
+        f"Cleanup: {cleanup}.",
     )
 
 
@@ -800,7 +875,9 @@ def _report_path(options: LiveRunOptions, scenario: Scenario, run_id: str) -> Pa
 def _scenario_limitations(scenario: Scenario) -> tuple[str, ...]:
     limitations = []
     fault_types = _fault_types(scenario)
-    if _dependency_response_faults(scenario):
+    if _dependency_response_faults(scenario) and not scenario.document["environment"].get(
+        "dependencies"
+    ):
         limitations.append(
             "Dependency error and rate-limit faults require a future downstream dependency "
             "workload or fault proxy before live execution."
@@ -814,7 +891,11 @@ def _scenario_limitations(scenario: Scenario) -> tuple[str, ...]:
 
 
 def _dependency_response_faults(scenario: Scenario) -> set[str]:
-    return _fault_types(scenario) & {"dependency_errors", "dependency_rate_limit"}
+    return _fault_types(scenario) & {
+        "dependency_errors",
+        "dependency_latency",
+        "dependency_rate_limit",
+    }
 
 
 def _fault_types(scenario: Scenario) -> set[str]:
@@ -835,7 +916,7 @@ def _fault_summary(scenario: Scenario) -> str:
 
 def _run_id(scenario_id: str) -> str:
     timestamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
-    return f"phase06-{scenario_id}-{timestamp}"
+    return f"chamber-{scenario_id}-{timestamp}"
 
 
 def _git_commit() -> str:  # pragma: no cover

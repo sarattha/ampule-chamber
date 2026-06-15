@@ -42,6 +42,14 @@ def build_experiment_timeline(
     events = [
         TimelineEvent(
             offset_seconds=0,
+            event_type="environment_setup",
+            name="environment-setup",
+            source="orchestrator",
+            description="Chamber namespace and service workloads are prepared.",
+            details={},
+        ),
+        TimelineEvent(
+            offset_seconds=0,
             event_type="traffic_start",
             name="traffic-start",
             source="load",
@@ -72,11 +80,31 @@ def build_experiment_timeline(
     recovery_at = _recovery_offset(scenario, traffic_plan=traffic_plan, fault_plan=fault_plan)
     events.append(
         TimelineEvent(
+            offset_seconds=traffic_plan.total_duration_seconds,
+            event_type="observation_stop",
+            name="observation-stop",
+            source="observability",
+            description="Stop primary traffic observation window.",
+            details={},
+        )
+    )
+    events.append(
+        TimelineEvent(
             offset_seconds=recovery_at,
             event_type="recovery_validate",
             name="recovery-validate",
             source="orchestrator",
             description="Validate recovery conditions after traffic and fault windows.",
+            details={},
+        )
+    )
+    events.append(
+        TimelineEvent(
+            offset_seconds=recovery_at,
+            event_type="cleanup_planned",
+            name="cleanup-planned",
+            source="orchestrator",
+            description="Cleanup chamber-owned resources after report artifacts are written.",
             details={},
         )
     )
@@ -113,9 +141,12 @@ def _recovery_window_seconds(scenario: Scenario) -> int:
 
 def _priority(event: TimelineEvent) -> int:
     return {
+        "environment_setup": 0,
         "traffic_start": 0,
         "fault_start": 1,
         "fault_removed": 2,
         "traffic_stop": 3,
-        "recovery_validate": 4,
+        "observation_stop": 4,
+        "recovery_validate": 5,
+        "cleanup_planned": 6,
     }.get(event.event_type, 99)

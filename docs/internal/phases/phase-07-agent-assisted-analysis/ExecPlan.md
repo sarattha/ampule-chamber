@@ -9,24 +9,24 @@ hypotheses, and improved report content.
 
 ## Task Checklist
 
-- [ ] Review `docs/internal/PROJECT_DESIGN.md`, phase 06 outputs, and existing
+- [x] Review `docs/internal/PROJECT_DESIGN.md`, phase 06 outputs, and existing
       `chamber/` contracts.
-- [ ] Define planner, observability analyst, and report writer agent contracts.
-- [ ] Add `agents/` role files with responsibilities, inputs, outputs, safety
+- [x] Define planner, observability analyst, and report writer agent contracts.
+- [x] Add `agents/` role files with responsibilities, inputs, outputs, safety
       rules, and evidence rules.
-- [ ] Define machine-readable DTOs or schemas for agent inputs and outputs.
-- [ ] Implement fixture-backed planner behavior for scenario and service
+- [x] Define machine-readable DTOs or schemas for agent inputs and outputs.
+- [x] Implement fixture-backed planner behavior for scenario and service
       contract inspection.
-- [ ] Implement fixture-backed observability analysis behavior over phase 06
+- [x] Implement fixture-backed observability analysis behavior over phase 06
       run metadata, evidence, and findings.
-- [ ] Implement report-writer behavior that turns findings and analysis briefs
+- [x] Implement report-writer behavior that turns findings and analysis briefs
       into report sections.
-- [ ] Add tests for evidence citation, missing-data handling, and deterministic
+- [x] Add tests for evidence citation, missing-data handling, and deterministic
       agent output shape.
-- [ ] Add sample agent briefs in `artifacts/`.
-- [ ] Document how agent outputs are reviewed before being treated as report
+- [x] Add sample agent briefs in `artifacts/`.
+- [x] Document how agent outputs are reviewed before being treated as report
       evidence or hypotheses.
-- [ ] Record acceptance evidence and remaining autonomy gaps.
+- [x] Record acceptance evidence and remaining autonomy gaps.
 
 ## Evaluation Metrics
 
@@ -57,11 +57,26 @@ hypotheses, and improved report content.
 
 ## Progress
 
-- [ ] Phase directory created.
+- [x] Phase directory created.
+- [x] Added `chamber/agents/` dataclass contracts for agent context, test
+      plans, analysis briefs, root-cause hypotheses, report narratives, and
+      evidence citations.
+- [x] Added `OpenAIAgentsSdkRunner` as a lazy OpenAI Agents SDK adapter with
+      `OPENAI_API_KEY` required only for live agent calls.
+- [x] Added planner, observability analyst, and report writer role files under
+      `agents/`.
+- [x] Added deterministic offline outputs and evidence-citation validation so
+      repository checks do not require OpenAI credentials.
+- [x] Added phase 07 tests in `tests/test_phase07_agents.py`.
+- [x] Added `artifacts/sample-agent-briefs.md`.
 
 ## Surprises And Discoveries
 
-- None yet.
+- The OpenAI Agents SDK can be kept behind a small lazy adapter. This avoids
+  importing SDK runtime modules or requiring credentials during normal unit
+  tests.
+- The existing report renderer needed optional sections so agent narratives can
+  be attached without changing older fixtures.
 
 ## Decision Log
 
@@ -70,7 +85,15 @@ hypotheses, and improved report content.
   before broader fault injection work.
 - Chose bounded analysis over autonomous execution for this phase so the live
   safety model remains owned by phase 06.
+- Chose `openai-agents` as the live agent runtime dependency and bumped the
+  project version to `0.9.0` for the phase 07-09 implementation slice.
+- Chose dataclass output contracts because the repository already uses
+  dataclasses and the Agents SDK supports structured output types.
 
 ## Outcomes And Retrospective
 
-- Pending.
+- Agent role contracts, deterministic offline behavior, SDK runtime boundary,
+  and evidence-citation validation are implemented.
+- Acceptance evidence:
+  - `uv run python -m unittest tests/test_phase07_agents.py` passes.
+  - Focused combined phase 07-09 tests pass as part of the implementation run.

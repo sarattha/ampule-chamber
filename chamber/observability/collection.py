@@ -45,6 +45,7 @@ class EvidenceArtifact:
     end_time: str | None
     payload: dict[str, Any]
     diagnostics: tuple[CollectionDiagnostic, ...] = ()
+    service_name: str | None = None
 
 
 @dataclass(frozen=True)
