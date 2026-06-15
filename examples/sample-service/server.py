@@ -12,9 +12,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 class Handler(BaseHTTPRequestHandler):
     mode = "target"
     downstream_url = "http://downstream-api:8081"
+    fault_status = 0
+    fault_delay_ms = 0
 
     def do_GET(self) -> None:
-        if self.path == "/healthz":
+        if self.mode == "downstream" and self.path in {"/healthz", "/readyz", "/dependency"}:
+            self._downstream()
+        elif self.path == "/healthz":
             self._json(200, {"status": "healthy"})
         elif self.path == "/readyz":
             self._json(200, {"status": "ready"})
@@ -30,10 +34,6 @@ class Handler(BaseHTTPRequestHandler):
         print(json.dumps({"path": self.path, "message": format % args}), flush=True)
 
     def _dependency(self) -> None:
-        if self.mode == "downstream":
-            self._json(200, {"dependency": "ok"})
-            return
-
         try:
             with urllib.request.urlopen(f"{self.downstream_url}/healthz", timeout=1) as response:
                 status = response.status
@@ -42,6 +42,14 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         self._json(200, {"dependency": "ok", "status": status})
+
+    def _downstream(self) -> None:
+        if self.fault_delay_ms > 0:
+            time.sleep(self.fault_delay_ms / 1000)
+        if self.fault_status:
+            self._json(self.fault_status, {"dependency": "fault", "status": self.fault_status})
+            return
+        self._json(200, {"dependency": "ok"})
 
     def _json(self, status: int, body: dict[str, object]) -> None:
         payload = json.dumps(body).encode("utf-8")
@@ -60,6 +68,8 @@ def main() -> int:
 
     Handler.mode = args.mode
     Handler.downstream_url = os.environ.get("DOWNSTREAM_URL", Handler.downstream_url)
+    Handler.fault_status = int(os.environ.get("FAULT_STATUS", "0"))
+    Handler.fault_delay_ms = int(os.environ.get("FAULT_DELAY_MS", "0"))
     server = ThreadingHTTPServer(("0.0.0.0", args.port), Handler)
     print(json.dumps({"event": "listening", "mode": args.mode, "port": args.port}), flush=True)
     server.serve_forever()

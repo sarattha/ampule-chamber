@@ -10,6 +10,7 @@ from chamber.environment.planning import (
     KindEnvironmentProvider,
     PlanningFailure,
     ReadinessCheck,
+    ServiceResource,
     get_environment_provider,
     plan_environment,
 )
@@ -24,6 +25,7 @@ __all__ = [
     "KindEnvironmentProvider",
     "PlanningFailure",
     "ReadinessCheck",
+    "ServiceResource",
     "get_environment_provider",
     "plan_environment",
 ]

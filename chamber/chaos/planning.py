@@ -10,10 +10,16 @@ from typing import Any
 import yaml
 
 from chamber.contracts.scenario import Scenario
-from chamber.environment import EnvironmentMetadata
+from chamber.environment import EnvironmentMetadata, ServiceResource
 from chamber.load.planning import parse_duration_seconds
 
 DEPENDENCY_UNAVAILABLE = "dependency_unavailable"
+DEPENDENCY_ERRORS = "dependency_errors"
+DEPENDENCY_RATE_LIMIT = "dependency_rate_limit"
+DEPENDENCY_LATENCY = "dependency_latency"
+NETWORK_LOSS = "network_loss"
+POD_KILL = "pod_kill"
+CPU_PRESSURE = "cpu_pressure"
 MEMORY_PRESSURE = "memory_pressure"
 NO_FAULT = "none"
 
@@ -72,28 +78,55 @@ def plan_faults(
         if fault_type == NO_FAULT:
             continue
         if fault_type == MEMORY_PRESSURE:
-            _append_memory_pressure(
+            _append_resource_pressure(
                 scenario,
                 fault,
                 index=index,
                 environment=environment,
                 actions=actions,
                 events=events,
+                pressure_type="memory",
             )
             continue
-        if fault_type != DEPENDENCY_UNAVAILABLE:
-            raise FaultPlanningError(
-                f"faults[{index}].type: {fault_type!r} is reserved for a later phase"
+        if fault_type == CPU_PRESSURE:
+            _append_resource_pressure(
+                scenario,
+                fault,
+                index=index,
+                environment=environment,
+                actions=actions,
+                events=events,
+                pressure_type="cpu",
             )
-        _append_dependency_unavailable(
-            scenario,
-            fault,
-            index=index,
-            environment=environment,
-            artifact_dir=Path(artifact_dir),
-            actions=actions,
-            events=events,
-        )
+            continue
+        if fault_type == POD_KILL:
+            _append_pod_kill(
+                fault, index=index, environment=environment, actions=actions, events=events
+            )
+            continue
+        if fault_type in {DEPENDENCY_ERRORS, DEPENDENCY_RATE_LIMIT, DEPENDENCY_LATENCY}:
+            _append_dependency_response_fault(
+                fault,
+                index=index,
+                environment=environment,
+                actions=actions,
+                events=events,
+                fault_type=fault_type,
+            )
+            continue
+        if fault_type in {DEPENDENCY_UNAVAILABLE, NETWORK_LOSS}:
+            _append_dependency_unavailable(
+                scenario,
+                fault,
+                index=index,
+                environment=environment,
+                artifact_dir=Path(artifact_dir),
+                actions=actions,
+                events=events,
+                policy_mode=fault_type,
+            )
+            continue
+        raise FaultPlanningError(f"faults[{index}].type: {fault_type!r} is not implemented")
 
     return FaultPlan(
         run_id=environment.run_id,
@@ -113,6 +146,7 @@ def _append_dependency_unavailable(
     artifact_dir: Path,
     actions: list[FaultAction],
     events: list[FaultEvent],
+    policy_mode: str,
 ) -> None:
     target = fault.get("target")
     if not isinstance(target, str) or not target.strip():
@@ -131,12 +165,13 @@ def _append_dependency_unavailable(
     apply_command = ("kubectl", "apply", "-f", str(manifest_path))
     delete_command = ("kubectl", "delete", "-f", str(manifest_path), "--ignore-not-found=true")
     description = str(fault["description"])
+    event_name = "network-loss" if policy_mode == NETWORK_LOSS else "unavailable"
 
     actions.extend(
         (
             FaultAction(
                 action_type="inject",
-                name=f"inject-{target}-unavailable",
+                name=f"inject-{target}-{event_name}",
                 description=description,
                 offset_seconds=start_after,
                 command=apply_command,
@@ -145,8 +180,8 @@ def _append_dependency_unavailable(
             ),
             FaultAction(
                 action_type="remove",
-                name=f"remove-{target}-unavailable",
-                description=f"Remove dependency-unavailable policy for {target}.",
+                name=f"remove-{target}-{event_name}",
+                description=f"Remove {policy_mode} policy for {target}.",
                 offset_seconds=remove_at,
                 command=delete_command,
                 manifest=manifest,
@@ -158,23 +193,23 @@ def _append_dependency_unavailable(
         (
             FaultEvent(
                 event_type="fault_start",
-                name=f"{target}-unavailable-start",
+                name=f"{target}-{event_name}-start",
                 offset_seconds=start_after,
                 description=description,
                 target=target,
             ),
             FaultEvent(
                 event_type="fault_removed",
-                name=f"{target}-unavailable-removed",
+                name=f"{target}-{event_name}-removed",
                 offset_seconds=remove_at,
-                description=f"{target} dependency-unavailable fault removed.",
+                description=f"{target} {policy_mode} fault removed.",
                 target=target,
             ),
         )
     )
 
 
-def _append_memory_pressure(
+def _append_resource_pressure(
     scenario: Scenario,
     fault: dict[str, Any],
     *,
@@ -182,6 +217,7 @@ def _append_memory_pressure(
     environment: EnvironmentMetadata,
     actions: list[FaultAction],
     events: list[FaultEvent],
+    pressure_type: str,
 ) -> None:
     start_after = _optional_duration_field(fault, "startAfter", index=index, default=0)
     duration = _optional_duration_field(
@@ -196,6 +232,18 @@ def _append_memory_pressure(
     service = scenario.document["target"]["service"]
     container_name = str(service["name"])
     resources = scenario.document["environment"]["resources"]
+    if pressure_type == "memory":
+        pressure_resources = {
+            "requests": {"cpu": str(resources["cpuRequest"]), "memory": "64Mi"},
+            "limits": {"cpu": str(resources["cpuLimit"]), "memory": "96Mi"},
+        }
+    elif pressure_type == "cpu":
+        pressure_resources = {
+            "requests": {"cpu": "50m", "memory": str(resources["memoryRequest"])},
+            "limits": {"cpu": "100m", "memory": str(resources["memoryLimit"])},
+        }
+    else:
+        raise FaultPlanningError(f"unsupported resource pressure type {pressure_type!r}")
     pressure_patch = json.dumps(
         {
             "spec": {
@@ -204,16 +252,7 @@ def _append_memory_pressure(
                         "containers": [
                             {
                                 "name": container_name,
-                                "resources": {
-                                    "requests": {
-                                        "cpu": str(resources["cpuRequest"]),
-                                        "memory": "64Mi",
-                                    },
-                                    "limits": {
-                                        "cpu": str(resources["cpuLimit"]),
-                                        "memory": "96Mi",
-                                    },
-                                },
+                                "resources": pressure_resources,
                             }
                         ]
                     }
@@ -251,7 +290,7 @@ def _append_memory_pressure(
         (
             FaultAction(
                 action_type="inject",
-                name="inject-memory-pressure",
+                name=f"inject-{pressure_type}-pressure",
                 description=description,
                 offset_seconds=start_after,
                 command=(
@@ -261,15 +300,15 @@ def _append_memory_pressure(
                     "patch",
                     "deployment",
                     deployment,
-                    "--type=merge",
+                    "--type=strategic",
                     "-p",
                     pressure_patch,
                 ),
             ),
             FaultAction(
                 action_type="remove",
-                name="remove-memory-pressure",
-                description="Restore the sample-service memory limit after pressure window.",
+                name=f"remove-{pressure_type}-pressure",
+                description=f"Restore sample-service resources after {pressure_type} pressure.",
                 offset_seconds=remove_at,
                 command=(
                     "kubectl",
@@ -278,7 +317,7 @@ def _append_memory_pressure(
                     "patch",
                     "deployment",
                     deployment,
-                    "--type=merge",
+                    "--type=strategic",
                     "-p",
                     restore_patch,
                 ),
@@ -289,19 +328,171 @@ def _append_memory_pressure(
         (
             FaultEvent(
                 event_type="fault_start",
-                name="memory-pressure-start",
+                name=f"{pressure_type}-pressure-start",
                 offset_seconds=start_after,
                 description=description,
                 target=deployment,
             ),
             FaultEvent(
                 event_type="fault_removed",
-                name="memory-pressure-removed",
+                name=f"{pressure_type}-pressure-removed",
                 offset_seconds=remove_at,
-                description="Memory pressure patch removed.",
+                description=f"{pressure_type} pressure patch removed.",
                 target=deployment,
             ),
         )
+    )
+
+
+def _append_pod_kill(
+    fault: dict[str, Any],
+    *,
+    index: int,
+    environment: EnvironmentMetadata,
+    actions: list[FaultAction],
+    events: list[FaultEvent],
+) -> None:
+    target = _target_name(fault, default="target")
+    start_after = _optional_duration_field(fault, "startAfter", index=index, default=0)
+    resource = _service_resource(environment, target=target, default_role="target")
+    selector = (
+        f"app.kubernetes.io/name={resource.name},"
+        f"chamber.ampule.dev/run-id={environment.labels['chamber.ampule.dev/run-id']}"
+    )
+    description = str(fault["description"])
+    actions.append(
+        FaultAction(
+            action_type="inject",
+            name=f"kill-{resource.name}-pod",
+            description=description,
+            offset_seconds=start_after,
+            command=(
+                "kubectl",
+                "-n",
+                environment.namespace,
+                "delete",
+                "pod",
+                "-l",
+                selector,
+                "--wait=false",
+            ),
+        )
+    )
+    events.append(
+        FaultEvent(
+            event_type="fault_start",
+            name=f"{resource.name}-pod-kill",
+            offset_seconds=start_after,
+            description=description,
+            target=resource.name,
+        )
+    )
+
+
+def _append_dependency_response_fault(
+    fault: dict[str, Any],
+    *,
+    index: int,
+    environment: EnvironmentMetadata,
+    actions: list[FaultAction],
+    events: list[FaultEvent],
+    fault_type: str,
+) -> None:
+    target = _target_name(fault, default="")
+    resource = _service_resource(environment, target=target, default_role="dependency")
+    start_after = _duration_field(fault, "startAfter", index=index)
+    duration = _duration_field(fault, "duration", index=index)
+    remove_at = start_after + duration
+    env_patch = _dependency_env_patch(resource, fault_type=fault_type)
+    restore_patch = _dependency_env_patch(resource, fault_type=NO_FAULT)
+    description = str(fault["description"])
+    actions.extend(
+        (
+            FaultAction(
+                action_type="inject",
+                name=f"inject-{resource.name}-{fault_type}",
+                description=description,
+                offset_seconds=start_after,
+                command=(
+                    "kubectl",
+                    "-n",
+                    environment.namespace,
+                    "patch",
+                    "deployment",
+                    resource.deployment,
+                    "--type=strategic",
+                    "-p",
+                    env_patch,
+                ),
+            ),
+            FaultAction(
+                action_type="remove",
+                name=f"remove-{resource.name}-{fault_type}",
+                description=f"Restore dependency response behavior for {resource.source_name}.",
+                offset_seconds=remove_at,
+                command=(
+                    "kubectl",
+                    "-n",
+                    environment.namespace,
+                    "patch",
+                    "deployment",
+                    resource.deployment,
+                    "--type=strategic",
+                    "-p",
+                    restore_patch,
+                ),
+            ),
+        )
+    )
+    events.extend(
+        (
+            FaultEvent(
+                event_type="fault_start",
+                name=f"{resource.name}-{fault_type}-start",
+                offset_seconds=start_after,
+                description=description,
+                target=resource.source_name,
+            ),
+            FaultEvent(
+                event_type="fault_removed",
+                name=f"{resource.name}-{fault_type}-removed",
+                offset_seconds=remove_at,
+                description=f"{fault_type} fault removed for {resource.source_name}.",
+                target=resource.source_name,
+            ),
+        )
+    )
+
+
+def _dependency_env_patch(resource: ServiceResource, *, fault_type: str) -> str:
+    fault_status = "0"
+    delay_ms = "0"
+    if fault_type == DEPENDENCY_ERRORS:
+        fault_status = "500"
+    elif fault_type == DEPENDENCY_RATE_LIMIT:
+        fault_status = "429"
+    elif fault_type == DEPENDENCY_LATENCY:
+        delay_ms = "1500"
+    elif fault_type != NO_FAULT:
+        raise FaultPlanningError(f"unsupported dependency response fault {fault_type!r}")
+    return json.dumps(
+        {
+            "spec": {
+                "template": {
+                    "spec": {
+                        "containers": [
+                            {
+                                "name": resource.name,
+                                "env": [
+                                    {"name": "FAULT_STATUS", "value": fault_status},
+                                    {"name": "FAULT_DELAY_MS", "value": delay_ms},
+                                ],
+                            }
+                        ]
+                    }
+                }
+            }
+        }
     )
 
 
@@ -379,6 +570,30 @@ def _faults(scenario: Scenario) -> tuple[dict[str, Any], ...]:
             raise FaultPlanningError(f"faults[{index}].description: description is required")
         faults.append(fault)
     return tuple(faults)
+
+
+def _target_name(fault: dict[str, Any], *, default: str) -> str:
+    target = fault.get("target", default)
+    if not isinstance(target, str) or not target.strip():
+        return default
+    return target
+
+
+def _service_resource(
+    environment: EnvironmentMetadata,
+    *,
+    target: str,
+    default_role: str,
+) -> ServiceResource:
+    resources = environment.service_resources
+    if target in {"", "target"}:
+        for resource in resources:
+            if resource.role == default_role:
+                return resource
+    for resource in resources:
+        if target in {resource.source_name, resource.name, resource.deployment, resource.service}:
+            return resource
+    raise FaultPlanningError(f"fault target {target!r} is not a chamber-managed service")
 
 
 def _dns_fragment(value: str) -> str:

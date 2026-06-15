@@ -79,6 +79,14 @@ class ReportFinding:
 
 
 @dataclass(frozen=True)
+class ReportSection:
+    """Optional rendered report section."""
+
+    heading: str
+    lines: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class ReproductionDetails:
     """Commands and artifacts needed to reproduce the reported result."""
 
@@ -100,6 +108,9 @@ class ReportInput:
     retest_plan: tuple[str, ...]
     cleanup_notes: tuple[str, ...]
     limitations: tuple[str, ...]
+    agent_sections: tuple[ReportSection, ...] = ()
+    dependency_graph: tuple[str, ...] = ()
+    recovery_status: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -189,6 +200,9 @@ def render_markdown_report(report: ReportInput) -> str:
             "## Evidence References",
             *_evidence_lines(report.evidence),
             "",
+            *_optional_section("Dependency Graph", report.dependency_graph),
+            *_optional_sections(report.agent_sections),
+            *_optional_section("Recovery Status", report.recovery_status),
             "## Reproduction Details",
             "### Commands",
             *_list_lines(report.reproduction.commands, empty="No reproduction commands recorded."),
@@ -244,6 +258,19 @@ def _evidence_lines(evidence: tuple[EvidenceReference, ...]) -> list[str]:
     ]
 
 
+def _optional_section(heading: str, values: tuple[str, ...]) -> list[str]:
+    if not values:
+        return []
+    return [f"## {heading}", *_list_lines(values, empty="None recorded."), ""]
+
+
+def _optional_sections(sections: tuple[ReportSection, ...]) -> list[str]:
+    lines: list[str] = []
+    for section in sections:
+        lines.extend(_optional_section(section.heading, section.lines))
+    return lines
+
+
 def _recommendation_lines(findings: tuple[ReportFinding, ...]) -> list[str]:
     recommendations: list[str] = []
     for finding in findings:
@@ -280,6 +307,15 @@ def _report_input(raw: dict[str, Any]) -> ReportInput:
         retest_plan=tuple(_string_list(raw, "retest_plan")),
         cleanup_notes=tuple(_string_list(raw, "cleanup_notes")),
         limitations=tuple(_string_list(raw, "limitations")),
+        agent_sections=tuple(
+            ReportSection(
+                heading=_string(item, "heading"),
+                lines=tuple(_string_list(item, "lines")),
+            )
+            for item in _optional_dict_list(raw, "agent_sections")
+        ),
+        dependency_graph=tuple(_optional_string_list(raw, "dependency_graph")),
+        recovery_status=tuple(_optional_string_list(raw, "recovery_status")),
     )
 
 
@@ -361,11 +397,23 @@ def _dict_list(raw: dict[str, Any], key: str) -> list[dict[str, Any]]:
     return values
 
 
+def _optional_dict_list(raw: dict[str, Any], key: str) -> list[dict[str, Any]]:
+    if key not in raw:
+        return []
+    return _dict_list(raw, key)
+
+
 def _string_list(raw: dict[str, Any], key: str) -> list[str]:
     values = _list(raw, key)
     if not all(isinstance(value, str) for value in values):
         raise ValueError(f"report fixture field {key!r} must contain strings")
     return values
+
+
+def _optional_string_list(raw: dict[str, Any], key: str) -> list[str]:
+    if key not in raw:
+        return []
+    return _string_list(raw, key)
 
 
 def _list(raw: dict[str, Any], key: str) -> list[Any]:

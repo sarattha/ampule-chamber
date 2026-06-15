@@ -1,0 +1,104 @@
+apiVersion: chamber.ampule.dev/v1alpha1
+kind: Scenario
+metadata:
+  id: multi-service-dependency-001
+  name: Target contains downstream dependency failure
+  description: Deploy target and controlled dependency, inject downstream errors, and validate recovery.
+  owner: platform-reliability
+  tags:
+    - dependency
+    - multi-service
+    - cascade
+target:
+  service:
+    name: sample-service
+    image: ampule/sample-service:local
+    ports:
+      - name: http
+        port: 8080
+    healthEndpoint: /healthz
+    readinessEndpoint: /readyz
+  runtime:
+    provider: docker
+    composeFile: examples/sample-service/docker-compose.yml
+environment:
+  provider: docker
+  namespace: chamber-local
+  replicas: 1
+  resources:
+    cpuRequest: 250m
+    cpuLimit: "1"
+    memoryRequest: 128Mi
+    memoryLimit: 512Mi
+  dependencies:
+    - name: downstream-api
+      type: http
+      protocol: http
+      endpoint: http://downstream-api:8081
+      criticality: required
+      timeout: 1s
+      retryExpectation: bounded
+      fallbackBehavior: return dependency-unavailable response
+topology:
+  services:
+    - name: sample-service
+      role: target
+    - name: downstream-api
+      role: dependency
+  edges:
+    - from: sample-service
+      to: downstream-api
+baseline:
+  checks:
+    - type: readiness_http_200
+      description: Target readiness endpoint returns HTTP 200 before dependency fault injection.
+    - type: dependency_probe
+      description: Target reaches the controlled dependency before the fault.
+traffic:
+  tool: k6
+  entrypoint: /dependency
+  stages:
+    - duration: 1m
+      targetVus: 5
+    - duration: 2m
+      targetVus: 15
+    - duration: 1m
+      targetVus: 0
+faults:
+  - type: dependency_errors
+    description: downstream-api returns HTTP 500 during active target traffic.
+    target: downstream-api
+    startAfter: 1m
+    duration: 60s
+    errorRatePercent: 100
+observability:
+  signals:
+    - pod_status
+    - kubernetes_events
+    - dependency_health
+    - request_latency
+    - error_rate
+    - logs
+failureConditions:
+  - type: retry_amplification
+    description: Target downstream attempts exceed inbound requests by an unsafe ratio.
+    thresholdRatio: 3
+  - type: error_rate_above_percent
+    description: Target error rate remains above 5 percent after dependency recovery.
+    threshold: 5
+  - type: recovery_time_above
+    description: Target takes more than 2 minutes to recover after downstream errors stop.
+    threshold: 2m
+successConditions:
+  - type: dependency_recovers
+    description: Controlled dependency returns to healthy responses after the fault is removed.
+  - type: recovery_time_below
+    description: Target returns to normal responses within 2 minutes.
+    threshold: 2m
+  - type: error_rate_below_percent
+    description: Recovered error rate remains below 1 percent.
+    threshold: 1
+safety:
+  maxDuration: 8m
+  maxVirtualUsers: "15"
+  productionContextAllowed: false

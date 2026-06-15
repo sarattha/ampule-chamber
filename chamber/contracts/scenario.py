@@ -163,6 +163,32 @@ def validate_scenario_document(document: dict[str, Any], *, source: str = "<memo
             dep = _mapping(dependency, dep_path)
             _require_non_empty_string(dep.get("name"), f"{dep_path}.name")
             _require_non_empty_string(dep.get("type"), f"{dep_path}.type")
+            for optional_key in (
+                "protocol",
+                "endpoint",
+                "criticality",
+                "timeout",
+                "retryExpectation",
+                "fallbackBehavior",
+            ):
+                if optional_key in dep:
+                    _require_non_empty_string(dep.get(optional_key), f"{dep_path}.{optional_key}")
+
+    if "topology" in document:
+        topology = _mapping(document["topology"], f"{source}.topology")
+        services = _non_empty_list(topology.get("services"), f"{source}.topology.services")
+        for index, service_item in enumerate(services):
+            service_path = f"{source}.topology.services[{index}]"
+            service_doc = _mapping(service_item, service_path)
+            _require_non_empty_string(service_doc.get("name"), f"{service_path}.name")
+            _require_non_empty_string(service_doc.get("role"), f"{service_path}.role")
+        if "edges" in topology:
+            edges = _list(topology["edges"], f"{source}.topology.edges")
+            for index, edge in enumerate(edges):
+                edge_path = f"{source}.topology.edges[{index}]"
+                edge_doc = _mapping(edge, edge_path)
+                _require_non_empty_string(edge_doc.get("from"), f"{edge_path}.from")
+                _require_non_empty_string(edge_doc.get("to"), f"{edge_path}.to")
 
     baseline = _mapping(document["baseline"], f"{source}.baseline")
     checks = _non_empty_list(baseline.get("checks"), f"{source}.baseline.checks")

@@ -67,6 +67,14 @@ def analyze_evidence(
     if k6_summary_path is not None:
         k6_artifact = _k6_summary_artifact(evidence, k6_summary_path)
         findings.extend(_k6_findings(k6_artifact, thresholds=thresholds, timeline=timeline))
+        findings.extend(
+            _scenario_cascade_findings(
+                k6_artifact,
+                scenario=scenario,
+                thresholds=thresholds,
+                timeline=timeline,
+            )
+        )
 
     run_id = evidence[0].run_id if evidence else ""
     scenario_id = (
@@ -266,6 +274,77 @@ def _k6_findings(
                     related_timeline_ids=_timeline_ids(timeline, signal_type="error_rate"),
                 )
             )
+    return tuple(findings)
+
+
+def _scenario_cascade_findings(
+    artifact: EvidenceArtifact,
+    *,
+    scenario: Scenario | None,
+    thresholds: dict[str, float],
+    timeline: ExperimentTimeline | None,
+) -> tuple[Finding, ...]:
+    if scenario is None:
+        return ()
+    metrics = artifact.payload.get("metrics")
+    if not isinstance(metrics, dict):
+        return ()
+    failure_rate = _k6_metric_value(metrics, "http_req_failed", "value")
+    if failure_rate is None:
+        return ()
+    failure_percent = failure_rate * 100
+    findings: list[Finding] = []
+    condition_types = {
+        str(condition.get("type"))
+        for condition in scenario.document.get("failureConditions", [])
+        if isinstance(condition, dict)
+    }
+    has_dependency_fault = any(
+        isinstance(fault, dict) and str(fault.get("type")).startswith("dependency_")
+        for fault in scenario.document.get("faults", [])
+    )
+    if "retry_amplification" in condition_types and has_dependency_fault:
+        findings.append(
+            Finding(
+                finding_id=f"{artifact.run_id}:k6:retry-amplification",
+                signal_type="retry_amplification",
+                affected_resource=artifact.resource,
+                observed_facts=(
+                    "Scenario declares retry-amplification as a failure condition.",
+                    (
+                        "k6 HTTP failure rate during dependency-path traffic was "
+                        f"{failure_percent:g}%."
+                    ),
+                ),
+                suspected_cause=(
+                    "Dependency degradation may be propagating through the target request path."
+                ),
+                severity="medium",
+                confidence="low",
+                evidence_ids=(artifact.evidence_id,),
+                related_timeline_ids=_timeline_ids(timeline, signal_type="retry_amplification"),
+            )
+        )
+    if (
+        "recovery_time_above" in condition_types
+        and failure_percent > thresholds["error_rate_percent"]
+    ):
+        findings.append(
+            Finding(
+                finding_id=f"{artifact.run_id}:k6:failed-recovery",
+                signal_type="failed_recovery",
+                affected_resource=artifact.resource,
+                observed_facts=(
+                    f"k6 HTTP failure rate was {failure_percent:g}% "
+                    f"against recovery threshold {thresholds['error_rate_percent']:g}%.",
+                ),
+                suspected_cause="The target may not have recovered cleanly after the fault window.",
+                severity="high",
+                confidence="medium",
+                evidence_ids=(artifact.evidence_id,),
+                related_timeline_ids=_timeline_ids(timeline, signal_type="failed_recovery"),
+            )
+        )
     return tuple(findings)
 
 

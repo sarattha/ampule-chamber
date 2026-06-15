@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from hashlib import sha1
 from typing import Any, Protocol
+from urllib.parse import urlparse
 
 from chamber.contracts.scenario import Scenario
 
@@ -68,6 +69,19 @@ class EnvironmentMetadata:
     resource_names: dict[str, str]
     readiness_checks: tuple[ReadinessCheck, ...]
     cleanup_selectors: dict[str, str]
+    service_resources: tuple[ServiceResource, ...]
+
+
+@dataclass(frozen=True)
+class ServiceResource:
+    """Traceable Kubernetes resources for one chamber service."""
+
+    role: str
+    source_name: str
+    name: str
+    deployment: str
+    service: str
+    port: int
 
 
 @dataclass(frozen=True)
@@ -97,6 +111,7 @@ class EnvironmentProvider(Protocol):
 class TargetServiceContract:
     """Normalized target service fields needed for Kubernetes manifests."""
 
+    role: str
     source_name: str
     name: str
     image: str
@@ -106,6 +121,8 @@ class TargetServiceContract:
     resources: dict[str, str]
     health_endpoint: str
     readiness_endpoint: str
+    args: tuple[str, ...] = ()
+    env: dict[str, str] | None = None
 
 
 class KindEnvironmentProvider:
@@ -120,6 +137,7 @@ class KindEnvironmentProvider:
             raise EnvironmentPlanningError(f"cannot build environment plan: {details}")
 
         service_contract = _target_service_contract(scenario)
+        dependency_contracts = _dependency_service_contracts(scenario, target=service_contract)
         scenario_id = scenario.scenario_id
         suffix = _trace_suffix(scenario_id, run_id)
         base_namespace = str(scenario.document["environment"].get("namespace", "chamber"))
@@ -128,11 +146,51 @@ class KindEnvironmentProvider:
 
         deployment_name = _kubernetes_name(service_contract.name, "deployment", suffix=suffix)
         service_name = _kubernetes_name(service_contract.name, "svc", suffix=suffix)
+        dependency_names = {
+            dependency.name: (
+                _kubernetes_name(dependency.name, "deployment", suffix=suffix),
+                _kubernetes_name(dependency.name, "svc", suffix=suffix),
+            )
+            for dependency in dependency_contracts
+        }
+        if dependency_contracts:
+            first_dependency = dependency_contracts[0]
+            first_dependency_service = dependency_names[first_dependency.name][1]
+            service_contract = replace(
+                service_contract,
+                env={
+                    "DOWNSTREAM_URL": f"http://{first_dependency_service}:{first_dependency.port}"
+                },
+            )
         resource_names = {
             "namespace": namespace,
             "deployment": deployment_name,
             "service": service_name,
         }
+        service_resources = [
+            ServiceResource(
+                role="target",
+                source_name=service_contract.source_name,
+                name=service_contract.name,
+                deployment=deployment_name,
+                service=service_name,
+                port=service_contract.port,
+            )
+        ]
+        for dependency in dependency_contracts:
+            dependency_deployment, dependency_service = dependency_names[dependency.name]
+            resource_names[f"dependency.{dependency.name}.deployment"] = dependency_deployment
+            resource_names[f"dependency.{dependency.name}.service"] = dependency_service
+            service_resources.append(
+                ServiceResource(
+                    role="dependency",
+                    source_name=dependency.source_name,
+                    name=dependency.name,
+                    deployment=dependency_deployment,
+                    service=dependency_service,
+                    port=dependency.port,
+                )
+            )
 
         namespace_manifest = _namespace_manifest(namespace=namespace, labels=labels)
         deployment_manifest = _deployment_manifest(
@@ -148,12 +206,46 @@ class KindEnvironmentProvider:
             service=service_contract,
             deployment_name=deployment_name,
         )
-        manifests = (namespace_manifest, deployment_manifest, service_manifest)
+        dependency_manifests: list[dict[str, Any]] = []
+        for dependency in dependency_contracts:
+            dependency_deployment, dependency_service = dependency_names[dependency.name]
+            dependency_manifests.extend(
+                [
+                    _deployment_manifest(
+                        name=dependency_deployment,
+                        namespace=namespace,
+                        labels=labels,
+                        service=dependency,
+                    ),
+                    _service_manifest(
+                        name=dependency_service,
+                        namespace=namespace,
+                        labels=labels,
+                        service=dependency,
+                        deployment_name=dependency_deployment,
+                    ),
+                ]
+            )
+        manifests = (
+            namespace_manifest,
+            deployment_manifest,
+            service_manifest,
+            *dependency_manifests,
+        )
         readiness_checks = _readiness_checks(
             namespace=namespace,
             deployment_name=deployment_name,
             service_name=service_name,
             service=service_contract,
+        ) + tuple(
+            check
+            for dependency in dependency_contracts
+            for check in _readiness_checks(
+                namespace=namespace,
+                deployment_name=dependency_names[dependency.name][0],
+                service_name=dependency_names[dependency.name][1],
+                service=dependency,
+            )
         )
         cleanup_selectors = {
             "app.kubernetes.io/managed-by": "ampule-chamber",
@@ -190,7 +282,30 @@ class KindEnvironmentProvider:
             resource_names=resource_names,
             readiness_checks=readiness_checks,
             cleanup_selectors=cleanup_selectors,
+            service_resources=tuple(service_resources),
         )
+        dependency_actions: list[EnvironmentAction] = []
+        for index, dependency in enumerate(dependency_contracts):
+            dependency_actions.extend(
+                [
+                    EnvironmentAction(
+                        action_type="deploy",
+                        name=f"apply-{dependency.name}-deployment",
+                        description=(
+                            f"Apply dependency Deployment {dependency_names[dependency.name][0]}."
+                        ),
+                        manifest=dependency_manifests[index * 2],
+                    ),
+                    EnvironmentAction(
+                        action_type="deploy",
+                        name=f"apply-{dependency.name}-service",
+                        description=(
+                            f"Apply dependency Service {dependency_names[dependency.name][1]}."
+                        ),
+                        manifest=dependency_manifests[index * 2 + 1],
+                    ),
+                ]
+            )
         actions = (
             EnvironmentAction(
                 action_type="provision",
@@ -210,6 +325,7 @@ class KindEnvironmentProvider:
                 description=f"Apply target Service {service_name}.",
                 manifest=service_manifest,
             ),
+            *dependency_actions,
             EnvironmentAction(
                 action_type="verify",
                 name="verify-readiness",
@@ -307,6 +423,7 @@ def _target_service_contract(scenario: Scenario) -> TargetServiceContract:
         "memoryLimit": str(environment["resources"]["memoryLimit"]),
     }
     return TargetServiceContract(
+        role="target",
         source_name=service_name,
         name=_dns_label(service_name),
         image=str(service["image"]),
@@ -317,6 +434,46 @@ def _target_service_contract(scenario: Scenario) -> TargetServiceContract:
         health_endpoint=str(service["healthEndpoint"]),
         readiness_endpoint=str(service["readinessEndpoint"]),
     )
+
+
+def _dependency_service_contracts(
+    scenario: Scenario,
+    *,
+    target: TargetServiceContract,
+) -> tuple[TargetServiceContract, ...]:
+    dependencies = scenario.document["environment"].get("dependencies", [])
+    contracts: list[TargetServiceContract] = []
+    for dependency in dependencies:
+        if not isinstance(dependency, dict):
+            continue
+        name = str(dependency["name"])
+        parsed = urlparse(str(dependency.get("endpoint", "http://downstream-api:8081")))
+        port = parsed.port or 8081
+        contracts.append(
+            TargetServiceContract(
+                role="dependency",
+                source_name=name,
+                name=_dns_label(name),
+                image=str(dependency.get("image", target.image)),
+                port_name=str(dependency.get("portName", "http")),
+                port=port,
+                replicas=int(dependency.get("replicas", 1)),
+                resources={
+                    "cpuRequest": str(dependency.get("cpuRequest", target.resources["cpuRequest"])),
+                    "cpuLimit": str(dependency.get("cpuLimit", target.resources["cpuLimit"])),
+                    "memoryRequest": str(
+                        dependency.get("memoryRequest", target.resources["memoryRequest"])
+                    ),
+                    "memoryLimit": str(
+                        dependency.get("memoryLimit", target.resources["memoryLimit"])
+                    ),
+                },
+                health_endpoint="/healthz",
+                readiness_endpoint="/readyz",
+                args=("--mode", "downstream", "--port", str(port)),
+            )
+        )
+    return tuple(contracts)
 
 
 def _namespace_manifest(*, namespace: str, labels: dict[str, str]) -> dict[str, Any]:
@@ -342,6 +499,41 @@ def _deployment_manifest(
         "chamber.ampule.dev/run-id": labels["chamber.ampule.dev/run-id"],
     }
     pod_labels = {**labels, **selector_labels}
+    container: dict[str, Any] = {
+        "name": service.name,
+        "image": service.image,
+        "ports": [
+            {
+                "name": service.port_name,
+                "containerPort": service.port,
+            }
+        ],
+        "resources": {
+            "requests": {
+                "cpu": service.resources["cpuRequest"],
+                "memory": service.resources["memoryRequest"],
+            },
+            "limits": {
+                "cpu": service.resources["cpuLimit"],
+                "memory": service.resources["memoryLimit"],
+            },
+        },
+        "livenessProbe": _http_probe(
+            path=service.health_endpoint,
+            port_name=service.port_name,
+        ),
+        "readinessProbe": _http_probe(
+            path=service.readiness_endpoint,
+            port_name=service.port_name,
+        ),
+    }
+    if service.args:
+        container["command"] = ["python", "/app/server.py"]
+        container["args"] = list(service.args)
+    if service.env:
+        container["env"] = [
+            {"name": key, "value": value} for key, value in sorted(service.env.items())
+        ]
     return {
         "apiVersion": "apps/v1",
         "kind": "Deployment",
@@ -358,38 +550,7 @@ def _deployment_manifest(
             "selector": {"matchLabels": selector_labels},
             "template": {
                 "metadata": {"labels": pod_labels},
-                "spec": {
-                    "containers": [
-                        {
-                            "name": service.name,
-                            "image": service.image,
-                            "ports": [
-                                {
-                                    "name": service.port_name,
-                                    "containerPort": service.port,
-                                }
-                            ],
-                            "resources": {
-                                "requests": {
-                                    "cpu": service.resources["cpuRequest"],
-                                    "memory": service.resources["memoryRequest"],
-                                },
-                                "limits": {
-                                    "cpu": service.resources["cpuLimit"],
-                                    "memory": service.resources["memoryLimit"],
-                                },
-                            },
-                            "livenessProbe": _http_probe(
-                                path=service.health_endpoint,
-                                port_name=service.port_name,
-                            ),
-                            "readinessProbe": _http_probe(
-                                path=service.readiness_endpoint,
-                                port_name=service.port_name,
-                            ),
-                        }
-                    ]
-                },
+                "spec": {"containers": [container]},
             },
         },
     }
