@@ -45,7 +45,10 @@ class TrafficPlan:
     run_id: str
     scenario_id: str
     tool: str
+    method: str
     target_url: str
+    expected_status: int
+    request_body: dict[str, Any] | None
     stages: tuple[TrafficStage, ...]
     total_duration_seconds: int
     script_path: str
@@ -114,7 +117,16 @@ class K6TrafficAdapter:
         service_port = _service_port(scenario)
         local_port = _local_forward_port(scenario.scenario_id, environment.run_id)
         target_url = _target_url(scenario, local_port=local_port)
-        script = _k6_script(stages=stages, target_url=target_url)
+        method = _traffic_method(scenario)
+        expected_status = _expected_status(scenario)
+        request_body = _request_body(scenario)
+        script = _k6_script(
+            stages=stages,
+            target_url=target_url,
+            method=method,
+            expected_status=expected_status,
+            request_body=request_body,
+        )
         command = (
             "k6",
             "run",
@@ -139,7 +151,10 @@ class K6TrafficAdapter:
             run_id=environment.run_id,
             scenario_id=scenario.scenario_id,
             tool=self.tool_name,
+            method=method,
             target_url=target_url,
+            expected_status=expected_status,
+            request_body=request_body,
             stages=stages,
             total_duration_seconds=sum(stage.duration_seconds for stage in stages),
             script_path=str(script_path),
@@ -214,6 +229,15 @@ def validate_traffic_contract(scenario: Scenario) -> tuple[str, ...]:
             failures.append(f"traffic.tool: only {K6_TOOL!r} is implemented for phase 03")
         if not _is_non_empty_string(traffic.get("entrypoint")):
             failures.append("traffic.entrypoint: non-empty HTTP path is required")
+        method = str(traffic.get("method", "GET")).upper()
+        if method not in {"GET", "POST"}:
+            failures.append("traffic.method: only GET and POST are implemented")
+        if "expectedStatus" in traffic and not isinstance(traffic["expectedStatus"], int):
+            failures.append("traffic.expectedStatus: integer HTTP status is required")
+        if method == "POST":
+            body = traffic.get("body")
+            if not isinstance(body, dict) or not body:
+                failures.append("traffic.body: non-empty JSON object is required for POST traffic")
         stages = traffic.get("stages")
         if not isinstance(stages, list) or not stages:
             failures.append("traffic.stages: at least one stage is required")
@@ -292,6 +316,19 @@ def _target_url(scenario: Scenario, *, local_port: int) -> str:
     return f"http://127.0.0.1:{local_port}{path}"
 
 
+def _traffic_method(scenario: Scenario) -> str:
+    return str(scenario.document["traffic"].get("method", "GET")).upper()
+
+
+def _expected_status(scenario: Scenario) -> int:
+    return int(scenario.document["traffic"].get("expectedStatus", 200))
+
+
+def _request_body(scenario: Scenario) -> dict[str, Any] | None:
+    body = scenario.document["traffic"].get("body")
+    return dict(body) if isinstance(body, dict) else None
+
+
 def _service_port(scenario: Scenario) -> int:
     return int(scenario.document["target"]["service"]["ports"][0]["port"])
 
@@ -347,16 +384,33 @@ def _stop_port_forward(process: subprocess.Popen[str] | None) -> None:
         process.wait(timeout=5)
 
 
-def _k6_script(*, stages: tuple[TrafficStage, ...], target_url: str) -> str:
+def _k6_script(
+    *,
+    stages: tuple[TrafficStage, ...],
+    target_url: str,
+    method: str = "GET",
+    expected_status: int = 200,
+    request_body: dict[str, Any] | None = None,
+) -> str:
     stage_docs = [{"duration": stage.duration, "target": stage.target_vus} for stage in stages]
+    payload = json.dumps(request_body or {}, sort_keys=True)
+    request_line = (
+        "  const response = http.post(targetUrl, JSON.stringify(payload), "
+        "{ headers: { 'Content-Type': 'application/json' } });"
+        if method == "POST"
+        else "  const response = http.get(targetUrl);"
+    )
     return (
         "import http from 'k6/http';\n"
         "import { check } from 'k6';\n\n"
         f"export const options = {json.dumps({'stages': stage_docs}, indent=2)};\n\n"
         f"const targetUrl = __ENV.TARGET_URL || {json.dumps(target_url)};\n\n"
+        f"const expectedStatus = Number(__ENV.EXPECTED_STATUS || {expected_status});\n"
+        f"const payload = {payload};\n\n"
         "export default function () {\n"
-        "  const response = http.get(targetUrl);\n"
+        f"{request_line}\n"
         "  check(response, {\n"
+        "    'status matches expected': (r) => r.status === expectedStatus,\n"
         "    'status is below 500': (r) => r.status < 500,\n"
         "  });\n"
         "}\n"

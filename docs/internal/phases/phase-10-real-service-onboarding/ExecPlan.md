@@ -95,6 +95,30 @@ dependency configuration, evidence collection, and a report.
 ## Progress
 
 - [x] Phase directory created.
+- [x] Reviewed phase 06 live runner, phase 09 multi-service implementation,
+      `docs/internal/PROJECT_DESIGN.md`, and the Tara2 repository shape.
+- [x] Defined Phase 10 implementation branch as
+      `codex/phase-10-real-service-onboarding`.
+- [x] Added `chamber/onboarding/` real-service onboarding contracts for Tara2
+      repository path, image builds, adapted workloads, redacted config,
+      external dependency policy, readiness checks, traffic journey, blockers,
+      and limitations.
+- [x] Added redacted Tara2 manifest planning from the current
+      `/Users/jobz/Works/tara2_translation_service` working tree.
+- [x] Added chamber-owned Redis and RabbitMQ dependency workload planning.
+- [x] Adapted Tara2 worker KEDA `ScaledJob` into a bounded local worker
+      `Deployment` for the first `kind` onboarding slice.
+- [x] Added `scenarios/tara2-text-translation.yaml` for direct-text
+      `POST /translations` traffic.
+- [x] Extended k6 traffic planning to support POST JSON bodies and expected
+      status checks while preserving existing GET behavior.
+- [x] Extended report rendering with optional onboarding summary, adapted
+      workload, redacted config, and external dependency sections.
+- [x] Added focused Phase 10 tests for onboarding validation, secret redaction,
+      env preflight, image/kind-load planning, manifest adaptation, POST k6
+      generation, readiness checks, and report output.
+- [x] Added dry-run evidence in
+      `artifacts/tara2-onboarding-dry-run.md`.
 
 ## Surprises And Discoveries
 
@@ -105,6 +129,11 @@ dependency configuration, evidence collection, and a report.
   sample dependencies. Tara2 requires generic real-service onboarding features:
   manifest adaptation, multiple images, Redis/RabbitMQ readiness, redacted
   secrets, and POST traffic.
+- Tara2's checked-out `HEAD` points at a missing local branch, so the Phase 10
+  source reference is recorded as the current working tree instead of a commit.
+- Tara2's worker manifest is a KEDA `ScaledJob`; the first local chamber slice
+  adapts it into a single worker `Deployment` so KEDA installation is not a
+  prerequisite.
 
 ## Decision Log
 
@@ -119,7 +148,34 @@ dependency configuration, evidence collection, and a report.
 - Chose OpenAI as an explicit external dependency rather than a chamber-owned
   dependency because the first goal is onboarding the service under realistic
   provider configuration, not simulating LLM quality or latency.
+- Chose a new `chamber/onboarding/` package rather than extending the existing
+  generated sample-service environment planner because Phase 10 needs
+  real-repository manifest adaptation, image build planning, and redacted
+  external dependency configuration.
+- Chose environment-sourced `LLM_API_KEY` as the required live OpenAI secret.
+  Artifacts record only presence or absence, never the key value.
+- Chose to keep the document-service path out of the scenario because direct
+  text translation exercises the normal API, RabbitMQ, Redis, worker, and LLM
+  path without requiring document ingestion.
 
 ## Outcomes And Retrospective
 
-- Pending.
+- Initial implementation added deterministic dry-run planning, scenario
+  validation, POST k6 generation, report sections, and focused tests.
+- Live OpenAI-backed Tara2 evidence remains blocked until `LLM_API_KEY` is
+  available and Tara2 images are built and loaded into `kind-ampule-chamber`.
+- Live prerequisite check on this machine after implementation:
+  - `docker`, `kind`, `kubectl`, and `k6` are present.
+  - Current Kubernetes context is `kind-ampule-chamber`.
+  - `kind get clusters` includes `ampule-chamber`.
+  - `LLM_API_KEY` is missing, so OpenAI-backed translation evidence cannot run.
+  - `PROMETHEUS_URL` is missing, so the current live evidence collection path
+    cannot collect required Prometheus metrics.
+- Acceptance evidence recorded so far:
+  - `uv run python -m unittest tests.test_phase10_onboarding` passed.
+  - `uv run python scripts/validate_scenarios.py` passed for 7 scenarios.
+  - `uv run ruff format --check chamber tests scripts` passed.
+  - `uv run ruff check chamber tests scripts` passed.
+  - `uv run mypy` passed.
+  - `make check` passed, including format, lint, typecheck, 83 tests,
+    coverage at the 90% threshold, scenario validation, and package build.
