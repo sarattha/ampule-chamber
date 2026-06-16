@@ -503,7 +503,7 @@ def _execute_traffic_with_faults(
     Path(traffic_plan.script_path).write_text(traffic_plan.script, encoding="utf-8")
     port_forward = runner.popen(traffic_plan.port_forward_command)
     try:
-        _wait_for_target(traffic_plan.target_url, port_forward)
+        _wait_for_target(traffic_plan.readiness_url, port_forward)
         with (
             tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stdout_file,
             tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stderr_file,

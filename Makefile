@@ -35,7 +35,7 @@ lint-fix: ## Fix auto-fixable Python lint issues
 
 .PHONY: typecheck
 typecheck: ## Run Python static type checks
-	$(UV) run mypy
+	$(UV) run ty check chamber scripts tests
 
 .PHONY: test
 test: ## Run Python tests

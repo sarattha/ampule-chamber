@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import yaml
 
@@ -566,9 +566,10 @@ def _faults(scenario: Scenario) -> tuple[dict[str, Any], ...]:
             raise FaultPlanningError(f"faults[{index}]: expected mapping")
         if not isinstance(fault.get("type"), str):
             raise FaultPlanningError(f"faults[{index}].type: fault type is required")
-        if not isinstance(fault.get("description"), str) or not fault["description"].strip():
+        description = fault.get("description")
+        if not isinstance(description, str) or not description.strip():
             raise FaultPlanningError(f"faults[{index}].description: description is required")
-        faults.append(fault)
+        faults.append(cast(dict[str, Any], fault))
     return tuple(faults)
 
 

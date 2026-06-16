@@ -111,6 +111,10 @@ class ReportInput:
     agent_sections: tuple[ReportSection, ...] = ()
     dependency_graph: tuple[str, ...] = ()
     recovery_status: tuple[str, ...] = ()
+    onboarding_summary: tuple[str, ...] = ()
+    adapted_workloads: tuple[str, ...] = ()
+    redacted_config: tuple[str, ...] = ()
+    external_dependencies: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -201,6 +205,10 @@ def render_markdown_report(report: ReportInput) -> str:
             *_evidence_lines(report.evidence),
             "",
             *_optional_section("Dependency Graph", report.dependency_graph),
+            *_optional_section("Onboarding Summary", report.onboarding_summary),
+            *_optional_section("Adapted Workloads", report.adapted_workloads),
+            *_optional_section("Redacted Configuration", report.redacted_config),
+            *_optional_section("External Dependencies", report.external_dependencies),
             *_optional_sections(report.agent_sections),
             *_optional_section("Recovery Status", report.recovery_status),
             "## Reproduction Details",
@@ -316,6 +324,10 @@ def _report_input(raw: dict[str, Any]) -> ReportInput:
         ),
         dependency_graph=tuple(_optional_string_list(raw, "dependency_graph")),
         recovery_status=tuple(_optional_string_list(raw, "recovery_status")),
+        onboarding_summary=tuple(_optional_string_list(raw, "onboarding_summary")),
+        adapted_workloads=tuple(_optional_string_list(raw, "adapted_workloads")),
+        redacted_config=tuple(_optional_string_list(raw, "redacted_config")),
+        external_dependencies=tuple(_optional_string_list(raw, "external_dependencies")),
     )
 
 
