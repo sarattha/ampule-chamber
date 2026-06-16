@@ -213,10 +213,10 @@ one repository name or source layout into Ampule Chamber.
     passed.
   - `uv run python -m unittest tests.test_phase03_traffic_and_chaos
     tests.test_phase06_live_runner tests.test_phase10_onboarding` passed.
-  - `uv run mypy` passed.
+  - `uv run ty check chamber scripts tests` passed.
   - `uv run python scripts/validate_scenarios.py` passed for 7 scenarios.
   - `uv run ruff format --check chamber tests scripts` passed.
   - `uv run ruff check chamber tests scripts` passed.
-  - `uv run mypy` passed.
-  - `make check` passed, including format, lint, typecheck, 85 tests,
+  - `uv run ty check chamber scripts tests` passed.
+  - `make check` passed, including format, lint, typecheck, 86 tests,
     coverage at the 90% threshold, scenario validation, and package build.

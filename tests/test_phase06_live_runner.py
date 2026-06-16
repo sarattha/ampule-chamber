@@ -5,6 +5,7 @@ import subprocess
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Protocol, cast
 from unittest.mock import Mock, patch
 
 from chamber.analysis.findings import Finding
@@ -73,6 +74,10 @@ class FakeProcess:
         return ("", "")
 
 
+class _TextWriter(Protocol):
+    def write(self, text: str) -> object: ...
+
+
 class TrafficRunner:
     def __init__(self, *, fault_returncode: int = 0) -> None:
         self.fault_returncode = fault_returncode
@@ -101,9 +106,9 @@ class TrafficRunner:
         self.popen_stdout.append(stdout)
         if command and command[0] == "k6":
             if hasattr(stdout, "write"):
-                stdout.write("k6 output\n")
-            return self.traffic  # type: ignore[return-value]
-        return self.port_forward  # type: ignore[return-value]
+                cast(_TextWriter, stdout).write("k6 output\n")
+            return cast(subprocess.Popen[str], self.traffic)
+        return cast(subprocess.Popen[str], self.port_forward)
 
 
 class Phase06SafetyTests(unittest.TestCase):
