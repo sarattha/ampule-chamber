@@ -49,9 +49,16 @@ one repository name or source layout into Ampule Chamber.
       report output.
 - [x] Add an external-service dry-run artifact showing planned images, workloads,
       dependencies, traffic, evidence, and blockers.
-- [ ] Run a live external-service text-only chamber scenario when Redis,
+- [x] Run a live external-service text-only chamber scenario when Redis,
       RabbitMQ, images, Prometheus, and OpenAI credentials are available.
 - [x] Record acceptance evidence, limitations, and follow-up work in this plan.
+- [x] Prepare the real external translation service in kind up to the LLM-key
+      boundary: build/load API, worker, and aggregator images; run Redis and
+      RabbitMQ in kind; apply API and aggregator; verify dependency and API
+      readiness; record redacted artifacts.
+- [x] Run an OpenAI-backed direct-text dry run through the prepared chamber path
+      with RabbitMQ and Redis in kind, document service omitted, and
+      `MODEL_NAME=gpt-5.4-mini`.
 
 ## Evaluation Metrics
 
@@ -197,16 +204,89 @@ one repository name or source layout into Ampule Chamber.
 - Broader real-service onboarding still needs persisted onboarding-file parsing,
   Helm/Kustomize rendering, richer readiness probe execution, and live runner
   integration beyond deterministic planning and preflight evidence.
-- Live OpenAI-backed external-service evidence remains blocked until
-  `LLM_API_KEY` is available and external service images are built and loaded
-  into `kind-ampule-chamber`.
+- Live OpenAI-backed external-service evidence is now available for the
+  direct-text path using `MODEL_NAME=gpt-5.4-mini`.
+- Real experiment prep on 2026-06-16 created
+  `artifacts/real-experiment-prep-20260616/` and prepared namespace
+  `chamber-external-translation-prep`.
+- Built three local service images from
+  `/Users/jobz/Works/tara2_translation_service`:
+  `ampule/external-translation-api:local`,
+  `ampule/external-translation-worker:local`, and
+  `ampule/external-translation-aggregator:local`.
+- Loaded those three images into the `ampule-chamber` kind node and recorded
+  image IDs in `docker-images.txt`, `kind-load-images.log`, and
+  `kind-node-images.txt`.
+- Created Redis and RabbitMQ Secrets directly in kind with generated local
+  values. Redacted manifests document the Secret names and keys without
+  recording values.
+- Applied Redis and RabbitMQ workloads inside kind and verified:
+  `rollout-redis.log`, `rollout-rabbitmq.log`, `redis-ping.log`,
+  `rabbitmq-check-running.log`, and `rabbitmq-status-head.log`.
+- Applied translation API and aggregator workloads with local images and
+  chamber config. Verified API `/health` returned `{"status":"ok"}` and the
+  aggregator started consuming status events from shard queues.
+- Applied the worker Deployment after creating the real `LLM_API_KEY` Secret in
+  kind. The worker uses a normal Kubernetes Deployment running
+  `python -m app.worker.worker` because KEDA is not installed in the local kind
+  cluster.
+- Patched the target worker startup settings log to redact `LLM_API_KEY`; an
+  earlier pre-traffic log artifact was redacted after revealing that DEBUG
+  startup logs could print settings.
+- Patched the target worker for this run so missing in-cluster
+  `ai-llm-utils-service` token counts fall back to a conservative local count.
+  This keeps the text-only path runnable while the document/tokenizer service is
+  intentionally omitted.
+- Patched the target worker so `gpt-5.4-mini` uses the OpenAI Responses API.
+  The previous OpenAI Agents SDK chat-completions path sent `max_tokens`, which
+  this model rejected.
+- Completed OpenAI-backed task
+  `ampule-dryrun-gpt54-mini-responses-20260616140847` through
+  `POST /translations`. API status returned `completed` with Thai text
+  `สวัสดีจากการทดสอบ Ampule Chamber แบบ dry run.`.
+- RabbitMQ queue evidence after the completed run showed zero ready and
+  unacknowledged messages in task, retry, and aggregation queues. The
+  `translation-tasks.queue.dlq` count of 1 is from an earlier pre-fix failed
+  task in the same namespace.
+- Evidence for the completed run is in
+  `artifacts/real-experiment-prep-20260616/dryrun-gpt5-responses-status-latest.txt`,
+  `translation-worker-logs-after-gpt5-responses-dryrun.txt`,
+  `translation-api-logs-after-gpt5-responses-dryrun.txt`,
+  `translation-aggregator-logs-after-gpt5-responses-dryrun.txt`, and
+  `rabbitmq-queues-after-gpt5-responses-dryrun.txt`.
+- The API route `/execution-graph/{task_id}` returned HTTP 404 for the
+  completed dry run, so status, workload logs, and queue state are the accepted
+  evidence for this manual chamber run.
+- Real experiment `experiments/experiment-001/` ran 100 random contexts from
+  `dataset/thaigov-v2-corpus-22032023-context.jsonl` through the live
+  direct-text translation path to English.
+- Experiment 001 used local kind port-forwards
+  `API_URL=http://127.0.0.1:18887` and
+  `PROMETHEUS_URL=http://127.0.0.1:19090`; Prometheus in namespace
+  `monitoring` returned ready HTTP 200.
+- Experiment 001 completed 100/100 submitted tasks with 100 HTTP 202 accepts,
+  zero terminal failures, and zero timed-out or non-terminal tasks. End-to-end
+  task latency was p50 5.23505s, p95 10.485115s, and max 57.5322s.
+- Experiment 001 RabbitMQ evidence after the run showed zero ready and
+  unacknowledged messages in task, retry, aggregation, and aggregation-retry
+  queues. The existing `translation-tasks.queue.dlq` count of 1 still predates
+  the experiment.
+- Experiment 001 Prometheus limitation: Prometheus is deployed and reachable
+  inside kind, but the current scrape configuration only proved Prometheus
+  itself was up; the container CPU query returned an empty vector.
+- Verified existing cluster Prometheus in namespace `monitoring` is ready
+  through a temporary port-forward. Live runs still need `PROMETHEUS_URL`
+  exported while that port-forward is active.
+- The target repository's Git metadata is broken (`fatal: bad object HEAD`), so
+  Docker builds succeeded but could not capture commit metadata.
 - Live prerequisite check on this machine after implementation:
   - `docker`, `kind`, `kubectl`, and `k6` are present.
   - Current Kubernetes context is `kind-ampule-chamber`.
   - `kind get clusters` includes `ampule-chamber`.
-  - `LLM_API_KEY` is missing, so OpenAI-backed translation evidence cannot run.
-  - `PROMETHEUS_URL` is missing, so the current live evidence collection path
-    cannot collect required Prometheus metrics.
+  - `LLM_API_KEY` was provided for this dry run through a Kubernetes Secret and
+    was not recorded in phase artifacts.
+  - `PROMETHEUS_URL` is missing from the developer shell, so the manual dry run
+    did not collect Prometheus metrics through the automated live evidence path.
 - Acceptance evidence recorded so far:
   - `uv run python -m unittest tests.test_phase10_onboarding` passed.
   - `uv run ruff check chamber/onboarding tests/test_phase10_onboarding.py`
