@@ -15,43 +15,43 @@ collection, and a report.
 
 ## Task Checklist
 
-- [ ] Review phase 06 live runner, phase 09 multi-service implementation,
+- [x] Review phase 06 live runner, phase 09 multi-service implementation,
       `docs/internal/PROJECT_DESIGN.md`, and the external service repository
       shape.
-- [ ] Define a real-service onboarding contract for repository path, images,
+- [x] Define a real-service onboarding contract for repository path, images,
       manifests, workloads, dependencies, secrets, config, traffic journeys,
       and external dependency policy.
-- [ ] Decide whether the contract is represented as a new scenario extension,
+- [x] Decide whether the contract is represented as a new scenario extension,
       a separate onboarding file, or a generated phase artifact.
-- [ ] Add validation for required onboarding fields and redaction rules.
-- [ ] Implement local image build and kind-load planning for multiple images.
-- [ ] Add chamber-safe Kubernetes manifest adaptation for Namespace,
+- [x] Add validation for required onboarding fields and redaction rules.
+- [x] Implement local image build and kind-load planning for multiple images.
+- [x] Add chamber-safe Kubernetes manifest adaptation for Namespace,
       Deployment, Service, ConfigMap, Secret, labels, image references,
       resources, probes, and cleanup selectors.
-- [ ] Support chamber-owned Redis and RabbitMQ dependency workloads with
+- [x] Support chamber-owned Redis and RabbitMQ dependency workloads with
       service-specific readiness checks.
-- [ ] Support Secret and ConfigMap injection without writing secret values into
+- [x] Support Secret and ConfigMap injection without writing secret values into
       generated artifacts, reports, logs, or metadata.
-- [ ] Add k6 POST JSON traffic journeys, including direct-text
+- [x] Add k6 POST JSON traffic journeys, including direct-text
       `POST /translations` support for an external translation service.
 - [ ] Add optional follow-up checks for task status, event feed, queue depth, or
       worker logs so runs can prove pipeline progress beyond API acceptance.
-- [ ] Add external dependency policy handling for OpenAI or similar providers:
+- [x] Add external dependency policy handling for OpenAI or similar providers:
       allowed endpoints, required environment variables, timeout budgets, and
       report limitations.
 - [ ] Extend evidence attribution for API, worker, Redis, RabbitMQ, queue
       state, application logs, and external dependency diagnostics.
-- [ ] Extend reports with onboarding summary, adapted workload list, redacted
+- [x] Extend reports with onboarding summary, adapted workload list, redacted
       config summary, external dependencies, queue evidence, and real-service
       retest guidance.
-- [ ] Add focused tests for onboarding validation, manifest adaptation,
+- [x] Add focused tests for onboarding validation, manifest adaptation,
       redaction, image mapping, POST traffic generation, readiness checks, and
       report output.
-- [ ] Add an external-service dry-run artifact showing planned images, workloads,
+- [x] Add an external-service dry-run artifact showing planned images, workloads,
       dependencies, traffic, evidence, and blockers.
 - [ ] Run a live external-service text-only chamber scenario when Redis,
       RabbitMQ, images, Prometheus, and OpenAI credentials are available.
-- [ ] Record acceptance evidence, limitations, and follow-up work in this plan.
+- [x] Record acceptance evidence, limitations, and follow-up work in this plan.
 
 ## Evaluation Metrics
 
@@ -167,6 +167,14 @@ collection, and a report.
 
 - Initial implementation added deterministic dry-run planning, scenario
   validation, POST k6 generation, report sections, and focused tests.
+- Current scope is generic for the first external translation-service shape,
+  not arbitrary Kubernetes applications. The planner still assumes conventional
+  file locations, an API/worker split, Redis, RabbitMQ, OpenAI-compatible LLM
+  configuration, and a direct-text `POST /translations` journey.
+- Broader real-service onboarding still needs a user-provided onboarding file
+  or schema that can describe arbitrary manifest paths, workload roles,
+  dependency types, traffic journeys, readiness probes, and external dependency
+  policies without hard-coded translation-service conventions.
 - Live OpenAI-backed external-service evidence remains blocked until
   `LLM_API_KEY` is available and external service images are built and loaded
   into `kind-ampule-chamber`.
