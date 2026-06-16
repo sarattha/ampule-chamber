@@ -5,11 +5,10 @@ onboarding path for real repositories with existing Kubernetes manifests,
 runtime dependencies, secrets, and non-trivial traffic journeys.
 
 This phase should preserve the phase 06-09 safety model while making an
-operator-provided external service repository runnable in a local chamber. The
-goal is not to support every production deployment shape. The first acceptance
-target is a bounded bring-your-own-service workflow for one API plus queue
-workers and supporting Redis/RabbitMQ dependencies in an isolated `kind`
-namespace.
+operator-provided external service repository plannable in a local chamber. The
+goal is not to support every production deployment shape. The first supported
+contract accepts raw Kubernetes YAML, explicit workload roles, local image build
+plans, dependency policy, redacted runtime config, and POST traffic journeys.
 
 The core question for this phase is:
 
@@ -37,9 +36,9 @@ The core question for this phase is:
 - Allow explicit external dependency policy for services that call APIs outside
   the chamber, such as OpenAI. External calls must be opt-in, named, and
   recorded as limitations or dependencies in the report.
-- Create a generic external translation service chamber scenario or onboarding
-  artifact that runs direct-text translation traffic while intentionally
-  avoiding the document-service path.
+- Create a generic onboarding contract plus an external text-translation preset
+  that runs direct-text translation traffic while intentionally avoiding the
+  document-service path.
 - Collect and attribute evidence across API, worker, Redis, RabbitMQ, and any
   other chamber-owned workloads.
 - Extend reports with onboarding assumptions, adapted manifests, external
@@ -48,7 +47,7 @@ The core question for this phase is:
 - Record dry-run and, when prerequisites are available, live acceptance evidence
   in `artifacts/`.
 
-## External Translation Acceptance Target
+## External Text-Translation Preset
 
 The first real-service target is expected to model:
 
@@ -61,6 +60,22 @@ The first real-service target is expected to model:
   required.
 - Optional status, event, log, or queue-depth checks to prove work moved beyond
   API acceptance and into the translation pipeline.
+
+## Generic Raw-YAML Scope
+
+The reusable Phase 10 contract is not tied to a named external repository. An
+operator supplies:
+
+- external repository path and manifest paths
+- workload names, kinds, roles, and readiness intent
+- local Docker build contexts and image replacement rules
+- required and secret environment variables
+- ConfigMap overrides and Secret redaction expectations
+- explicit external dependency policies
+- traffic journey and follow-up evidence checks
+
+Helm and Kustomize rendering are deferred. Operators can provide rendered YAML
+to the generic planner in this phase.
 
 ## Agent Notes
 

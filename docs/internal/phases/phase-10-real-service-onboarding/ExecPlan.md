@@ -3,15 +3,15 @@
 ## Description
 
 Build the first bring-your-own-service onboarding workflow for Ampule Chamber.
-This phase converts a real repository with existing Dockerfiles, Kubernetes
-manifests, secrets, runtime dependencies, and POST-based traffic into a safe
-local chamber run.
+This phase converts an operator-provided external repository with existing
+Dockerfiles, raw Kubernetes manifests, secrets, runtime dependencies, and
+POST-based traffic into a safe local chamber plan.
 
-The first target shape is an external translation service repository supplied
-by the operator. The phase should adapt enough of that repository shape to run
-a text-only translation path in `kind` with chamber-owned Redis and RabbitMQ, a
-worker process, explicit OpenAI external dependency configuration, evidence
-collection, and a report.
+The first preset target remains an external text-translation service shape, but
+the core implementation is now a generic raw-Kubernetes onboarding contract.
+Operators provide manifest paths, workload roles, image mappings, readiness
+intent, traffic journeys, and external dependency policy instead of hard-coding
+one repository name or source layout into Ampule Chamber.
 
 ## Task Checklist
 
@@ -34,12 +34,12 @@ collection, and a report.
       generated artifacts, reports, logs, or metadata.
 - [x] Add k6 POST JSON traffic journeys, including direct-text
       `POST /translations` support for an external translation service.
-- [ ] Add optional follow-up checks for task status, event feed, queue depth, or
+- [x] Add optional follow-up checks for task status, event feed, queue depth, or
       worker logs so runs can prove pipeline progress beyond API acceptance.
 - [x] Add external dependency policy handling for OpenAI or similar providers:
       allowed endpoints, required environment variables, timeout budgets, and
       report limitations.
-- [ ] Extend evidence attribution for API, worker, Redis, RabbitMQ, queue
+- [x] Extend evidence attribution for API, worker, Redis, RabbitMQ, queue
       state, application logs, and external dependency diagnostics.
 - [x] Extend reports with onboarding summary, adapted workload list, redacted
       config summary, external dependencies, queue evidence, and real-service
@@ -106,11 +106,20 @@ collection, and a report.
       repository path, image builds, adapted workloads, redacted config,
       external dependency policy, readiness checks, traffic journey, blockers,
       and limitations.
+- [x] Generalized the implementation with `OnboardingSpec` and
+      `build_onboarding_plan` so Phase 10 can onboard arbitrary raw Kubernetes
+      YAML from an operator-provided external project.
 - [x] Added redacted external-service manifest planning from an
       operator-provided working tree.
 - [x] Added chamber-owned Redis and RabbitMQ dependency workload planning.
-- [x] Adapted an external worker KEDA `ScaledJob` into a bounded local worker
-      `Deployment` for the first `kind` onboarding slice.
+- [x] Added raw `ScaledJob` pod-template adaptation for labels, local image
+      replacement, pull policy, resources, inline secret-env redaction, workload
+      inventory, readiness planning, and evidence attribution.
+- [x] Added follow-up check and evidence-attribution contracts for task status,
+      worker logs, queue depth, workload logs, pod status, and external
+      dependency diagnostics.
+- [x] Added live preflight blockers for missing required env vars, missing
+      Prometheus evidence configuration, and missing local image build plans.
 - [x] Added `scenarios/external-text-translation.yaml` for direct-text
       `POST /translations` traffic.
 - [x] Extended k6 traffic planning to support POST JSON bodies and expected
@@ -135,9 +144,9 @@ collection, and a report.
 - The external repository is treated as operator-provided input; Ampule Chamber
   records a generic working-tree source reference instead of naming that
   repository in tracked files.
-- The external worker manifest may be a KEDA `ScaledJob`; the first local chamber slice
-  adapts it into a single worker `Deployment` so KEDA installation is not a
-  prerequisite.
+- The external worker manifest may be a KEDA `ScaledJob`; the generic adapter
+  can now safely rewrite its embedded pod template without copying source files
+  or secrets.
 
 ## Decision Log
 
@@ -162,19 +171,26 @@ collection, and a report.
 - Chose to keep the document-service path out of the scenario because direct
   text translation exercises the normal API, RabbitMQ, Redis, worker, and LLM
   path without requiring document ingestion.
+- Chose a generic `OnboardingSpec` over a repository-specific contract so Phase
+  10 can describe broad raw-YAML use cases while preserving the text-translation
+  preset as only one operator-supplied shape.
+- Chose to leave Helm and Kustomize rendering out of this pass. Operators can
+  provide rendered raw YAML now; native overlay rendering should be a later
+  phase once the raw-manifest contract is stable.
 
 ## Outcomes And Retrospective
 
 - Initial implementation added deterministic dry-run planning, scenario
   validation, POST k6 generation, report sections, and focused tests.
-- Current scope is generic for the first external translation-service shape,
-  not arbitrary Kubernetes applications. The planner still assumes conventional
-  file locations, an API/worker split, Redis, RabbitMQ, OpenAI-compatible LLM
-  configuration, and a direct-text `POST /translations` journey.
-- Broader real-service onboarding still needs a user-provided onboarding file
-  or schema that can describe arbitrary manifest paths, workload roles,
-  dependency types, traffic journeys, readiness probes, and external dependency
-  policies without hard-coded translation-service conventions.
+- Current scope is generic for raw Kubernetes YAML supplied through
+  `OnboardingSpec`: manifest paths, workload roles, image builds, image
+  replacements, config overrides, required/secret env vars, dependency
+  policies, POST traffic, follow-up checks, and evidence attribution.
+- The external text-translation preset is now a compatibility layer on top of
+  the generic onboarding planner, not the core repository contract.
+- Broader real-service onboarding still needs persisted onboarding-file parsing,
+  Helm/Kustomize rendering, richer readiness probe execution, and live runner
+  integration beyond deterministic planning and preflight evidence.
 - Live OpenAI-backed external-service evidence remains blocked until
   `LLM_API_KEY` is available and external service images are built and loaded
   into `kind-ampule-chamber`.
@@ -187,9 +203,12 @@ collection, and a report.
     cannot collect required Prometheus metrics.
 - Acceptance evidence recorded so far:
   - `uv run python -m unittest tests.test_phase10_onboarding` passed.
+  - `uv run ruff check chamber/onboarding tests/test_phase10_onboarding.py`
+    passed.
+  - `uv run mypy` passed.
   - `uv run python scripts/validate_scenarios.py` passed for 7 scenarios.
   - `uv run ruff format --check chamber tests scripts` passed.
   - `uv run ruff check chamber tests scripts` passed.
   - `uv run mypy` passed.
-  - `make check` passed, including format, lint, typecheck, 83 tests,
+  - `make check` passed, including format, lint, typecheck, 85 tests,
     coverage at the 90% threshold, scenario validation, and package build.

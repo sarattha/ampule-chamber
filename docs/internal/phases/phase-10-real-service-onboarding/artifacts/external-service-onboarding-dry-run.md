@@ -2,6 +2,11 @@
 
 Run id used for planner inspection: `phase10-dry-run`.
 
+This artifact records one preset built on the generic Phase 10 raw-Kubernetes
+onboarding contract. The reusable contract accepts operator-provided manifest
+paths, workload roles, image mappings, readiness intent, redacted config,
+external dependency policies, traffic journeys, and follow-up evidence checks.
+
 ## Source
 
 - External repository: operator-provided working tree outside this repository
@@ -33,13 +38,14 @@ All adapted resources carry Ampule Chamber run labels and cleanup selectors.
 ## Adapted Workloads
 
 - API: `Deployment/translation-service`, `Service/translation-service`, port `8887`
-- Worker: `Deployment/translation-worker`, metrics port `8001`
+- Worker: `ScaledJob/translation-worker`, metrics port `8001`
 - RabbitMQ: `Deployment/rabbitmq`, `Service/rabbitmq`, ports `5672` and `15672`
 - Redis: `Deployment/redis-master`, `Service/redis-master`, port `6379`
 
-A KEDA `ScaledJob` worker manifest is adapted to a bounded chamber-owned worker
-`Deployment` for local `kind`; installing KEDA is not required for this first
-onboarding slice.
+The KEDA `ScaledJob` pod template is rewritten in-place for chamber labels,
+local image replacement, `IfNotPresent` pull policy, default resource bounds,
+and inline secret-env redaction. Operators can also provide plain
+`Deployment`, `Job`, or `CronJob` worker manifests through the generic planner.
 
 ## Redacted Configuration
 
@@ -79,6 +85,17 @@ Follow-up evidence should check `/status/ampule-phase10-text`, worker logs,
 RabbitMQ queue state, Redis status data, or service events for translation
 progress.
 
+## Follow-Up And Evidence Attribution
+
+- `translation-status`: HTTP status/result check at
+  `/status/ampule-phase10-text`
+- `worker-logs`: Kubernetes logs from the worker resource
+- `queue-state`: RabbitMQ queue depth or drain evidence
+- Workload evidence: pod status and logs attributed to API, worker, Redis, and
+  RabbitMQ resources
+- External dependency evidence: OpenAI endpoint/model metadata and redacted key
+  presence only
+
 ## Readiness Checks
 
 - RabbitMQ service endpoints for AMQP and management ports.
@@ -88,12 +105,15 @@ progress.
 
 ## Blockers
 
-- `LLM_API_KEY` is required for live OpenAI translation evidence.
+- `LLM_API_KEY` is required for live onboarding evidence.
+- `PROMETHEUS_URL` is required for the current live Prometheus evidence path.
 
 ## Limitations
 
 - Document-service path is intentionally ignored; direct text translation only.
 - External repository is read-only and provided by the operator at run time.
+- Raw Kubernetes YAML is supported in this pass; Helm and Kustomize must be
+  rendered before onboarding.
 - This artifact records dry-run planning evidence. A live run should be
   recorded after images are built, loaded into `kind-ampule-chamber`, and
-  `LLM_API_KEY` is available in the local environment.
+  `LLM_API_KEY` and `PROMETHEUS_URL` are available in the local environment.
