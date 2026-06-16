@@ -7,7 +7,10 @@ from tempfile import TemporaryDirectory
 from chamber.contracts.scenario import load_scenario
 from chamber.environment import EnvironmentMetadata
 from chamber.load import plan_traffic
-from chamber.onboarding import build_tara2_onboarding_plan, validate_tara2_environment
+from chamber.onboarding import (
+    build_external_translation_onboarding_plan,
+    validate_external_translation_environment,
+)
 from chamber.report import (
     ReportInput,
     ReproductionDetails,
@@ -18,27 +21,26 @@ from chamber.report import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
-TARA2_REPO = Path("/Users/jobz/Works/tara2_translation_service")
 
 
 class Phase10OnboardingTests(unittest.TestCase):
-    def test_tara2_onboarding_plan_adapts_real_repo_without_secret_values(self) -> None:
-        if not TARA2_REPO.exists():
-            self.skipTest("Tara2 repository is not available")
+    def test_external_onboarding_plan_adapts_repo_without_secret_values(self) -> None:
+        with TemporaryDirectory() as tmp:
+            repo = _external_translation_repo(Path(tmp))
 
-        plan = build_tara2_onboarding_plan(
-            repo_path=TARA2_REPO,
-            run_id="phase10-test",
-            env={
-                "LLM_API_KEY": "sk-secret",
-                "LLM_BACKEND": "openai",
-                "LLM_ENDPOINT": "https://api.openai.com/v1",
-                "MODEL_NAME": "gpt-4.1-mini",
-            },
-        )
+            plan = build_external_translation_onboarding_plan(
+                repo_path=repo,
+                run_id="phase10-test",
+                env={
+                    "LLM_API_KEY": "sk-secret",
+                    "LLM_BACKEND": "openai",
+                    "LLM_ENDPOINT": "https://api.openai.com/v1",
+                    "MODEL_NAME": "gpt-4.1-mini",
+                },
+            )
 
-        self.assertEqual(plan.service_name, "tara2-translation-service")
-        self.assertEqual(plan.repository_ref, "current-working-tree")
+        self.assertEqual(plan.service_name, "external-translation-service")
+        self.assertEqual(plan.repository_ref, "external-working-tree")
         self.assertFalse(plan.blockers)
         self.assertEqual(
             [item.name for item in plan.image_builds],
@@ -63,15 +65,15 @@ class Phase10OnboardingTests(unittest.TestCase):
         self.assertEqual(plan.traffic_journey["expectedStatus"], 202)
 
     def test_missing_openai_key_is_reported_as_live_blocker(self) -> None:
-        self.assertEqual(validate_tara2_environment({}), ("LLM_API_KEY",))
-        if not TARA2_REPO.exists():
-            self.skipTest("Tara2 repository is not available")
+        self.assertEqual(validate_external_translation_environment({}), ("LLM_API_KEY",))
 
-        plan = build_tara2_onboarding_plan(
-            repo_path=TARA2_REPO,
-            run_id="phase10-missing-key",
-            env={},
-        )
+        with TemporaryDirectory() as tmp:
+            repo = _external_translation_repo(Path(tmp))
+            plan = build_external_translation_onboarding_plan(
+                repo_path=repo,
+                run_id="phase10-missing-key",
+                env={},
+            )
 
         self.assertEqual(
             plan.blockers,
@@ -80,14 +82,14 @@ class Phase10OnboardingTests(unittest.TestCase):
         key_entry = next(item for item in plan.redacted_config if item.name == "LLM_API_KEY")
         self.assertEqual(key_entry.value, "<missing>")
 
-    def test_tara2_scenario_generates_post_k6_script(self) -> None:
-        scenario = load_scenario(ROOT / "scenarios/tara2-text-translation.yaml")
+    def test_external_scenario_generates_post_k6_script(self) -> None:
+        scenario = load_scenario(ROOT / "scenarios/external-text-translation.yaml")
         environment = EnvironmentMetadata(
             run_id="phase10-traffic",
             scenario_id=scenario.scenario_id,
             provider="kind",
             source_provider="docker",
-            namespace="chamber-tara2",
+            namespace="chamber-external-translation",
             labels={"chamber.ampule.dev/run-id": "phase10-traffic"},
             resource_names={"service": "translation-service"},
             readiness_checks=(),
@@ -112,23 +114,23 @@ class Phase10OnboardingTests(unittest.TestCase):
         report = ReportInput(
             title="Ampule Chamber Reliability Report",
             service=ServiceMetadata(
-                name="tara2-translation-service",
+                name="external-translation-service",
                 owner="platform-reliability",
-                repository=str(TARA2_REPO),
-                commit="current-working-tree",
+                repository="/path/to/external-translation-service",
+                commit="external-working-tree",
             ),
             run=RunMetadata(
                 run_id="phase10-report",
                 test_date="2026-06-15",
                 duration_seconds=120,
-                namespace="chamber-tara2",
+                namespace="chamber-external-translation",
                 provider="kind",
                 lifecycle_state="completed",
             ),
             scenario=TestedScenario(
-                scenario_id="tara2-text-translation-001",
-                name="Tara2 text translation through OpenAI",
-                path="scenarios/tara2-text-translation.yaml",
+                scenario_id="external-text-translation-001",
+                name="External text translation through OpenAI",
+                path="scenarios/external-text-translation.yaml",
                 traffic_tool="k6",
                 max_virtual_users=1,
                 fault_summary="none",
@@ -137,9 +139,9 @@ class Phase10OnboardingTests(unittest.TestCase):
             evidence=(),
             reproduction=ReproductionDetails(commands=(), artifacts=()),
             retest_plan=("Rerun with the same text payload and OpenAI env vars.",),
-            cleanup_notes=("Delete chamber-owned Tara2 namespace after the run.",),
+            cleanup_notes=("Delete chamber-owned external-service namespace after the run.",),
             limitations=("Document-service path is intentionally ignored.",),
-            onboarding_summary=("Tara2 current working tree used read-only.",),
+            onboarding_summary=("External working tree used read-only.",),
             adapted_workloads=(
                 "translation-service API, translation-worker, rabbitmq, redis-master",
             ),
@@ -154,6 +156,176 @@ class Phase10OnboardingTests(unittest.TestCase):
         self.assertIn("## Redacted Configuration", markdown)
         self.assertIn("## External Dependencies", markdown)
         self.assertNotIn("sk-", markdown)
+
+
+def _external_translation_repo(root: Path) -> Path:
+    repo = root / "external_translation_service"
+    for path in (
+        "docker",
+        "deployment",
+        "k8s/keda",
+    ):
+        (repo / path).mkdir(parents=True, exist_ok=True)
+    (repo / "docker/Dockerfile.api").write_text("FROM scratch\n", encoding="utf-8")
+    (repo / "docker/Dockerfile.worker").write_text("FROM scratch\n", encoding="utf-8")
+    (repo / "deployment/deployment.yaml").write_text(_api_manifest(), encoding="utf-8")
+    (repo / "k8s/keda/scaledjob.yaml").write_text(_worker_manifest(), encoding="utf-8")
+    (repo / "k8s/translation-configmap.yaml").write_text(_configmap(), encoding="utf-8")
+    (repo / "deployment/rabbitmq-deployment.yaml").write_text(_rabbitmq(), encoding="utf-8")
+    (repo / "deployment/redis-deployment.yaml").write_text(_redis(), encoding="utf-8")
+    return repo
+
+
+def _api_manifest() -> str:
+    return """\
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: translation-service
+spec:
+  selector:
+    matchLabels:
+      app: translation-service
+  template:
+    metadata:
+      labels:
+        app: translation-service
+    spec:
+      containers:
+        - name: translation-api
+          image: registry.example/translation-api:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8887
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: translation-service
+spec:
+  selector:
+    app: translation-service
+  ports:
+    - name: http
+      port: 8887
+      targetPort: http
+"""
+
+
+def _worker_manifest() -> str:
+    return """\
+apiVersion: keda.sh/v1alpha1
+kind: ScaledJob
+metadata:
+  name: translation-worker
+spec:
+  jobTargetRef:
+    template:
+      metadata:
+        labels:
+          app: translation-worker
+      spec:
+        restartPolicy: Never
+        containers:
+          - name: translation-worker
+            image: registry.example/translation-worker:latest
+            imagePullPolicy: Always
+            ports:
+              - name: metrics
+                containerPort: 8001
+            env:
+              - name: LLM_API_KEY
+                value: placeholder
+"""
+
+
+def _configmap() -> str:
+    return """\
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: translation-service-config
+data:
+  REDIS_HOST: redis-master.default.svc.cluster.local
+  REDIS_PORT: "6379"
+  RABBITMQ_MANAGEMENT_URL: http://rabbitmq.default.svc.cluster.local:15672/
+  DOCUMENT_SERVICE_BASE_URL: http://document-service.default.svc.cluster.local
+"""
+
+
+def _rabbitmq() -> str:
+    return """\
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rabbitmq
+spec:
+  selector:
+    matchLabels:
+      app: rabbitmq
+  template:
+    metadata:
+      labels:
+        app: rabbitmq
+    spec:
+      containers:
+        - name: rabbitmq
+          image: rabbitmq:4.2.0-management
+          ports:
+            - name: amqp
+              containerPort: 5672
+            - name: management
+              containerPort: 15672
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq
+spec:
+  selector:
+    app: rabbitmq
+  ports:
+    - name: amqp
+      port: 5672
+    - name: management
+      port: 15672
+"""
+
+
+def _redis() -> str:
+    return """\
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-master
+spec:
+  selector:
+    app: redis
+  ports:
+    - name: redis
+      port: 6379
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-master
+spec:
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:8.0.2-alpine
+          ports:
+            - name: redis
+              containerPort: 6379
+"""
 
 
 if __name__ == "__main__":

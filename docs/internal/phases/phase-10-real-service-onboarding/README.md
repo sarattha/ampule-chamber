@@ -4,11 +4,12 @@ Extend Ampule Chamber from controlled sample topologies into a practical
 onboarding path for real repositories with existing Kubernetes manifests,
 runtime dependencies, secrets, and non-trivial traffic journeys.
 
-This phase should preserve the phase 06-09 safety model while making a service
-such as Tara2 Translation Service runnable in a local chamber. The goal is not
-to support every production deployment shape. The first acceptance target is a
-bounded bring-your-own-service workflow for one API plus queue workers and
-supporting Redis/RabbitMQ dependencies in an isolated `kind` namespace.
+This phase should preserve the phase 06-09 safety model while making an
+operator-provided external service repository runnable in a local chamber. The
+goal is not to support every production deployment shape. The first acceptance
+target is a bounded bring-your-own-service workflow for one API plus queue
+workers and supporting Redis/RabbitMQ dependencies in an isolated `kind`
+namespace.
 
 The core question for this phase is:
 
@@ -36,9 +37,9 @@ The core question for this phase is:
 - Allow explicit external dependency policy for services that call APIs outside
   the chamber, such as OpenAI. External calls must be opt-in, named, and
   recorded as limitations or dependencies in the report.
-- Create a Tara2 Translation Service chamber scenario or onboarding artifact
-  that runs direct-text translation traffic while intentionally avoiding the
-  document-service path.
+- Create a generic external translation service chamber scenario or onboarding
+  artifact that runs direct-text translation traffic while intentionally
+  avoiding the document-service path.
 - Collect and attribute evidence across API, worker, Redis, RabbitMQ, and any
   other chamber-owned workloads.
 - Extend reports with onboarding assumptions, adapted manifests, external
@@ -47,7 +48,7 @@ The core question for this phase is:
 - Record dry-run and, when prerequisites are available, live acceptance evidence
   in `artifacts/`.
 
-## Tara2 Acceptance Target
+## External Translation Acceptance Target
 
 The first real-service target is expected to model:
 
@@ -70,5 +71,5 @@ The first real-service target is expected to model:
 - Treat missing external credentials as a blocker to live translation evidence,
   not as a successful run.
 - Preserve chamber cleanup guarantees for every adapted workload.
-- Start with a narrow Tara2 text-only workflow before supporting document
+- Start with a narrow external text-only workflow before supporting document
   ingestion, KEDA autoscaling parity, or production identity integrations.

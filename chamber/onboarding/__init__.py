@@ -1,14 +1,14 @@
 """Real-service onboarding contracts for Phase 10."""
 
-from chamber.onboarding.tara2 import (
+from chamber.onboarding.external_translation import (
     ExternalDependencyPolicy,
     ImageBuildPlan,
     OnboardingValidationError,
     RealServiceOnboardingPlan,
     RedactedConfigEntry,
     WorkloadPlan,
-    build_tara2_onboarding_plan,
-    validate_tara2_environment,
+    build_external_translation_onboarding_plan,
+    validate_external_translation_environment,
 )
 
 __all__ = [
@@ -18,6 +18,6 @@ __all__ = [
     "RealServiceOnboardingPlan",
     "RedactedConfigEntry",
     "WorkloadPlan",
-    "build_tara2_onboarding_plan",
-    "validate_tara2_environment",
+    "build_external_translation_onboarding_plan",
+    "validate_external_translation_environment",
 ]

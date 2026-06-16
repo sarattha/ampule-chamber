@@ -1,9 +1,9 @@
-"""Tara2 real-service onboarding planning.
+"""External translation service onboarding planning.
 
-The planner reads Tara2 repository files as source truth and emits a redacted,
-chamber-owned Kubernetes plan. It intentionally does not write or expose secret
-values; live execution code must create secrets from process environment at the
-last responsible moment.
+The planner reads an external repository passed in by the operator and emits a
+redacted, chamber-owned Kubernetes plan. It intentionally does not write or
+expose secret values; live execution code must create secrets from process
+environment at the last responsible moment.
 """
 
 from __future__ import annotations
@@ -19,11 +19,11 @@ import yaml
 
 from chamber.environment import EnvironmentAction, ReadinessCheck
 
-DEFAULT_TARA2_REPO = Path("/Users/jobz/Works/tara2_translation_service")
-DEFAULT_NAMESPACE_BASE = "chamber-tara2"
-DEFAULT_API_IMAGE = "ampule/tara2-translation-api:local"
-DEFAULT_WORKER_IMAGE = "ampule/tara2-translation-worker:local"
-DEFAULT_REDIS_PASSWORD_REF = "TARA2_REDIS_PASSWORD"
+DEFAULT_NAMESPACE_BASE = "chamber-external-translation"
+DEFAULT_API_IMAGE = "ampule/external-translation-api:local"
+DEFAULT_WORKER_IMAGE = "ampule/external-translation-worker:local"
+DEFAULT_REDIS_PASSWORD_REF = "EXTERNAL_TRANSLATION_REDIS_PASSWORD"
+DEFAULT_REPOSITORY_REF = "external-working-tree"
 REQUIRED_SECRET_ENV = ("LLM_API_KEY",)
 DEFAULT_LLM_ENV = {
     "LLM_BACKEND": "openai",
@@ -50,7 +50,7 @@ class ImageBuildPlan:
 
 @dataclass(frozen=True)
 class WorkloadPlan:
-    """Chamber-owned workload adapted from Tara2 or dependency manifests."""
+    """Chamber-owned workload adapted from external dependency manifests."""
 
     name: str
     role: str
@@ -85,7 +85,7 @@ class ExternalDependencyPolicy:
 
 @dataclass(frozen=True)
 class RealServiceOnboardingPlan:
-    """Deterministic Tara2 onboarding plan used for dry-run and live evidence."""
+    """Deterministic external-service onboarding plan."""
 
     run_id: str
     service_name: str
@@ -105,7 +105,9 @@ class RealServiceOnboardingPlan:
     limitations: tuple[str, ...]
 
 
-def validate_tara2_environment(env: Mapping[str, str] | None = None) -> tuple[str, ...]:
+def validate_external_translation_environment(
+    env: Mapping[str, str] | None = None,
+) -> tuple[str, ...]:
     """Return missing environment variables required for a live OpenAI run."""
 
     values = env or os.environ
@@ -113,13 +115,13 @@ def validate_tara2_environment(env: Mapping[str, str] | None = None) -> tuple[st
     return tuple(missing)
 
 
-def build_tara2_onboarding_plan(
+def build_external_translation_onboarding_plan(
     *,
-    repo_path: str | Path = DEFAULT_TARA2_REPO,
+    repo_path: str | Path,
     run_id: str,
     env: Mapping[str, str] | None = None,
 ) -> RealServiceOnboardingPlan:
-    """Build a redacted Tara2 onboarding plan from the current repo files."""
+    """Build a redacted onboarding plan from external service repo files."""
 
     repository = Path(repo_path)
     _require_file(repository / "docker/Dockerfile.api")
@@ -131,7 +133,7 @@ def build_tara2_onboarding_plan(
     redis = _load_yaml_documents(repository / "deployment/redis-deployment.yaml")
 
     values = env or os.environ
-    scenario_id = "tara2-text-translation-001"
+    scenario_id = "external-text-translation-001"
     suffix = sha1(f"{scenario_id}:{run_id}".encode()).hexdigest()[:8]
     namespace = f"{DEFAULT_NAMESPACE_BASE}-{suffix}"
     labels = {
@@ -164,7 +166,12 @@ def build_tara2_onboarding_plan(
     manifests = (
         _namespace_manifest(namespace, labels),
         _configmap_manifest(namespace, labels, adapted_config),
-        _secret_placeholder("tara2-llm-secret", namespace, labels, ("LLM_API_KEY",)),
+        _secret_placeholder(
+            "external-translation-llm-secret",
+            namespace,
+            labels,
+            ("LLM_API_KEY",),
+        ),
         _secret_placeholder("redis-secret", namespace, labels, ("password",)),
         _secret_placeholder("rabbitmq-secret", namespace, labels, ("connection",)),
         *_adapt_dependency_manifests(rabbitmq, namespace=namespace, labels=labels),
@@ -189,7 +196,7 @@ def build_tara2_onboarding_plan(
             kind_context="kind-ampule-chamber",
         ),
     )
-    missing = validate_tara2_environment(values)
+    missing = validate_external_translation_environment(values)
     blockers = tuple(f"{name} is required for live OpenAI translation evidence" for name in missing)
     redacted_config = (
         RedactedConfigEntry(
@@ -261,9 +268,9 @@ def build_tara2_onboarding_plan(
     }
     return RealServiceOnboardingPlan(
         run_id=run_id,
-        service_name="tara2-translation-service",
+        service_name="external-translation-service",
         repository_path=str(repository),
-        repository_ref="current-working-tree",
+        repository_ref=DEFAULT_REPOSITORY_REF,
         namespace=namespace,
         labels=labels,
         image_builds=image_builds,
@@ -277,15 +284,15 @@ def build_tara2_onboarding_plan(
         blockers=blockers,
         limitations=(
             "Document-service path is intentionally ignored; direct text translation only.",
-            "Tara2 KEDA ScaledJob is adapted to a bounded worker Deployment for local kind.",
-            "Tara2 repository is read-only and its current working tree is the source snapshot.",
+            "KEDA ScaledJob is adapted to a bounded worker Deployment for local kind.",
+            "External repository is read-only and provided as operator input.",
         ),
     )
 
 
 def _require_file(path: Path) -> None:
     if not path.exists():
-        raise OnboardingValidationError(f"required Tara2 file is missing: {path}")
+        raise OnboardingValidationError(f"required external service file is missing: {path}")
 
 
 def _load_yaml_documents(path: Path) -> tuple[dict[str, Any], ...]:
@@ -386,7 +393,12 @@ def _adapt_api_manifests(
             container = item["spec"]["template"]["spec"]["containers"][0]
             container["image"] = DEFAULT_API_IMAGE
             container["imagePullPolicy"] = "IfNotPresent"
-            _ensure_env_secret(container, "LLM_API_KEY", "tara2-llm-secret", "LLM_API_KEY")
+            _ensure_env_secret(
+                container,
+                "LLM_API_KEY",
+                "external-translation-llm-secret",
+                "LLM_API_KEY",
+            )
             _ensure_resources(container)
         adapted.append(item)
     return tuple(adapted)
@@ -400,14 +412,19 @@ def _worker_deployment_from_scaledjob(
 ) -> dict[str, Any]:
     scaled_job = next((item for item in documents if item.get("kind") == "ScaledJob"), None)
     if scaled_job is None:
-        raise OnboardingValidationError("Tara2 worker ScaledJob manifest was not found")
+        raise OnboardingValidationError("external worker ScaledJob manifest was not found")
     template = _copy(scaled_job["spec"]["jobTargetRef"]["template"])
     pod_labels = {**template.get("metadata", {}).get("labels", {}), **labels}
     template.setdefault("metadata", {})["labels"] = pod_labels
     container = template["spec"]["containers"][0]
     container["image"] = DEFAULT_WORKER_IMAGE
     container["imagePullPolicy"] = "IfNotPresent"
-    _ensure_env_secret(container, "LLM_API_KEY", "tara2-llm-secret", "LLM_API_KEY")
+    _ensure_env_secret(
+        container,
+        "LLM_API_KEY",
+        "external-translation-llm-secret",
+        "LLM_API_KEY",
+    )
     _ensure_resources(container)
     selector = {
         "app": "translation-worker",
@@ -573,7 +590,7 @@ def _actions(manifests: tuple[dict[str, Any], ...]) -> tuple[EnvironmentAction, 
             EnvironmentAction(
                 action_type=action_type,
                 name=f"apply-{kind.lower()}-{name}",
-                description=f"Apply adapted Tara2 {kind} {name}.",
+                description=f"Apply adapted external-service {kind} {name}.",
                 manifest=manifest,
             )
         )
@@ -581,7 +598,9 @@ def _actions(manifests: tuple[dict[str, Any], ...]) -> tuple[EnvironmentAction, 
         EnvironmentAction(
             action_type="cleanup",
             name="delete-phase10-managed-resources",
-            description="Delete all Tara2 chamber resources by run labels and namespace.",
+            description=(
+                "Delete all external-service chamber resources by run labels and namespace."
+            ),
         )
     )
     return tuple(actions)
@@ -601,7 +620,7 @@ def _readiness_checks(namespace: str) -> tuple[ReadinessCheck, ...]:
         ),
         ReadinessCheck(
             name="translation-api-health",
-            description="Tara2 API /health returns HTTP 200 after Redis and RabbitMQ are ready.",
+            description="Translation API /health returns HTTP 200 after dependencies are ready.",
             target="service/translation-service:8887/health",
         ),
         ReadinessCheck(

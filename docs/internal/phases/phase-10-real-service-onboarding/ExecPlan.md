@@ -7,15 +7,17 @@ This phase converts a real repository with existing Dockerfiles, Kubernetes
 manifests, secrets, runtime dependencies, and POST-based traffic into a safe
 local chamber run.
 
-The first target is Tara2 Translation Service. The phase should adapt enough of
-that repository to run a text-only translation path in `kind` with
-chamber-owned Redis and RabbitMQ, a worker process, explicit OpenAI external
-dependency configuration, evidence collection, and a report.
+The first target shape is an external translation service repository supplied
+by the operator. The phase should adapt enough of that repository shape to run
+a text-only translation path in `kind` with chamber-owned Redis and RabbitMQ, a
+worker process, explicit OpenAI external dependency configuration, evidence
+collection, and a report.
 
 ## Task Checklist
 
 - [ ] Review phase 06 live runner, phase 09 multi-service implementation,
-      `docs/internal/PROJECT_DESIGN.md`, and the Tara2 repository shape.
+      `docs/internal/PROJECT_DESIGN.md`, and the external service repository
+      shape.
 - [ ] Define a real-service onboarding contract for repository path, images,
       manifests, workloads, dependencies, secrets, config, traffic journeys,
       and external dependency policy.
@@ -31,7 +33,7 @@ dependency configuration, evidence collection, and a report.
 - [ ] Support Secret and ConfigMap injection without writing secret values into
       generated artifacts, reports, logs, or metadata.
 - [ ] Add k6 POST JSON traffic journeys, including direct-text
-      `POST /translations` support for Tara2.
+      `POST /translations` support for an external translation service.
 - [ ] Add optional follow-up checks for task status, event feed, queue depth, or
       worker logs so runs can prove pipeline progress beyond API acceptance.
 - [ ] Add external dependency policy handling for OpenAI or similar providers:
@@ -45,10 +47,10 @@ dependency configuration, evidence collection, and a report.
 - [ ] Add focused tests for onboarding validation, manifest adaptation,
       redaction, image mapping, POST traffic generation, readiness checks, and
       report output.
-- [ ] Add a Tara2 dry-run artifact showing planned images, workloads,
+- [ ] Add an external-service dry-run artifact showing planned images, workloads,
       dependencies, traffic, evidence, and blockers.
-- [ ] Run a live Tara2 text-only chamber scenario when Redis, RabbitMQ, images,
-      Prometheus, and OpenAI credentials are available.
+- [ ] Run a live external-service text-only chamber scenario when Redis,
+      RabbitMQ, images, Prometheus, and OpenAI credentials are available.
 - [ ] Record acceptance evidence, limitations, and follow-up work in this plan.
 
 ## Evaluation Metrics
@@ -75,9 +77,9 @@ dependency configuration, evidence collection, and a report.
 
 ## Acceptance Criteria
 
-- A Tara2 onboarding artifact or scenario can build or reference local images,
-  deploy API, worker, Redis, and RabbitMQ into a local chamber namespace, and
-  configure OpenAI through a redacted secret.
+- An external-service onboarding artifact or scenario can build or reference
+  local images, deploy API, worker, Redis, and RabbitMQ into a local chamber
+  namespace, and configure OpenAI through a redacted secret.
 - The live or documented dry-run path uses direct-text `POST /translations`
   traffic and does not require the document service.
 - The chamber verifies Redis and RabbitMQ availability before exercising the
@@ -96,19 +98,20 @@ dependency configuration, evidence collection, and a report.
 
 - [x] Phase directory created.
 - [x] Reviewed phase 06 live runner, phase 09 multi-service implementation,
-      `docs/internal/PROJECT_DESIGN.md`, and the Tara2 repository shape.
+      `docs/internal/PROJECT_DESIGN.md`, and an external translation service
+      repository shape.
 - [x] Defined Phase 10 implementation branch as
       `codex/phase-10-real-service-onboarding`.
-- [x] Added `chamber/onboarding/` real-service onboarding contracts for Tara2
+- [x] Added `chamber/onboarding/` real-service onboarding contracts for external
       repository path, image builds, adapted workloads, redacted config,
       external dependency policy, readiness checks, traffic journey, blockers,
       and limitations.
-- [x] Added redacted Tara2 manifest planning from the current
-      `/Users/jobz/Works/tara2_translation_service` working tree.
+- [x] Added redacted external-service manifest planning from an
+      operator-provided working tree.
 - [x] Added chamber-owned Redis and RabbitMQ dependency workload planning.
-- [x] Adapted Tara2 worker KEDA `ScaledJob` into a bounded local worker
+- [x] Adapted an external worker KEDA `ScaledJob` into a bounded local worker
       `Deployment` for the first `kind` onboarding slice.
-- [x] Added `scenarios/tara2-text-translation.yaml` for direct-text
+- [x] Added `scenarios/external-text-translation.yaml` for direct-text
       `POST /translations` traffic.
 - [x] Extended k6 traffic planning to support POST JSON bodies and expected
       status checks while preserving existing GET behavior.
@@ -118,31 +121,33 @@ dependency configuration, evidence collection, and a report.
       env preflight, image/kind-load planning, manifest adaptation, POST k6
       generation, readiness checks, and report output.
 - [x] Added dry-run evidence in
-      `artifacts/tara2-onboarding-dry-run.md`.
+      `artifacts/external-service-onboarding-dry-run.md`.
 
 ## Surprises And Discoveries
 
-- Tara2 can avoid the document-service path when traffic submits direct `text`
-  instead of `document_id`, but full translation still requires a worker and an
-  LLM provider.
+- Translation services with a direct-text path can avoid the document-service
+  path when traffic submits `text` instead of `document_id`, but full
+  translation still requires a worker and an LLM provider.
 - Phase 09 is implemented, but it is intentionally optimized for controlled
-  sample dependencies. Tara2 requires generic real-service onboarding features:
-  manifest adaptation, multiple images, Redis/RabbitMQ readiness, redacted
-  secrets, and POST traffic.
-- Tara2's checked-out `HEAD` points at a missing local branch, so the Phase 10
-  source reference is recorded as the current working tree instead of a commit.
-- Tara2's worker manifest is a KEDA `ScaledJob`; the first local chamber slice
+  sample dependencies. External repositories require generic real-service
+  onboarding features: manifest adaptation, multiple images, Redis/RabbitMQ
+  readiness, redacted secrets, and POST traffic.
+- The external repository is treated as operator-provided input; Ampule Chamber
+  records a generic working-tree source reference instead of naming that
+  repository in tracked files.
+- The external worker manifest may be a KEDA `ScaledJob`; the first local chamber slice
   adapts it into a single worker `Deployment` so KEDA installation is not a
   prerequisite.
 
 ## Decision Log
 
 - Chose a new phase instead of expanding phase 09 because phase 09 is already
-  accepted and focused on controlled dependency graph behavior, while Tara2
-  needs bring-your-own-service manifest and secret handling.
-- Chose Tara2 Translation Service as the first acceptance target because it
-  exercises realistic queue, worker, dependency, external API, and POST traffic
-  requirements without requiring document ingestion for the first slice.
+  accepted and focused on controlled dependency graph behavior, while real
+  external services need bring-your-own-service manifest and secret handling.
+- Chose a generic external translation-service shape as the first acceptance
+  target because it exercises realistic queue, worker, dependency, external
+  API, and POST traffic requirements without requiring document ingestion for
+  the first slice.
 - Chose text-only translation as the first live journey so the document service
   remains out of scope until the chamber can model additional internal APIs.
 - Chose OpenAI as an explicit external dependency rather than a chamber-owned
@@ -162,8 +167,9 @@ dependency configuration, evidence collection, and a report.
 
 - Initial implementation added deterministic dry-run planning, scenario
   validation, POST k6 generation, report sections, and focused tests.
-- Live OpenAI-backed Tara2 evidence remains blocked until `LLM_API_KEY` is
-  available and Tara2 images are built and loaded into `kind-ampule-chamber`.
+- Live OpenAI-backed external-service evidence remains blocked until
+  `LLM_API_KEY` is available and external service images are built and loaded
+  into `kind-ampule-chamber`.
 - Live prerequisite check on this machine after implementation:
   - `docker`, `kind`, `kubectl`, and `k6` are present.
   - Current Kubernetes context is `kind-ampule-chamber`.

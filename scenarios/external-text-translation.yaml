@@ -1,18 +1,18 @@
 apiVersion: chamber.ampule.dev/v1alpha1
 kind: Scenario
 metadata:
-  id: tara2-text-translation-001
-  name: Tara2 text translation through OpenAI
-  description: Onboard Tara2 direct-text translation with Redis, RabbitMQ, worker, and OpenAI.
+  id: external-text-translation-001
+  name: External text translation through OpenAI
+  description: Onboard an external direct-text translation service with Redis, RabbitMQ, worker, and OpenAI.
   owner: platform-reliability
   tags:
-    - tara2
+    - external-service
     - onboarding
     - openai
 target:
   service:
     name: translation-service
-    image: ampule/tara2-translation-api:local
+    image: ampule/external-translation-api:local
     ports:
       - name: http
         port: 8887
@@ -20,10 +20,10 @@ target:
     readinessEndpoint: /health
   runtime:
     provider: docker
-    composeFile: /Users/jobz/Works/tara2_translation_service/docker/Dockerfile.api
+    composeFile: /path/to/external-translation-service/docker/Dockerfile.api
 environment:
   provider: docker
-  namespace: chamber-tara2
+  namespace: chamber-external-translation
   replicas: 1
   resources:
     cpuRequest: 250m

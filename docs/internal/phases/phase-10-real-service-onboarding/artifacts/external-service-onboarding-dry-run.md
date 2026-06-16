@@ -1,11 +1,11 @@
-# Phase 10 Tara2 Onboarding Dry Run
+# Phase 10 External Service Onboarding Dry Run
 
 Run id used for planner inspection: `phase10-dry-run`.
 
 ## Source
 
-- Tara2 repository: `/Users/jobz/Works/tara2_translation_service`
-- Source snapshot: current working tree
+- External repository: operator-provided working tree outside this repository
+- Source snapshot: external working tree
 - API Dockerfile: `docker/Dockerfile.api`
 - Worker Dockerfile: `docker/Dockerfile.worker`
 - API manifest source: `deployment/deployment.yaml`
@@ -17,18 +17,18 @@ Run id used for planner inspection: `phase10-dry-run`.
 
 ## Planned Namespace
 
-`chamber-tara2-87e32bb4`
+`chamber-external-translation-<run-suffix>`
 
 All adapted resources carry Ampule Chamber run labels and cleanup selectors.
 
 ## Image Builds
 
-- `translation-api`: `ampule/tara2-translation-api:local`
-  - build: `docker build -f /Users/jobz/Works/tara2_translation_service/docker/Dockerfile.api -t ampule/tara2-translation-api:local /Users/jobz/Works/tara2_translation_service`
-  - kind load: `kind load docker-image ampule/tara2-translation-api:local --name ampule-chamber`
-- `translation-worker`: `ampule/tara2-translation-worker:local`
-  - build: `docker build -f /Users/jobz/Works/tara2_translation_service/docker/Dockerfile.worker -t ampule/tara2-translation-worker:local /Users/jobz/Works/tara2_translation_service`
-  - kind load: `kind load docker-image ampule/tara2-translation-worker:local --name ampule-chamber`
+- `translation-api`: `ampule/external-translation-api:local`
+  - build: `docker build -f <external-repo>/docker/Dockerfile.api -t ampule/external-translation-api:local <external-repo>`
+  - kind load: `kind load docker-image ampule/external-translation-api:local --name ampule-chamber`
+- `translation-worker`: `ampule/external-translation-worker:local`
+  - build: `docker build -f <external-repo>/docker/Dockerfile.worker -t ampule/external-translation-worker:local <external-repo>`
+  - kind load: `kind load docker-image ampule/external-translation-worker:local --name ampule-chamber`
 
 ## Adapted Workloads
 
@@ -37,7 +37,7 @@ All adapted resources carry Ampule Chamber run labels and cleanup selectors.
 - RabbitMQ: `Deployment/rabbitmq`, `Service/rabbitmq`, ports `5672` and `15672`
 - Redis: `Deployment/redis-master`, `Service/redis-master`, port `6379`
 
-The Tara2 KEDA `ScaledJob` is adapted to a bounded chamber-owned worker
+A KEDA `ScaledJob` worker manifest is adapted to a bounded chamber-owned worker
 `Deployment` for local `kind`; installing KEDA is not required for this first
 onboarding slice.
 
@@ -47,7 +47,7 @@ onboarding slice.
 - `LLM_BACKEND`: `openai`
 - `LLM_ENDPOINT`: `https://api.openai.com/v1`
 - `MODEL_NAME`: `gpt-4.1-mini`
-- `TARA2_REDIS_PASSWORD`: `<generated-at-live-run>`
+- `EXTERNAL_TRANSLATION_REDIS_PASSWORD`: `<generated-at-live-run>`
 
 No secret values are written to this artifact, generated manifests, reports, or
 run metadata.
@@ -93,8 +93,7 @@ progress.
 ## Limitations
 
 - Document-service path is intentionally ignored; direct text translation only.
-- Tara2 repository is read-only and its current working tree is the source
-  snapshot.
+- External repository is read-only and provided by the operator at run time.
 - This artifact records dry-run planning evidence. A live run should be
   recorded after images are built, loaded into `kind-ampule-chamber`, and
   `LLM_API_KEY` is available in the local environment.
