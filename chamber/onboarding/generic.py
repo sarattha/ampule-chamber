@@ -188,7 +188,7 @@ def validate_onboarding_environment(
 ) -> tuple[str, ...]:
     """Return missing environment variables required for a live run."""
 
-    values = env or os.environ
+    values = os.environ if env is None else env
     return tuple(name for name in required_env if not values.get(name))
 
 
@@ -227,7 +227,7 @@ def build_onboarding_plan(
     )
     workloads = _workloads(manifests, repository=repository, workload_roles=spec.workload_roles)
     missing = validate_onboarding_environment(spec.required_env, env)
-    redacted_config = _redacted_config(spec, env or os.environ)
+    redacted_config = _redacted_config(spec, os.environ if env is None else env)
     blockers = tuple(f"{name} is required for live onboarding evidence" for name in missing)
     evidence_attribution = _evidence_attribution(
         workloads,
@@ -268,7 +268,7 @@ def preflight_live_onboarding(
 ) -> LivePreflightResult:
     """Return blockers that prevent a live external-service run."""
 
-    values = env or os.environ
+    values = os.environ if env is None else env
     blockers = list(plan.blockers)
     blockers.extend(
         f"{name} is required for live onboarding evidence"

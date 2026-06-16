@@ -45,6 +45,7 @@ class Phase03TrafficPlanningTests(unittest.TestCase):
                 self.assertEqual(max(stage.target_vus for stage in plan.stages), expected_peak_vus)
                 self.assertIn(expected_path, plan.target_url)
                 self.assertIn("127.0.0.1", plan.target_url)
+                self.assertIn("127.0.0.1", plan.readiness_url)
                 self.assertIn("http_req_duration.p99", plan.result_fields)
                 self.assertIn("export const options", plan.script)
                 self.assertIn(str(expected_peak_vus), plan.script)
@@ -132,7 +133,18 @@ class Phase03TrafficPlanningTests(unittest.TestCase):
 
         self.assertIs(result, process)
         popen.assert_called_once()
-        wait_for_target.assert_called_once_with(plan.target_url, process)
+        wait_for_target.assert_called_once_with(plan.readiness_url, process)
+
+    def test_post_traffic_uses_readiness_endpoint_for_port_forward_probe(self) -> None:
+        scenario = load_scenario(SCENARIO_DIR / "external-text-translation.yaml")
+        environment = plan_environment(scenario, run_id="phase03-test").metadata
+
+        plan = plan_traffic(scenario, environment=environment, artifact_dir=ARTIFACT_DIR)
+
+        self.assertEqual(plan.method, "POST")
+        self.assertIn("/translations", plan.target_url)
+        self.assertIn("/health", plan.readiness_url)
+        self.assertNotEqual(plan.target_url, plan.readiness_url)
 
     def test_wait_for_target_reports_failed_port_forward(self) -> None:
         process = Mock()

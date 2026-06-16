@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from chamber.contracts.scenario import load_scenario
 from chamber.environment import EnvironmentMetadata
@@ -193,12 +194,15 @@ class Phase10OnboardingTests(unittest.TestCase):
 
         with TemporaryDirectory() as tmp:
             repo = _external_translation_repo(Path(tmp))
-            plan = build_external_translation_onboarding_plan(
-                repo_path=repo,
-                run_id="phase10-missing-key",
-                env={},
-            )
+            with patch.dict("os.environ", {"LLM_API_KEY": "sk-shell-key"}, clear=True):
+                plan = build_external_translation_onboarding_plan(
+                    repo_path=repo,
+                    run_id="phase10-missing-key",
+                    env={},
+                )
+                missing = validate_external_translation_environment({})
 
+        self.assertEqual(missing, ("LLM_API_KEY",))
         self.assertEqual(
             plan.blockers,
             ("LLM_API_KEY is required for live onboarding evidence",),

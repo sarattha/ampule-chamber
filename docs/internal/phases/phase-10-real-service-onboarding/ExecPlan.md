@@ -120,6 +120,12 @@ one repository name or source layout into Ampule Chamber.
       dependency diagnostics.
 - [x] Added live preflight blockers for missing required env vars, missing
       Prometheus evidence configuration, and missing local image build plans.
+- [x] Addressed PR review feedback by separating traffic target URLs from
+      port-forward readiness probe URLs so POST-only endpoints are not probed
+      with GET before k6 runs.
+- [x] Addressed PR review feedback by honoring explicit empty env maps during
+      onboarding validation, redaction, and preflight instead of falling back to
+      the developer shell environment.
 - [x] Added `scenarios/external-text-translation.yaml` for direct-text
       `POST /translations` traffic.
 - [x] Extended k6 traffic planning to support POST JSON bodies and expected
@@ -205,6 +211,8 @@ one repository name or source layout into Ampule Chamber.
   - `uv run python -m unittest tests.test_phase10_onboarding` passed.
   - `uv run ruff check chamber/onboarding tests/test_phase10_onboarding.py`
     passed.
+  - `uv run python -m unittest tests.test_phase03_traffic_and_chaos
+    tests.test_phase06_live_runner tests.test_phase10_onboarding` passed.
   - `uv run mypy` passed.
   - `uv run python scripts/validate_scenarios.py` passed for 7 scenarios.
   - `uv run ruff format --check chamber tests scripts` passed.

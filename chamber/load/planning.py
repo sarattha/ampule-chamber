@@ -47,6 +47,7 @@ class TrafficPlan:
     tool: str
     method: str
     target_url: str
+    readiness_url: str
     expected_status: int
     request_body: dict[str, Any] | None
     stages: tuple[TrafficStage, ...]
@@ -117,6 +118,7 @@ class K6TrafficAdapter:
         service_port = _service_port(scenario)
         local_port = _local_forward_port(scenario.scenario_id, environment.run_id)
         target_url = _target_url(scenario, local_port=local_port)
+        readiness_url = _readiness_url(scenario, local_port=local_port)
         method = _traffic_method(scenario)
         expected_status = _expected_status(scenario)
         request_body = _request_body(scenario)
@@ -153,6 +155,7 @@ class K6TrafficAdapter:
             tool=self.tool_name,
             method=method,
             target_url=target_url,
+            readiness_url=readiness_url,
             expected_status=expected_status,
             request_body=request_body,
             stages=stages,
@@ -316,6 +319,14 @@ def _target_url(scenario: Scenario, *, local_port: int) -> str:
     return f"http://127.0.0.1:{local_port}{path}"
 
 
+def _readiness_url(scenario: Scenario, *, local_port: int) -> str:
+    service = scenario.document.get("target", {}).get("service", {})
+    readiness = service.get("readinessEndpoint") or service.get("healthEndpoint")
+    path = str(readiness or scenario.document["traffic"]["entrypoint"])
+    path = path if path.startswith("/") else f"/{path}"
+    return f"http://127.0.0.1:{local_port}{path}"
+
+
 def _traffic_method(scenario: Scenario) -> str:
     return str(scenario.document["traffic"].get("method", "GET")).upper()
 
@@ -352,7 +363,7 @@ def _start_port_forward(plan: TrafficPlan) -> subprocess.Popen[str] | None:
         stderr=subprocess.PIPE,
         text=True,
     )
-    _wait_for_target(plan.target_url, process)
+    _wait_for_target(plan.readiness_url, process)
     return process
 
 

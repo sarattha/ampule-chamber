@@ -46,7 +46,7 @@ def build_external_translation_onboarding_plan(
 ) -> RealServiceOnboardingPlan:
     """Build the translation-service-shaped preset on the generic planner."""
 
-    values = env or os.environ
+    values = os.environ if env is None else env
     api_source = _manifest_image(Path(repo_path) / "deployment/deployment.yaml")
     worker_source = _manifest_image(Path(repo_path) / "k8s/keda/scaledjob.yaml")
     spec = OnboardingSpec(
