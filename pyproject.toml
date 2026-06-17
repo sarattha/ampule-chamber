@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.scripts]
-ampule-chamber = "chamber.orchestrator.live:run_cli"
+ampule-chamber = "chamber.workflow:main"
 ampule-chamber-report = "chamber.report.cli:main"
 
 [project.optional-dependencies]

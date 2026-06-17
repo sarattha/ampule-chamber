@@ -26,6 +26,9 @@ agent.
 8. `phase-08-expanded-fault-injection-recovery`
 9. `phase-09-multi-service-chamber`
 10. `phase-10-real-service-onboarding`
+11. `phase-11-guided-assessment-workflow`
+12. `phase-12-full-agent-assessment-pipeline`
+13. `phase-13-one-command-assessment`
 
 Phases may overlap during exploration, but acceptance criteria should be closed
 in order so later work has stable contracts to build on.
