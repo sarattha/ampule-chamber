@@ -23,3 +23,6 @@ artifacts/
 !docs/internal/phases/**/artifacts/
 !docs/internal/phases/**/artifacts/.gitkeep
 tmp/
+
+experiments
+dataset

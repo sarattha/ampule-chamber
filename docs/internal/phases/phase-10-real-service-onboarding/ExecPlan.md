@@ -274,6 +274,15 @@ one repository name or source layout into Ampule Chamber.
 - Experiment 001 Prometheus limitation: Prometheus is deployed and reachable
   inside kind, but the current scrape configuration only proved Prometheus
   itself was up; the container CPU query returned an empty vector.
+- After Experiment 001, installed Metrics Server `v0.8.1` and
+  kube-state-metrics `v2.19.0`, then expanded Prometheus RBAC and scrape jobs
+  for API server, kubelet node metrics, cAdvisor container metrics,
+  kube-state-metrics, Metrics Server, and annotated pods.
+- Post-fix monitoring verification showed Metrics APIService
+  `v1beta1.metrics.k8s.io` available, `kubectl top` returning chamber pod
+  container CPU/memory, and Prometheus returning cAdvisor
+  `container_memory_working_set_bytes` and `container_cpu_usage_seconds_total`
+  series for API, worker, and aggregator containers.
 - Verified existing cluster Prometheus in namespace `monitoring` is ready
   through a temporary port-forward. Live runs still need `PROMETHEUS_URL`
   exported while that port-forward is active.
