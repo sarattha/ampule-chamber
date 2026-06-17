@@ -10,6 +10,14 @@ import chamber.workflow as workflow
 from chamber.agents import (
     AgentValidationError,
     ChamberAgentContext,
+    EvidenceAnalystBrief,
+    EvidenceCitation,
+    OnboardingAgentDraft,
+    ReportNarrative,
+    RootCauseHypothesis,
+    RunSupervisorBrief,
+    ScenarioPlannerBrief,
+    TrafficChaosRecommendation,
     deterministic_evidence_analyst_brief,
     deterministic_onboarding_draft,
     deterministic_run_supervisor_brief,
@@ -17,6 +25,7 @@ from chamber.agents import (
     deterministic_traffic_chaos_recommendation,
     validate_evidence_bound_output,
 )
+from chamber.agents.sdk import OpenAIAgentsSdkRunner
 from chamber.workflow import (
     WorkflowError,
     assess,
@@ -235,6 +244,46 @@ class Phase12AgentPipelineTests(unittest.TestCase):
                 with self.assertRaisesRegex(AgentValidationError, "OPENAI_API_KEY"):
                     plan_config(config_path, run_dir=root / ".chamber/runs/live-agents")
 
+    def test_live_agent_mode_calls_sdk_for_all_six_roles(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = _fixture_repo(root)
+            config = infer_config(repo)
+            config["agents"]["mode"] = "live"
+            config_path = root / "chamber.yaml"
+            save_config(config, config_path)
+            fake_runner = _FakeAgentsRunner()
+
+            with patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}, clear=True):
+                with patch("chamber.workflow.OpenAIAgentsSdkRunner", return_value=fake_runner):
+                    run_dir = plan_config(config_path, run_dir=root / ".chamber/runs/live-agents")
+
+            names = [call["name"] for call in fake_runner.calls]
+            for filename in (
+                "onboarding-agent.json",
+                "scenario-planner-agent.json",
+                "run-supervisor-agent.json",
+                "traffic-chaos-agent.json",
+                "evidence-analyst-agent.json",
+                "report-writer-agent.json",
+            ):
+                self.assertTrue((run_dir / "agent" / filename).exists(), filename)
+
+        self.assertEqual(
+            names,
+            [
+                "onboarding-agent",
+                "scenario-planner-agent",
+                "run-supervisor-agent",
+                "traffic-chaos-agent",
+                "evidence-analyst-agent",
+                "report-writer-agent",
+            ],
+        )
+
+    def test_sdk_default_model_matches_phase12_live_target(self) -> None:
+        self.assertEqual(OpenAIAgentsSdkRunner().model, "gpt-5.4-mini")
+
     def test_agent_mode_off_skips_agent_artifacts(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -408,6 +457,88 @@ spec:
         encoding="utf-8",
     )
     return repo
+
+
+class _FakeAgentsRunner:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def run_structured(
+        self,
+        *,
+        name: str,
+        instructions: str,
+        input_text: str,
+        output_type: type[object],
+    ) -> object:
+        self.calls.append(
+            {
+                "name": name,
+                "instructions": instructions,
+                "input_text": input_text,
+                "output_type": output_type,
+            }
+        )
+        citation = EvidenceCitation(evidence_id="plan", usage="live test")
+        if output_type is OnboardingAgentDraft:
+            return OnboardingAgentDraft(
+                service_name="target-service",
+                assumptions=("read-only repository inspection",),
+                manifest_paths=("manifests/app.yaml",),
+                workload_roles=("target",),
+                citations=(citation,),
+                limitations=(),
+            )
+        if output_type is ScenarioPlannerBrief:
+            return ScenarioPlannerBrief(
+                scenario_id="target-service-assessment",
+                planned_scenarios=("baseline",),
+                required_evidence=("pod_status",),
+                safety_constraints=("chamber-owned resources only",),
+                citations=(citation,),
+                limitations=(),
+            )
+        if output_type is RunSupervisorBrief:
+            return RunSupervisorBrief(
+                run_id="live-agents",
+                status="ready",
+                blockers=(),
+                readiness_notes=("readiness checks are bounded",),
+                citations=(citation,),
+                limitations=(),
+            )
+        if output_type is TrafficChaosRecommendation:
+            return TrafficChaosRecommendation(
+                scenario_id="target-service-assessment",
+                traffic_profiles=("baseline-health",),
+                fault_profiles=("none",),
+                safety_constraints=("approved plan only",),
+                citations=(citation,),
+                limitations=(),
+            )
+        if output_type is EvidenceAnalystBrief:
+            return EvidenceAnalystBrief(
+                scenario_id="target-service-assessment",
+                observed_facts=("plan evidence was supplied",),
+                hypotheses=(
+                    RootCauseHypothesis(
+                        summary="no unsupported hypothesis",
+                        confidence="low",
+                        evidence_ids=("plan",),
+                        follow_up_checks=("collect live evidence",),
+                    ),
+                ),
+                citations=(citation,),
+                limitations=(),
+            )
+        if output_type is ReportNarrative:
+            return ReportNarrative(
+                summary="Report narrative is bounded by supplied evidence.",
+                recommendations=("Rerun after remediation.",),
+                evidence_ids=("plan",),
+                limitations=(),
+            )
+        raise AssertionError(f"unexpected output_type {output_type}")
 
 
 if __name__ == "__main__":

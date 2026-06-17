@@ -18,7 +18,12 @@ import yaml
 from chamber.agents import (
     AgentValidationError,
     ChamberAgentContext,
+    EvidenceAnalystBrief,
+    OnboardingAgentDraft,
     ReportNarrative,
+    RunSupervisorBrief,
+    ScenarioPlannerBrief,
+    TrafficChaosRecommendation,
     deterministic_evidence_analyst_brief,
     deterministic_onboarding_draft,
     deterministic_report_narrative,
@@ -55,6 +60,15 @@ DEFAULT_AGENT_MODE = "offline"
 AGENT_MODES = {"off", "offline", "live"}
 SECRET_NAME_FRAGMENTS = ("SECRET", "TOKEN", "PASSWORD", "API_KEY", "KEY")
 PRODUCTION_CONTEXT_FRAGMENTS = ("prod", "production", "aks-prod", "prd", "live")
+
+AGENT_OUTPUT_TYPES = (
+    OnboardingAgentDraft
+    | ScenarioPlannerBrief
+    | RunSupervisorBrief
+    | TrafficChaosRecommendation
+    | EvidenceAnalystBrief
+    | ReportNarrative
+)
 
 
 class WorkflowError(RuntimeError):
@@ -442,14 +456,7 @@ def _write_agents(
         artifact_paths=tuple(_string_list(deployment.get("manifests", []), "deployment.manifests")),
         missing_signals=("live Kubernetes execution",) if stage in {"plan", "assess"} else (),
     )
-    outputs: dict[str, object] = {
-        "onboarding-agent.json": deterministic_onboarding_draft(context),
-        "scenario-planner-agent.json": deterministic_scenario_planner_brief(context),
-        "run-supervisor-agent.json": deterministic_run_supervisor_brief(context),
-        "traffic-chaos-agent.json": deterministic_traffic_chaos_recommendation(context),
-        "evidence-analyst-agent.json": deterministic_evidence_analyst_brief(context),
-        "report-writer-agent.json": _report_agent_output(context, mode),
-    }
+    outputs = _agent_outputs(context, mode=mode)
     available = set(evidence_ids)
     sections = []
     for filename, output in outputs.items():
@@ -462,6 +469,121 @@ def _write_agents(
             )
         )
     return tuple(sections)
+
+
+def _agent_outputs(context: ChamberAgentContext, *, mode: str) -> dict[str, AGENT_OUTPUT_TYPES]:
+    runner = OpenAIAgentsSdkRunner() if mode == "live" else None
+    outputs: dict[str, AGENT_OUTPUT_TYPES] = {}
+    for spec in _agent_specs():
+        if runner is None:
+            output = spec["offline"](context)
+        else:
+            output = runner.run_structured(
+                name=spec["name"],
+                instructions=spec["instructions"],
+                input_text=_agent_input(context, spec["name"]),
+                output_type=spec["output_type"],
+            )
+        outputs[spec["filename"]] = output
+    return outputs
+
+
+def _agent_input(context: ChamberAgentContext, agent_name: str) -> str:
+    payload = {
+        "agent": agent_name,
+        "feature_request_constraints": {
+            "evidence_bound": True,
+            "available_evidence_ids": context.evidence_ids,
+            "must_not_invent_secrets": True,
+            "must_not_mutate_target_repo": True,
+            "must_not_bypass_safety_checks": True,
+            "must_stay_inside_chamber_owned_resources": True,
+            "external_dependencies_require_opt_in": True,
+        },
+        "context": _jsonable(context),
+    }
+    return json.dumps(payload, sort_keys=True)
+
+
+def _agent_specs() -> tuple[dict[str, Any], ...]:
+    return (
+        {
+            "filename": "onboarding-agent.json",
+            "name": "onboarding-agent",
+            "output_type": OnboardingAgentDraft,
+            "offline": deterministic_onboarding_draft,
+            "instructions": _agent_instructions(
+                "Inspect repository layout, manifests, Dockerfiles, ports, env vars, "
+                "and dependency hints. Produce a draft chamber.yaml summary. Do not "
+                "invent secrets, print secret values, or mutate the target repository."
+            ),
+        },
+        {
+            "filename": "scenario-planner-agent.json",
+            "name": "scenario-planner-agent",
+            "output_type": ScenarioPlannerBrief,
+            "offline": deterministic_scenario_planner_brief,
+            "instructions": _agent_instructions(
+                "Convert the service shape and chamber config into baseline, traffic, "
+                "dependency, recovery, and fault scenario intent. Produce only bounded "
+                "plans that can be executed by Ampule Chamber safety checks."
+            ),
+        },
+        {
+            "filename": "run-supervisor-agent.json",
+            "name": "run-supervisor-agent",
+            "output_type": RunSupervisorBrief,
+            "offline": deterministic_run_supervisor_brief,
+            "instructions": _agent_instructions(
+                "Explain blocked readiness, missing endpoints, failed probes, unsafe "
+                "preconditions, and cleanup status from supplied run state. Do not run "
+                "commands or bypass safety checks."
+            ),
+        },
+        {
+            "filename": "traffic-chaos-agent.json",
+            "name": "traffic-chaos-agent",
+            "output_type": TrafficChaosRecommendation,
+            "offline": deterministic_traffic_chaos_recommendation,
+            "instructions": _agent_instructions(
+                "Recommend load and fault profiles from the approved plan. Stay within "
+                "chamber-owned resources, configured policies, explicit dependency "
+                "opt-ins, and available evidence."
+            ),
+        },
+        {
+            "filename": "evidence-analyst-agent.json",
+            "name": "evidence-analyst-agent",
+            "output_type": EvidenceAnalystBrief,
+            "offline": deterministic_evidence_analyst_brief,
+            "instructions": _agent_instructions(
+                "Review Kubernetes events, logs, metrics, k6 summaries, timelines, "
+                "and findings supplied in context. Separate observed facts from "
+                "hypotheses and cite only available evidence IDs."
+            ),
+        },
+        {
+            "filename": "report-writer-agent.json",
+            "name": "report-writer-agent",
+            "output_type": ReportNarrative,
+            "offline": deterministic_report_narrative,
+            "instructions": _agent_instructions(
+                "Improve report narrative using only validated evidence, findings, "
+                "and limitations. Cite only supplied evidence IDs and preserve missing "
+                "signals as limitations."
+            ),
+        },
+    )
+
+
+def _agent_instructions(role: str) -> str:
+    return (
+        "You are a bounded Ampule Chamber reliability-testing agent. "
+        "Return only the requested structured output. "
+        "Every evidence citation or evidence_ids entry must come from the supplied "
+        "available_evidence_ids. If evidence is missing, record a limitation instead "
+        "of inventing facts. " + role
+    )
 
 
 def _report_agent_output(context: ChamberAgentContext, mode: str) -> ReportNarrative:

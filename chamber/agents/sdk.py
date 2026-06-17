@@ -1,4 +1,4 @@
-"""OpenAI Agents SDK adapter for phase 07 agent execution."""
+"""OpenAI Agents SDK adapter for evidence-bound agent execution."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ T = TypeVar("T")
 class OpenAIAgentsSdkRunner:
     """Thin runtime boundary around the OpenAI Agents SDK."""
 
-    model: str = "gpt-5.4"
+    model: str = "gpt-5.4-mini"
 
     def run_structured(
         self,

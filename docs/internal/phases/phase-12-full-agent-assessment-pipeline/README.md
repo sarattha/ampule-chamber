@@ -17,10 +17,13 @@ The core question for this phase is:
 - Persist agent output under `.chamber/runs/<run-id>/agent/`.
 - Validate every evidence citation before agent output affects reports.
 - Support `agents.mode` values `off`, `offline`, and `live`.
-- Require `OPENAI_API_KEY` before live agent execution.
+- Require `OPENAI_API_KEY` before live agent execution and route all six roles
+  through the OpenAI Agents SDK when live mode is selected.
 
 ## Agent Notes
 
 - Agents may explain blockers and recommend bounded tests, but must not run
   arbitrary shell or Kubernetes commands.
 - Report writer output is advisory unless evidence citations validate.
+- Live agent outputs must pass the same evidence-citation validation as offline
+  outputs before they are persisted or rendered.
