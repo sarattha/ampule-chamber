@@ -196,7 +196,7 @@ def save_config(config: dict[str, Any], path: Path) -> None:
     path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
 
 
-def load_config(path: Path) -> dict[str, Any]:
+def load_config(path: Path, *, require_repo: bool = True) -> dict[str, Any]:
     """Load and validate a user-facing chamber config."""
 
     try:
@@ -205,18 +205,23 @@ def load_config(path: Path) -> dict[str, Any]:
         raise WorkflowError(f"cannot read config {path}: {exc}") from exc
     if not isinstance(raw, dict):
         raise WorkflowError(f"{path}: config must be a YAML mapping")
-    validate_config(raw, source=str(path))
+    validate_config(raw, source=str(path), require_repo=require_repo)
     return raw
 
 
-def validate_config(config: dict[str, Any], *, source: str = "<memory>") -> None:
+def validate_config(
+    config: dict[str, Any],
+    *,
+    source: str = "<memory>",
+    require_repo: bool = True,
+) -> None:
     """Validate the minimum stable ChamberConfig contract."""
 
     _require(config.get("kind") == "ChamberConfig", f"{source}.kind must be ChamberConfig")
     service = _mapping(config.get("service"), f"{source}.service")
     _non_empty(service.get("name"), f"{source}.service.name")
     repo = _non_empty(service.get("repo"), f"{source}.service.repo")
-    if not Path(repo).exists():
+    if require_repo and not Path(repo).exists():
         raise WorkflowError(f"{source}.service.repo does not exist: {repo}")
     deployment = _mapping(config.get("deployment"), f"{source}.deployment")
     manifests = _string_list(deployment.get("manifests"), f"{source}.deployment.manifests")
@@ -239,6 +244,11 @@ def validate_config(config: dict[str, Any], *, source: str = "<memory>") -> None
         raise WorkflowError(
             f"{source}.agents.mode must be one of: {', '.join(sorted(AGENT_MODES))}"
         )
+    runtime = _mapping(config.get("runtime", {}), f"{source}.runtime")
+    _validate_runtime_config(
+        _mapping(runtime.get("config", {}), f"{source}.runtime.config"),
+        source=f"{source}.runtime.config",
+    )
 
 
 def config_to_onboarding_spec(config: dict[str, Any]) -> OnboardingSpec:
@@ -370,7 +380,7 @@ def assess(
 def render_report_from_run(run_dir: Path) -> Path:
     """Render `report.md` from a standard run directory."""
 
-    config = load_config(run_dir / "chamber.yaml")
+    config = load_config(run_dir / "chamber.yaml", require_repo=False)
     plan = _read_json(run_dir / "plan.json")
     metadata = _read_json(run_dir / "run-metadata.json")
     report = _report_input(run_dir, config=config, plan=plan, metadata=metadata)
@@ -439,6 +449,7 @@ def _write_agents(
 ) -> tuple[ReportSection, ...]:
     mode = _agent_mode(config, None)
     agent_dir = run_dir / "agent"
+    shutil.rmtree(agent_dir, ignore_errors=True)
     agent_dir.mkdir(parents=True, exist_ok=True)
     if mode == "off":
         return ()
@@ -920,6 +931,20 @@ def _image_specs(
         if value.get("sourceImage"):
             replacements.append(ImageReplacement(str(value["sourceImage"]), image))
     return tuple(builds), tuple(replacements)
+
+
+def _validate_runtime_config(config: dict[str, Any], *, source: str) -> None:
+    for key in config:
+        if _secret_like_name(str(key)):
+            raise WorkflowError(
+                f"{source}.{key} looks secret-like; move it to runtime.secretEnv "
+                "so run artifacts record only presence or absence"
+            )
+
+
+def _secret_like_name(name: str) -> bool:
+    normalized = name.upper().replace("-", "_")
+    return any(fragment in normalized for fragment in SECRET_NAME_FRAGMENTS)
 
 
 def _workload_spec(item: Any) -> WorkloadSpec:

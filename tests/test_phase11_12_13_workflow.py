@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -129,6 +130,24 @@ class Phase11GuidedWorkflowTests(unittest.TestCase):
             invalid["service"] = {"name": "target-service", "repo": str(root / "missing")}
             with self.assertRaisesRegex(WorkflowError, "service.repo does not exist"):
                 validate_config(invalid)
+
+    def test_secret_like_runtime_config_is_rejected_before_planning(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = _fixture_repo(root)
+            config = infer_config(repo)
+            config["runtime"]["config"] = {
+                "LOG_LEVEL": "debug",
+                "API_KEY": "plain-secret",
+            }
+            config_path = root / "chamber.yaml"
+            save_config(config, config_path)
+
+            with self.assertRaisesRegex(WorkflowError, "looks secret-like"):
+                load_config(config_path)
+
+            with self.assertRaisesRegex(WorkflowError, "runtime.secretEnv"):
+                plan_config(config_path, run_dir=root / ".chamber/runs/secret-leak")
 
     def test_load_config_rejects_non_mapping_yaml(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -298,6 +317,29 @@ class Phase12AgentPipelineTests(unittest.TestCase):
 
             self.assertFalse(list((run_dir / "agent").glob("*.json")))
 
+    def test_agent_mode_off_clears_stale_agent_artifacts(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = _fixture_repo(root)
+            config = infer_config(repo)
+            config_path = root / "chamber.yaml"
+            run_dir = root / ".chamber/runs/stale-agents"
+            save_config(config, config_path)
+            plan_config(config_path, run_dir=run_dir)
+            self.assertTrue(list((run_dir / "agent").glob("*.json")))
+
+            config["agents"]["mode"] = "off"
+            save_config(config, config_path)
+            plan_config(config_path, run_dir=run_dir)
+            report = run_dir / "report.md"
+            if report.exists():
+                report.unlink()
+            workflow.render_report_from_run(run_dir)
+            rendered = report.read_text(encoding="utf-8")
+
+        self.assertFalse(list((run_dir / "agent").glob("*.json")))
+        self.assertNotIn("## Onboarding Agent", rendered)
+
 
 class Phase13OneCommandAssessmentTests(unittest.TestCase):
     def test_assess_repo_writes_core_artifacts_and_report(self) -> None:
@@ -345,6 +387,24 @@ class Phase13OneCommandAssessmentTests(unittest.TestCase):
             metadata = json.loads((run_dir / "run-metadata.json").read_text(encoding="utf-8"))
 
         self.assertIn("resumed_at", metadata)
+
+    def test_report_and_resume_do_not_require_original_source_repo(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = _fixture_repo(root)
+            with patch("chamber.workflow._current_kube_context", return_value=None):
+                with patch("chamber.workflow.Path.cwd", return_value=root):
+                    run_dir = assess(repo=repo, config=None, resume=None)
+            shutil.rmtree(repo)
+            (run_dir / "report.md").unlink()
+
+            workflow.render_report_from_run(run_dir)
+            assess(repo=None, config=None, resume=run_dir)
+
+            report = (run_dir / "report.md").read_text(encoding="utf-8")
+
+        self.assertIn("- Commit: unknown", report)
+        self.assertIn("Ampule Chamber Reliability Report", report)
 
     def test_assess_refuses_unsafe_kubernetes_context(self) -> None:
         with TemporaryDirectory() as tmp:
