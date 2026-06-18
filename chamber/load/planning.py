@@ -7,10 +7,11 @@ import shutil
 import subprocess
 import time
 from dataclasses import dataclass
-from hashlib import sha1
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, Protocol
 from urllib.error import URLError
+from urllib.parse import urlparse
 from urllib.request import urlopen
 
 from chamber.contracts.scenario import Scenario
@@ -345,7 +346,7 @@ def _service_port(scenario: Scenario) -> int:
 
 
 def _local_forward_port(scenario_id: str, run_id: str) -> int:
-    digest = sha1(f"{scenario_id}:{run_id}:k6".encode()).hexdigest()
+    digest = sha256(f"{scenario_id}:{run_id}:k6".encode()).hexdigest()
     return 20000 + (int(digest[:6], 16) % 10000)
 
 
@@ -368,6 +369,7 @@ def _start_port_forward(plan: TrafficPlan) -> subprocess.Popen[str] | None:
 
 
 def _wait_for_target(target_url: str, process: subprocess.Popen[str]) -> None:
+    _require_http_url(target_url)
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
         if process.poll() is not None:
@@ -376,12 +378,20 @@ def _wait_for_target(target_url: str, process: subprocess.Popen[str]) -> None:
                 "kubectl port-forward exited before k6 could run: " + stderr.strip()
             )
         try:
+            # URL scheme is validated above; this probe only waits for local port-forward readiness.
+            # nosemgrep
             with urlopen(target_url, timeout=0.5):
                 return
         except (OSError, URLError):
             time.sleep(0.2)
     _stop_port_forward(process)
     raise TrafficPlanningError(f"timed out waiting for port-forward target {target_url}")
+
+
+def _require_http_url(url: str) -> None:
+    scheme = urlparse(url).scheme
+    if scheme not in {"http", "https"}:
+        raise TrafficPlanningError(f"expected HTTP(S) URL, got {url!r}")
 
 
 def _stop_port_forward(process: subprocess.Popen[str] | None) -> None:

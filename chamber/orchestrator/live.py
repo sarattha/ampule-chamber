@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 from urllib.error import URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 from urllib.request import urlopen
 
 import yaml
@@ -391,8 +391,11 @@ def _require_prometheus(prometheus_url: str | None) -> str:
     base_url = (prometheus_url or os.environ.get(PROMETHEUS_URL_ENV) or "").rstrip("/")
     if not base_url:
         raise LiveRunError(f"{PROMETHEUS_URL_ENV} is required for phase 06 live runs")
+    _require_http_url(base_url)
     url = f"{base_url}/api/v1/query?{urlencode({'query': 'up'})}"
     try:
+        # URL scheme is validated above; Prometheus endpoints are intentionally configurable.
+        # nosemgrep
         with urlopen(url, timeout=5) as response:
             raw = response.read().decode("utf-8")
     except (OSError, URLError) as exc:
@@ -404,6 +407,12 @@ def _require_prometheus(prometheus_url: str | None) -> str:
     if not isinstance(payload, dict) or payload.get("status") != "success":
         raise LiveRunError(f"Prometheus endpoint {base_url!r} did not return success")
     return base_url
+
+
+def _require_http_url(url: str) -> None:
+    scheme = urlparse(url).scheme
+    if scheme not in {"http", "https"}:
+        raise LiveRunError(f"expected HTTP(S) URL, got {url!r}")
 
 
 def _verify_kind_image(context: str, image: str, runner: CommandRunner) -> None:
@@ -585,12 +594,15 @@ def _cleanup_environment(
 
 
 def _wait_for_target(target_url: str, process: subprocess.Popen[str]) -> None:  # pragma: no cover
+    _require_http_url(target_url)
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline:
         if process.poll() is not None:
             _, stderr = process.communicate()
             raise LiveRunError("kubectl port-forward exited before traffic started: " + stderr)
         try:
+            # URL scheme is validated above; this probe only waits for local port-forward readiness.
+            # nosemgrep
             with urlopen(target_url, timeout=0.5):
                 return
         except (OSError, URLError):

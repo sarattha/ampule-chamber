@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
-from hashlib import sha1
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, cast
 
@@ -204,7 +204,7 @@ def build_onboarding_plan(
     _validate_spec(spec)
     repository = Path(spec.repo_path)
     labels = _labels(scenario_id=spec.scenario_id, run_id=run_id)
-    suffix = sha1(f"{spec.scenario_id}:{run_id}".encode()).hexdigest()[:8]
+    suffix = sha256(f"{spec.scenario_id}:{run_id}".encode()).hexdigest()[:8]
     namespace = f"{_dns_fragment(spec.namespace_base)}-{suffix}"
     source_manifests = _load_manifests(repository, spec.manifest_paths)
     manifests = (
