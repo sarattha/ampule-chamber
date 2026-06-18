@@ -1,10 +1,24 @@
 # Ampule Chamber
 
-Agent-driven reliability testing for Kubernetes services before production.
+Version: 1.0.0
 
-Ampule Chamber is a production-like testing chamber for validating services before deployment. It deploys a target service into an isolated Kubernetes environment, stresses it with realistic traffic, injects controlled failures, observes runtime behavior, and produces evidence-backed reliability reports.
+Production-ready release for agent-driven reliability testing of Kubernetes
+services before production.
 
-The project is based on a zero-trust view of service readiness: do not assume a service is safe because unit tests pass, staging starts cleanly, or health checks are green. A service becomes safer only after it survives repeatable experiments that exercise load, dependency failure, resource pressure, recovery behavior, and observability.
+Ampule Chamber deploys a target service into an isolated chamber environment,
+applies realistic traffic, injects controlled failure modes, collects runtime
+evidence, and produces evidence-backed reliability reports. It is built for
+teams that need to answer:
+
+> What can make this service fail in a real production-like environment, and
+> what evidence supports that conclusion?
+
+## Release Status
+
+Ampule Chamber `1.0.0` is the first production-ready release line. It includes
+the guided assessment CLI, standard run artifacts, bounded agent workflow,
+report generation, MkDocs documentation, release metadata validation, and
+GitHub Actions CI/CD automation.
 
 ## What It Tests
 
@@ -17,35 +31,92 @@ The project is based on a zero-trust view of service readiness: do not assume a 
 - Readiness checks passing while real user journeys fail
 - Production incident patterns reproduced in a controlled chamber
 
-## Core Workflow
+## Quick Start
 
-1. Intake a service repository, deployment manifests, traffic profile, and dependency map.
-2. Provision an isolated Kubernetes namespace or ephemeral cluster.
-3. Run baseline startup, readiness, traffic, logs, metrics, and trace checks.
-4. Escalate load with normal, peak, burst, and soak traffic.
-5. Inject controlled faults such as pod kills, latency, dependency errors, DNS failure, CPU pressure, or memory pressure.
-6. Validate recovery after the original fault is removed.
-7. Generate a reliability report with evidence, root-cause hypotheses, severity, confidence, and remediation guidance.
+```bash
+uv sync --group dev
+uv run ampule-chamber assess --repo ../target-service
+```
 
-## MVP Scope
+The one-command assessment writes:
 
-The initial MVP focuses on one service deployed into AKS or local Kubernetes.
+```text
+.chamber/runs/<run-id>/
+  chamber.yaml
+  plan.json
+  run-metadata.json
+  adapted-manifests/
+  evidence/
+  findings.json
+  agent/
+  report.md
+```
 
-- Deploy target service into an isolated namespace.
-- Run baseline health checks.
-- Run load tests with k6 or Locust.
-- Collect Kubernetes events, pod status, logs, and Prometheus metrics.
-- Detect OOMKilled events, restart loops, high memory, high CPU, throttling, and high latency.
-- Inject a simple dependency failure.
-- Generate a markdown reliability report.
+## Guided Workflow
+
+Use the explicit staged workflow when generated assumptions need review before
+assessment:
+
+```bash
+uv run ampule-chamber init
+uv run ampule-chamber onboard --repo ../target-service --output chamber.yaml
+uv run ampule-chamber plan --config chamber.yaml
+uv run ampule-chamber assess --config chamber.yaml --mode local
+uv run ampule-chamber report --run .chamber/runs/<run-id>
+```
+
+Scenario-based live kind runs remain available:
+
+```bash
+uv run ampule-chamber run \
+  --scenario scenarios/baseline-health.yaml \
+  --output docs/internal/phases/phase-06-live-manual-chamber-mvp/artifacts/live-baseline-report.md \
+  --prometheus-url http://127.0.0.1:9090
+```
+
+## Agent Modes
+
+```yaml
+agents:
+  mode: offline
+```
+
+- `off`: skip agent output.
+- `offline`: deterministic, CI-safe agent output.
+- `live`: OpenAI Agents SDK execution with `OPENAI_API_KEY`.
+
+All agent output must cite supplied evidence IDs. Unsupported citations fail
+validation before they can be persisted or rendered into reports.
+
+## Documentation
+
+Public docs are built with MkDocs:
+
+```bash
+uv run mkdocs build --strict
+```
+
+Documentation entry points:
+
+- `docs/index.md`
+- `docs/getting-started.md`
+- `docs/guided-workflow.md`
+- `docs/agent-pipeline.md`
+- `docs/release-process.md`
+
+## Development
+
+```bash
+make check
+```
+
+`make check` runs formatting, linting, static type checks, tests, coverage,
+scenario validation, release metadata validation, docs build, and package build.
 
 ## Repository Layout
 
 ```text
 ampule-chamber/
-├── docs/
-│   └── internal/
-│       └── PROJECT_DESIGN.md
 ├── chamber/
 │   ├── orchestrator/
 │   ├── environment/
@@ -53,7 +124,10 @@ ampule-chamber/
 │   ├── chaos/
 │   ├── observability/
 │   ├── analysis/
+│   ├── onboarding/
+│   ├── agents/
 │   └── report/
+├── docs/
 ├── agents/
 ├── scenarios/
 ├── examples/
@@ -61,12 +135,7 @@ ampule-chamber/
 └── tests/
 ```
 
-## Design Document
+## Release Notes
 
-The main project design is stored as an internal document:
-
-- `docs/internal/PROJECT_DESIGN.md`
-
-## Status
-
-This repository is in the project design and MVP planning stage.
+See `CHANGELOG.md` for release history. GitHub release notes are extracted from
+the matching changelog section during tag releases.

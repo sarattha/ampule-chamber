@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  python:
+    name: python (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Sync dependencies
+        run: make sync
+
+      - name: Run full quality gate
+        run: make check
+
+      - name: Validate built distributions
+        run: uv run twine check dist/*
+
+      - name: Smoke test installed wheel
+        run: |
+          python -m venv "$RUNNER_TEMP/ampule-chamber-smoke"
+          . "$RUNNER_TEMP/ampule-chamber-smoke/bin/activate"
+          pip install dist/ampule_chamber-*.whl
+          ampule-chamber --help
+          ampule-chamber-report --help
+
+  repository-metadata:
+    name: repository metadata
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate required release files
+        run: |
+          test -f README.md
+          test -f CHANGELOG.md
+          test -f AGENTS.md
+          test -f mkdocs.yml
+          test -f scripts/validate_release_metadata.py
+
+      - name: Validate workflow YAML parses
+        run: ruby -ryaml -e 'Dir[".github/workflows/*.yml"].each { |path| YAML.load_file(path) }'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Validate release metadata
+        run: python scripts/validate_release_metadata.py
+
+  security:
+    name: security
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Scan repository filesystem with Trivy
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+
+      - name: Detect committed secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run Semgrep
+        uses: semgrep/semgrep-action@v1
+        with:
+          config: auto
