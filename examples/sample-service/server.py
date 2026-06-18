@@ -7,6 +7,7 @@ import time
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -34,7 +35,11 @@ class Handler(BaseHTTPRequestHandler):
         print(json.dumps({"path": self.path, "message": format % args}), flush=True)
 
     def _dependency(self) -> None:
+        if urlparse(self.downstream_url).scheme not in {"http", "https"}:
+            self._json(503, {"dependency": "unavailable", "error": "invalid downstream URL"})
+            return
         try:
+            # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
             with urllib.request.urlopen(f"{self.downstream_url}/healthz", timeout=1) as response:
                 status = response.status
         except (urllib.error.URLError, TimeoutError) as exc:

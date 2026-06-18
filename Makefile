@@ -50,6 +50,14 @@ coverage: ## Run tests with coverage threshold
 validate-scenarios: ## Validate scenario YAML files
 	$(UV) run $(PYTHON) scripts/validate_scenarios.py
 
+.PHONY: docs
+docs: ## Build public documentation with MkDocs
+	$(UV) run mkdocs build --strict
+
+.PHONY: validate-release
+validate-release: ## Validate package, changelog, and release metadata
+	$(UV) run $(PYTHON) scripts/validate_release_metadata.py
+
 .PHONY: build
 build: ## Build source distribution and wheel
 	$(UV) build
@@ -62,8 +70,10 @@ check: ## Run format, lint, typecheck, tests, coverage, scenario validation, and
 	$(MAKE) test
 	$(MAKE) coverage
 	$(MAKE) validate-scenarios
+	$(MAKE) validate-release
+	$(MAKE) docs
 	$(MAKE) build
 
 .PHONY: clean
 clean: ## Remove local build and coverage artifacts
-	rm -rf dist build *.egg-info .coverage htmlcov
+	rm -rf dist build site *.egg-info .coverage htmlcov

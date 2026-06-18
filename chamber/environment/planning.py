@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from hashlib import sha1
+from hashlib import sha256
 from typing import Any, Protocol
 from urllib.parse import urlparse
 
@@ -650,7 +650,7 @@ def _chamber_labels(*, scenario_id: str, run_id: str) -> dict[str, str]:
 
 
 def _trace_suffix(scenario_id: str, run_id: str) -> str:
-    return sha1(f"{scenario_id}:{run_id}".encode()).hexdigest()[:8]
+    return sha256(f"{scenario_id}:{run_id}".encode()).hexdigest()[:8]
 
 
 def _kubernetes_name(*parts: str, suffix: str) -> str:

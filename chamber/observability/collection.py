@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from urllib.error import URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 from urllib.request import urlopen
 
 from chamber.environment import EnvironmentMetadata
@@ -229,8 +229,11 @@ def _kubectl_text(kubectl: str, *args: str) -> str:
 
 
 def _prometheus_query(base_url: str, query: str, *, timeout_seconds: float) -> dict[str, Any]:
+    _require_http_url(base_url)
     url = f"{base_url}/api/v1/query?{urlencode({'query': query})}"
     try:
+        # URL scheme is validated above; Prometheus endpoints are intentionally configurable.
+        # nosemgrep
         with urlopen(url, timeout=timeout_seconds) as response:
             raw = response.read().decode("utf-8")
     except URLError as exc:
@@ -244,6 +247,12 @@ def _prometheus_query(base_url: str, query: str, *, timeout_seconds: float) -> d
     if not isinstance(value, dict):
         raise ObservabilityCollectionError("Prometheus response must be an object")
     return value
+
+
+def _require_http_url(url: str) -> None:
+    scheme = urlparse(url).scheme
+    if scheme not in {"http", "https"}:
+        raise ObservabilityCollectionError(f"expected HTTP(S) Prometheus URL, got {url!r}")
 
 
 def _artifact(

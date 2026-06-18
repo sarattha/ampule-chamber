@@ -1,0 +1,92 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Validate release metadata
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: python scripts/validate_release_metadata.py "$RELEASE_TAG"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Sync dependencies
+        run: uv sync --group dev
+
+      - name: Run release quality gate
+        run: make check
+
+      - name: Validate built distributions
+        run: uv run twine check dist/*
+
+      - name: Install Syft
+        uses: anchore/sbom-action/download-syft@v0
+
+      - name: Generate package SBOM
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: syft dist --output "spdx-json=ampule-chamber-${RELEASE_TAG}.spdx.json"
+
+      - name: Attest package provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/*
+
+      - name: Extract release notes
+        env:
+          RELEASE_VERSION: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import os
+          import pathlib
+
+          version = os.environ["RELEASE_VERSION"].lstrip("v")
+          changelog = pathlib.Path("CHANGELOG.md").read_text().splitlines()
+          target = f"## {version} -"
+          capture = False
+          lines = []
+
+          for line in changelog:
+              if line.startswith("## "):
+                  if capture:
+                      break
+                  capture = line.startswith(target)
+                  continue
+              if capture:
+                  lines.append(line)
+
+          text = "\n".join(lines).strip()
+          if not text:
+              raise SystemExit(f"missing CHANGELOG.md notes for {version}")
+          pathlib.Path("release-notes.md").write_text(text + "\n", encoding="utf-8")
+          PY
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: release-notes.md
+          files: |
+            dist/*.tar.gz
+            dist/*.whl
+            CHANGELOG.md
+            ampule-chamber-${{ github.ref_name }}.spdx.json

@@ -77,6 +77,65 @@ class ReportNarrative:
     limitations: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class OnboardingAgentDraft:
+    """Onboarding agent output for a draft chamber configuration."""
+
+    service_name: str
+    assumptions: tuple[str, ...]
+    manifest_paths: tuple[str, ...]
+    workload_roles: tuple[str, ...]
+    citations: tuple[EvidenceCitation, ...]
+    limitations: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ScenarioPlannerBrief:
+    """Scenario planner output for a bounded run plan."""
+
+    scenario_id: str
+    planned_scenarios: tuple[str, ...]
+    required_evidence: tuple[str, ...]
+    safety_constraints: tuple[str, ...]
+    citations: tuple[EvidenceCitation, ...]
+    limitations: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class RunSupervisorBrief:
+    """Run supervisor output explaining readiness or blocked execution."""
+
+    run_id: str | None
+    status: str
+    blockers: tuple[str, ...]
+    readiness_notes: tuple[str, ...]
+    citations: tuple[EvidenceCitation, ...]
+    limitations: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class TrafficChaosRecommendation:
+    """Traffic and chaos agent output constrained to approved policy."""
+
+    scenario_id: str
+    traffic_profiles: tuple[str, ...]
+    fault_profiles: tuple[str, ...]
+    safety_constraints: tuple[str, ...]
+    citations: tuple[EvidenceCitation, ...]
+    limitations: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class EvidenceAnalystBrief:
+    """Evidence analyst output separating facts from hypotheses."""
+
+    scenario_id: str
+    observed_facts: tuple[str, ...]
+    hypotheses: tuple[RootCauseHypothesis, ...]
+    citations: tuple[EvidenceCitation, ...]
+    limitations: tuple[str, ...]
+
+
 def validate_evidence_bound_output(output: object, *, available_evidence_ids: set[str]) -> None:
     """Reject outputs that cite evidence outside the supplied artifact set."""
 
@@ -161,6 +220,93 @@ def deterministic_report_narrative(context: ChamberAgentContext) -> ReportNarrat
         evidence_ids=context.evidence_ids,
         limitations=context.missing_signals,
     )
+
+
+def deterministic_onboarding_draft(context: ChamberAgentContext) -> OnboardingAgentDraft:
+    """Build a stable onboarding brief for CI and offline runs."""
+
+    return OnboardingAgentDraft(
+        service_name=context.service_name,
+        assumptions=(
+            "Repository inspection is read-only.",
+            "Generated config values must be reviewed before live execution.",
+        ),
+        manifest_paths=context.artifact_paths,
+        workload_roles=("target",),
+        citations=_citations(context, "onboarding input"),
+        limitations=context.missing_signals,
+    )
+
+
+def deterministic_scenario_planner_brief(context: ChamberAgentContext) -> ScenarioPlannerBrief:
+    """Build a stable scenario-planning brief for a bounded run."""
+
+    return ScenarioPlannerBrief(
+        scenario_id=context.scenario_id,
+        planned_scenarios=("baseline", "traffic", "dependency", "recovery"),
+        required_evidence=("pod_status", "logs", "request_latency", "error_rate"),
+        safety_constraints=(
+            "Use only chamber-owned resources.",
+            "External dependencies require explicit opt-in.",
+        ),
+        citations=_citations(context, "planning input"),
+        limitations=context.missing_signals,
+    )
+
+
+def deterministic_run_supervisor_brief(context: ChamberAgentContext) -> RunSupervisorBrief:
+    """Build a stable run-supervisor brief from current run state."""
+
+    return RunSupervisorBrief(
+        run_id=context.run_id,
+        status="offline-reviewed",
+        blockers=(),
+        readiness_notes=("Offline mode records planned readiness checks without running kubectl.",),
+        citations=_citations(context, "run evidence"),
+        limitations=context.missing_signals,
+    )
+
+
+def deterministic_traffic_chaos_recommendation(
+    context: ChamberAgentContext,
+) -> TrafficChaosRecommendation:
+    """Build a stable traffic and chaos recommendation."""
+
+    return TrafficChaosRecommendation(
+        scenario_id=context.scenario_id,
+        traffic_profiles=("baseline-health",),
+        fault_profiles=("none",),
+        safety_constraints=("Recommendations must stay within the approved run plan.",),
+        citations=_citations(context, "traffic and chaos input"),
+        limitations=context.missing_signals,
+    )
+
+
+def deterministic_evidence_analyst_brief(context: ChamberAgentContext) -> EvidenceAnalystBrief:
+    """Build a stable evidence analyst brief."""
+
+    hypothesis_ids = context.evidence_ids[:1]
+    return EvidenceAnalystBrief(
+        scenario_id=context.scenario_id,
+        observed_facts=tuple(
+            f"Evidence artifact {item} was supplied for review." for item in context.evidence_ids
+        )
+        or ("No runtime evidence was supplied.",),
+        hypotheses=(
+            RootCauseHypothesis(
+                summary="No unsupported root cause is asserted by the offline analyst.",
+                confidence="low",
+                evidence_ids=hypothesis_ids,
+                follow_up_checks=("Collect live telemetry before promoting this hypothesis.",),
+            ),
+        ),
+        citations=_citations(context, "evidence analysis input"),
+        limitations=context.missing_signals,
+    )
+
+
+def _citations(context: ChamberAgentContext, usage: str) -> tuple[EvidenceCitation, ...]:
+    return tuple(EvidenceCitation(evidence_id=item, usage=usage) for item in context.evidence_ids)
 
 
 def _collect_evidence_ids(value: object) -> set[str]:

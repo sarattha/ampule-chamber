@@ -1,0 +1,47 @@
+site_name: Ampule Chamber
+site_description: Public documentation for Ampule Chamber
+site_url: https://sarattha.github.io/ampule-chamber/
+repo_url: https://github.com/sarattha/ampule-chamber
+repo_name: sarattha/ampule-chamber
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.instant
+    - navigation.sections
+    - navigation.top
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+    - content.code.annotate
+  palette:
+    scheme: default
+    primary: white
+    accent: teal
+  font:
+    text: Manrope
+    code: JetBrains Mono
+nav:
+  - Overview: index.md
+  - Getting Started: getting-started.md
+  - Guided Workflow: guided-workflow.md
+  - Agent Pipeline: agent-pipeline.md
+  - Scenario Contracts: scenarios.md
+  - Operations: operations.md
+  - Release Process: release-process.md
+  - Releases: releases.md
+  - Development: development.md
+markdown_extensions:
+  - admonition
+  - toc:
+      permalink: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+extra_javascript:
+  - https://unpkg.com/mermaid@11/dist/mermaid.min.js
+  - assets/mermaid-init.js
+extra_css:
+  - assets/stylesheets/extra.css
