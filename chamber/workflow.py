@@ -67,6 +67,17 @@ SECRET_NAME_FRAGMENTS = ("SECRET", "TOKEN", "PASSWORD", "API_KEY", "KEY")
 PRODUCTION_CONTEXT_FRAGMENTS = ("prod", "production", "aks-prod", "prd", "live")
 RUNTIME_PROVIDERS = {"local", "kind", "kubernetes"}
 TRAFFIC_ACCESS_MODES = {"port-forward", "endpoint"}
+_KUBERNETES_API_GROUPS = {
+    "v1",
+    "apps",
+    "batch",
+    "autoscaling",
+    "networking.k8s.io",
+    "policy",
+    "rbac.authorization.k8s.io",
+    "apiextensions.k8s.io",
+    "keda.sh",
+}
 
 AGENT_OUTPUT_TYPES = (
     OnboardingAgentDraft
@@ -324,7 +335,9 @@ def config_to_onboarding_spec(config: dict[str, Any]) -> OnboardingSpec:
             )
         ),
         scenario_id=str(config.get("scenarioId", f"{service['name']}-assessment")),
-        namespace_base=str(config.get("namespaceBase", f"chamber-{service['name']}")),
+        namespace_base=str(
+            runtime.get("namespaceBase", config.get("namespaceBase", f"chamber-{service['name']}"))
+        ),
     )
 
 
@@ -1281,7 +1294,7 @@ def _manifest_paths(repo: Path) -> list[str]:
     return [
         str(path.relative_to(repo))
         for path in sorted(set(candidates))
-        if WORKSPACE_DIR not in path.parts
+        if WORKSPACE_DIR not in path.parts and _contains_kubernetes_resource(path)
     ]
 
 
@@ -1342,6 +1355,17 @@ def _inferred_workload_role(name: str, *, has_target: bool) -> str:
     if not has_target:
         return "target"
     return "worker"
+
+
+def _contains_kubernetes_resource(path: Path) -> bool:
+    for item in _yaml_documents(path):
+        if not isinstance(item, dict):
+            continue
+        api_version = str(item.get("apiVersion", ""))
+        kind = str(item.get("kind", ""))
+        if api_version and kind and api_version.split("/", 1)[0] in _KUBERNETES_API_GROUPS:
+            return True
+    return False
 
 
 def _first_container_image(repo: Path, name: str, kind: str, manifests: list[str]) -> str | None:

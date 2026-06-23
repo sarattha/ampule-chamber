@@ -66,6 +66,13 @@ GitHub issue #9.
 - `uv run python -m unittest tests/test_kubernetes_preflight.py` passed again
   after #11 integration.
 - `uv run mkdocs build --strict` passed after the #14 documentation update.
+- Real kind verification on 2026-06-23 passed after two bounded fixes. Evidence
+  is recorded in
+  `artifacts/real-kind-verification-20260623.md`; the final live run wrote
+  `.chamber/runs/chamber-sample-service-20260623162533/report.md`, used
+  `kind-ampule-chamber`, created namespace `chamber-kind-sample-3e07568c`,
+  passed k6 with 1/1 checks and 0 failed HTTP requests, and cleaned up the
+  namespace.
 
 ## Decision Log
 
@@ -75,3 +82,6 @@ GitHub issue #9.
 - Chose to record only operator-declared image replacements in runtime plan
   metadata. Inferred replacements still adapt manifests, but local plan
   metadata does not expose original production image names.
+- Chose a reviewed sample-service Kubernetes config artifact for live kind
+  verification because the bundled sample service is Docker-first and does not
+  carry source Kubernetes manifests.

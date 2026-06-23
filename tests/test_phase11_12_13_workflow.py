@@ -187,6 +187,7 @@ class Phase11GuidedWorkflowTests(unittest.TestCase):
         self.assertEqual(plan["runtime"]["provider"], "kubernetes")
         self.assertEqual(plan["runtime"]["kubernetes_context"], "dev-cluster")
         self.assertEqual(plan["runtime"]["namespace"], plan["namespace"])
+        self.assertTrue(plan["namespace"].startswith("chamber-target-service-"))
         self.assertEqual(plan["runtime"]["traffic_access"]["mode"], "port-forward")
         self.assertEqual(
             plan["runtime"]["image_replacements"],
@@ -266,6 +267,41 @@ class Phase11GuidedWorkflowTests(unittest.TestCase):
         self.assertEqual(config["deployment"]["manifests"], ["service.yaml"])
         self.assertEqual(config["deployment"]["images"], {})
         self.assertEqual(config["deployment"]["workloads"][0]["name"], "empty-service")
+
+    def test_infer_config_ignores_non_kubernetes_yaml(self) -> None:
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "mixed-service"
+            repo.mkdir()
+            (repo / "contract.yaml").write_text(
+                """\
+apiVersion: chamber.ampule.dev/v1alpha1
+kind: SampleServiceContract
+metadata:
+  name: mixed-service
+""",
+                encoding="utf-8",
+            )
+            (repo / "docker-compose.yml").write_text(
+                """\
+services:
+  app:
+    image: mixed-service:local
+""",
+                encoding="utf-8",
+            )
+            (repo / "service.yaml").write_text(
+                """\
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mixed-service-config
+""",
+                encoding="utf-8",
+            )
+
+            config = infer_config(repo)
+
+        self.assertEqual(config["deployment"]["manifests"], ["service.yaml"])
 
     def test_plan_command_writes_standard_run_directory(self) -> None:
         with TemporaryDirectory() as tmp:
