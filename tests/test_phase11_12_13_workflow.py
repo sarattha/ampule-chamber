@@ -636,6 +636,63 @@ class Phase13OneCommandAssessmentTests(unittest.TestCase):
         )
         self.assertTrue(any("delete" in command for command in runner.commands))
 
+    def test_kubernetes_assess_persists_failure_evidence_before_reraising(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = _fixture_repo(root)
+            config_path = root / "chamber.yaml"
+            run_dir = root / ".chamber/runs/kubernetes-failure"
+            save_config(_kubernetes_config(repo), config_path)
+            runner = _FakeKubernetesRunner(fail_apply=True)
+
+            with patch("chamber.workflow.Path.cwd", return_value=root):
+                with patch("chamber.workflow._new_run_dir", return_value=run_dir):
+                    with self.assertRaisesRegex(WorkflowError, "apply adapted manifest"):
+                        workflow._assess_kubernetes_config(
+                            config_path,
+                            agents_mode="off",
+                            context="dev-cluster",
+                            prometheus_url="http://prometheus.example",
+                            runner=runner,
+                        )
+
+            metadata = json.loads((run_dir / "run-metadata.json").read_text(encoding="utf-8"))
+            commands = json.loads(
+                (run_dir / "evidence/kubernetes-commands.json").read_text(encoding="utf-8")
+            )
+            findings_exists = (run_dir / "findings.json").exists()
+            report_exists = (run_dir / "report.md").exists()
+
+        self.assertEqual(metadata["stage"], "failed")
+        self.assertIn("apply adapted manifest", metadata["error"])
+        self.assertTrue(metadata["cleanup_performed"])
+        self.assertTrue(findings_exists)
+        self.assertTrue(report_exists)
+        self.assertTrue(
+            any("apply failed" in command["stderr"] for command in commands["commands"])
+        )
+        self.assertTrue(any("delete" in command["command"] for command in commands["commands"]))
+
+    def test_kubernetes_command_recording_redacts_secret_like_output(self) -> None:
+        commands: list[dict[str, object]] = []
+        command = ("kubectl", "--context", "dev-cluster", "logs", "deployment/app")
+        runner = _FakeKubernetesRunner(
+            responses={
+                command: _completed(
+                    command,
+                    stdout="TOKEN=plain-secret\nnormal line\n",
+                    stderr="PASSWORD=plain-secret\n",
+                )
+            }
+        )
+
+        workflow._run_kubernetes_recorded(runner, command, commands)
+
+        rendered = json.dumps(commands)
+        self.assertIn("<redacted>", rendered)
+        self.assertIn("normal line", rendered)
+        self.assertNotIn("plain-secret", rendered)
+
     def test_resume_rejects_non_run_directory(self) -> None:
         with TemporaryDirectory() as tmp:
             with self.assertRaisesRegex(WorkflowError, "not a resumable"):
@@ -750,9 +807,11 @@ class _FakeKubernetesRunner:
         responses: dict[tuple[str, ...], subprocess.CompletedProcess[str]] | None = None,
         *,
         deny_events: bool = False,
+        fail_apply: bool = False,
     ) -> None:
         self.responses = responses or {}
         self.deny_events = deny_events
+        self.fail_apply = fail_apply
         self.commands: list[tuple[str, ...]] = []
 
     def run(
@@ -764,6 +823,8 @@ class _FakeKubernetesRunner:
         self.commands.append(command)
         if command in self.responses:
             return self.responses[command]
+        if self.fail_apply and command[0] == "kubectl" and "apply" in command:
+            return _completed(command, returncode=1, stderr="apply failed\n")
         if command == ("kubectl", "config", "current-context"):
             return _completed(command, stdout="dev-cluster\n")
         if self.deny_events and command[5:8] == ("get", "events", "-n"):

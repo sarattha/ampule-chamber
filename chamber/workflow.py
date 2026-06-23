@@ -500,6 +500,7 @@ def _assess_kubernetes_config(
     }
     cleanup_performed = False
     success = False
+    failure: Exception | None = None
     try:
         _apply_kubernetes_plan(
             plan.manifests, context=selected_context, runner=runner, commands=commands
@@ -519,6 +520,8 @@ def _assess_kubernetes_config(
             commands=commands,
         )
         success = bool(traffic_result.get("success"))
+    except Exception as exc:
+        failure = exc
     finally:
         if bool(runtime.get("cleanup", True)):
             _cleanup_kubernetes(plan, context=selected_context, runner=runner, commands=commands)
@@ -526,29 +529,29 @@ def _assess_kubernetes_config(
 
     _write_json(run_dir / "evidence/kubernetes-commands.json", {"commands": commands})
     _write_json(run_dir / "findings.json", [])
-    _write_metadata(
-        run_dir,
-        {
-            "run_id": run_dir.name,
-            "stage": "assessed",
-            "mode": "kubernetes",
-            "config": str(config_copy),
-            "runtime": runtime_plan,
-            "provider": "kubernetes",
-            "context": selected_context,
-            "namespace": plan.namespace,
-            "traffic_result": traffic_result,
-            "cleanup_performed": cleanup_performed,
-            "cleanup_notes": [
-                "Deleted chamber-owned Kubernetes resources and namespace."
-                if cleanup_performed
-                else "Cleanup was disabled by runtime.cleanup."
-            ],
-            "preflight": preflight_to_evidence(preflight),
-            "success": success,
-            "agent_mode": _agent_mode(config, agents_mode),
-        },
-    )
+    metadata = {
+        "run_id": run_dir.name,
+        "stage": "assessed" if failure is None else "failed",
+        "mode": "kubernetes",
+        "config": str(config_copy),
+        "runtime": runtime_plan,
+        "provider": "kubernetes",
+        "context": selected_context,
+        "namespace": plan.namespace,
+        "traffic_result": traffic_result,
+        "cleanup_performed": cleanup_performed,
+        "cleanup_notes": [
+            "Deleted chamber-owned Kubernetes resources and namespace."
+            if cleanup_performed
+            else "Cleanup was disabled by runtime.cleanup."
+        ],
+        "preflight": preflight_to_evidence(preflight),
+        "success": success,
+        "agent_mode": _agent_mode(config, agents_mode),
+    }
+    if failure is not None:
+        metadata["error"] = str(failure)
+    _write_metadata(run_dir, metadata)
     _write_agents(
         run_dir,
         config,
@@ -556,6 +559,8 @@ def _assess_kubernetes_config(
         stage="assess",
     )
     render_report_from_run(run_dir)
+    if failure is not None:
+        raise failure
     return run_dir
 
 
@@ -857,8 +862,8 @@ def _run_kubernetes_recorded(
         {
             "command": list(command),
             "exit_status": completed.returncode,
-            "stdout": completed.stdout,
-            "stderr": completed.stderr,
+            "stdout": _redact_evidence_text(completed.stdout),
+            "stderr": _redact_evidence_text(completed.stderr),
         }
     )
     return completed
@@ -880,6 +885,16 @@ def _stop_kubernetes_process(process: subprocess.Popen[str]) -> None:  # pragma:
     except subprocess.TimeoutExpired:
         process.kill()
         process.wait(timeout=5)
+
+
+def _redact_evidence_text(value: str) -> str:
+    lines = []
+    for line in value.splitlines():
+        if any(marker in line.upper() for marker in SECRET_NAME_FRAGMENTS):
+            lines.append("<redacted>")
+        else:
+            lines.append(line)
+    return "\n".join(lines)
 
 
 def _write_agents(
