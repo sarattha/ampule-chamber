@@ -73,6 +73,11 @@ GitHub issue #9.
   `kind-ampule-chamber`, created namespace `chamber-kind-sample-3e07568c`,
   passed k6 with 1/1 checks and 0 failed HTTP requests, and cleaned up the
   namespace.
+- After GitHub Actions Semgrep flagged the committed sample verification
+  manifest for missing Kubernetes security context, hardened the manifest and
+  reran live kind verification. The hardened run wrote
+  `.chamber/runs/chamber-sample-service-20260623163054/report.md`, passed k6,
+  and cleaned up namespace `chamber-kind-sample-2f6d3359`.
 
 ## Decision Log
 

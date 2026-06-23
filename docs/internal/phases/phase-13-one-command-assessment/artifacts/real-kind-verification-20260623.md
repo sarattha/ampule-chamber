@@ -172,3 +172,56 @@ Error from server (NotFound): namespaces "chamber-kind-sample-3e07568c" not foun
 ```
 
 No `chamber-kind-sample` or `chamber-sample-service` namespace remained.
+
+## Security-Hardened Manifest Rerun
+
+After GitHub Actions Semgrep flagged the sample verification manifest for
+missing Kubernetes security context, the manifest was hardened with
+`runAsNonRoot`, numeric user/group IDs, `allowPrivilegeEscalation: false`, and
+capability drops.
+
+The live kind assessment was rerun:
+
+```bash
+uv run ampule-chamber assess \
+  --config docs/internal/phases/phase-13-one-command-assessment/artifacts/kind-sample-kubernetes-config.yaml \
+  --mode kubernetes \
+  --context kind-ampule-chamber
+```
+
+Output:
+
+```text
+report .chamber/runs/chamber-sample-service-20260623163054/report.md
+```
+
+Recorded metadata:
+
+```text
+stage: assessed
+mode: kubernetes
+namespace: chamber-kind-sample-2f6d3359
+cleanup_performed: true
+success: true
+```
+
+Cleanup verification:
+
+```bash
+kubectl --context kind-ampule-chamber get ns chamber-kind-sample-2f6d3359
+```
+
+Output:
+
+```text
+Error from server (NotFound): namespaces "chamber-kind-sample-2f6d3359" not found
+```
+
+Final local gate after the hardened manifest:
+
+```bash
+make check
+```
+
+Result: passed with 120 tests, 91% coverage, scenario validation, release
+metadata validation, MkDocs strict build, and package build.
