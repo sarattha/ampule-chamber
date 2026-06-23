@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -149,6 +150,101 @@ class Phase11GuidedWorkflowTests(unittest.TestCase):
             with self.assertRaisesRegex(WorkflowError, "runtime.secretEnv"):
                 plan_config(config_path, run_dir=root / ".chamber/runs/secret-leak")
 
+    def test_kubernetes_runtime_config_is_validated_and_recorded_in_plan(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = _fixture_repo(root)
+            config = infer_config(repo)
+            config["runtime"].update(
+                {
+                    "provider": "kubernetes",
+                    "kubernetesContext": "dev-cluster",
+                    "namespaceBase": "chamber-target-service",
+                    "cleanup": True,
+                    "prometheusUrl": "http://prometheus.example",
+                    "trafficAccess": {
+                        "mode": "port-forward",
+                        "service": "target-service",
+                        "servicePort": 8080,
+                    },
+                }
+            )
+            config["deployment"]["images"]["replacements"] = [
+                {
+                    "source": "registry.example/target-service:prod",
+                    "target": "registry.example/target-service:20260618",
+                }
+            ]
+            config_path = root / "chamber.yaml"
+            run_dir = root / ".chamber/runs/kubernetes-config"
+            save_config(config, config_path)
+
+            plan_config(config_path, run_dir=run_dir)
+
+            plan = json.loads((run_dir / "plan.json").read_text(encoding="utf-8"))
+            metadata = json.loads((run_dir / "run-metadata.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(plan["runtime"]["provider"], "kubernetes")
+        self.assertEqual(plan["runtime"]["kubernetes_context"], "dev-cluster")
+        self.assertEqual(plan["runtime"]["namespace"], plan["namespace"])
+        self.assertTrue(plan["namespace"].startswith("chamber-target-service-"))
+        self.assertEqual(plan["runtime"]["traffic_access"]["mode"], "port-forward")
+        self.assertEqual(
+            plan["runtime"]["image_replacements"],
+            [
+                {
+                    "source": "registry.example/target-service:prod",
+                    "target": "registry.example/target-service:20260618",
+                }
+            ],
+        )
+        rendered_plan = json.dumps(plan)
+        self.assertIn("registry.example/target-service:20260618", rendered_plan)
+        self.assertEqual(metadata["runtime"]["provider"], "kubernetes")
+
+    def test_kubernetes_runtime_config_requires_context_and_traffic_access(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = _fixture_repo(root)
+            config = infer_config(repo)
+            config["runtime"]["provider"] = "kubernetes"
+            config_path = root / "chamber.yaml"
+            save_config(config, config_path)
+
+            with self.assertRaisesRegex(WorkflowError, "runtime.kubernetesContext"):
+                load_config(config_path)
+
+            config["runtime"]["kubernetesContext"] = "dev-cluster"
+            save_config(config, config_path)
+            with self.assertRaisesRegex(WorkflowError, "runtime.trafficAccess"):
+                load_config(config_path)
+
+            config["runtime"]["trafficAccess"] = {"mode": "port-forward"}
+            save_config(config, config_path)
+            with self.assertRaisesRegex(WorkflowError, "service"):
+                load_config(config_path)
+
+            config["runtime"]["trafficAccess"] = {
+                "mode": "ingress",
+                "url": "https://service.example",
+            }
+            save_config(config, config_path)
+            with self.assertRaisesRegex(WorkflowError, "mode must be one of"):
+                load_config(config_path)
+
+    def test_runtime_rejects_secret_like_top_level_values(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = _fixture_repo(root)
+            config = infer_config(repo)
+            config["runtime"]["provider"] = "local"
+            config["runtime"]["apiToken"] = "plain-secret"
+            config_path = root / "chamber.yaml"
+            save_config(config, config_path)
+
+            with self.assertRaisesRegex(WorkflowError, "looks secret-like"):
+                load_config(config_path)
+
     def test_load_config_rejects_non_mapping_yaml(self) -> None:
         with TemporaryDirectory() as tmp:
             path = Path(tmp) / "chamber.yaml"
@@ -171,6 +267,41 @@ class Phase11GuidedWorkflowTests(unittest.TestCase):
         self.assertEqual(config["deployment"]["manifests"], ["service.yaml"])
         self.assertEqual(config["deployment"]["images"], {})
         self.assertEqual(config["deployment"]["workloads"][0]["name"], "empty-service")
+
+    def test_infer_config_ignores_non_kubernetes_yaml(self) -> None:
+        with TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "mixed-service"
+            repo.mkdir()
+            (repo / "contract.yaml").write_text(
+                """\
+apiVersion: chamber.ampule.dev/v1alpha1
+kind: SampleServiceContract
+metadata:
+  name: mixed-service
+""",
+                encoding="utf-8",
+            )
+            (repo / "docker-compose.yml").write_text(
+                """\
+services:
+  app:
+    image: mixed-service:local
+""",
+                encoding="utf-8",
+            )
+            (repo / "service.yaml").write_text(
+                """\
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mixed-service-config
+""",
+                encoding="utf-8",
+            )
+
+            config = infer_config(repo)
+
+        self.assertEqual(config["deployment"]["manifests"], ["service.yaml"])
 
     def test_plan_command_writes_standard_run_directory(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -438,6 +569,130 @@ class Phase13OneCommandAssessmentTests(unittest.TestCase):
 
             self.assertFalse(list((run_dir / "agent").glob("*.json")))
 
+    def test_kubernetes_assess_fails_preflight_before_apply(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = _fixture_repo(root)
+            config_path = root / "chamber.yaml"
+            config = _kubernetes_config(repo)
+            save_config(config, config_path)
+            runner = _FakeKubernetesRunner(deny_events=True)
+
+            with patch("chamber.workflow.Path.cwd", return_value=root):
+                with self.assertRaisesRegex(WorkflowError, "preflight failed"):
+                    workflow._assess_kubernetes_config(
+                        config_path,
+                        agents_mode="off",
+                        context="dev-cluster",
+                        prometheus_url="http://prometheus.example",
+                        runner=runner,
+                    )
+
+        self.assertFalse(any(command[:2] == ("kubectl", "apply") for command in runner.commands))
+
+    def test_kubernetes_assess_writes_live_artifacts_with_fake_runner(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = _fixture_repo(root)
+            config_path = root / "chamber.yaml"
+            save_config(_kubernetes_config(repo), config_path)
+            runner = _FakeKubernetesRunner()
+
+            with patch("chamber.workflow.Path.cwd", return_value=root):
+                with patch(
+                    "chamber.workflow._execute_kubernetes_traffic",
+                    return_value={
+                        "success": True,
+                        "command": ["k6", "run", "traffic.js"],
+                        "exit_status": 0,
+                        "stdout": "ok",
+                        "stderr": "",
+                        "summary_path": "evidence/k6-summary.json",
+                    },
+                ):
+                    run_dir = workflow._assess_kubernetes_config(
+                        config_path,
+                        agents_mode="off",
+                        context="dev-cluster",
+                        prometheus_url="http://prometheus.example",
+                        runner=runner,
+                    )
+
+            metadata = json.loads((run_dir / "run-metadata.json").read_text(encoding="utf-8"))
+            preflight = json.loads(
+                (run_dir / "evidence/preflight.json").read_text(encoding="utf-8")
+            )
+            report = (run_dir / "report.md").read_text(encoding="utf-8")
+
+        self.assertEqual(metadata["stage"], "assessed")
+        self.assertEqual(metadata["mode"], "kubernetes")
+        self.assertTrue(metadata["cleanup_performed"])
+        self.assertTrue(preflight["ready"])
+        self.assertTrue((run_dir / "evidence/kubernetes-commands.json").exists())
+        self.assertTrue((run_dir / "findings.json").exists())
+        self.assertIn("Provider: kubernetes", report)
+        self.assertTrue(
+            any(command[0] == "kubectl" and "apply" in command for command in runner.commands)
+        )
+        self.assertTrue(any("delete" in command for command in runner.commands))
+
+    def test_kubernetes_assess_persists_failure_evidence_before_reraising(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = _fixture_repo(root)
+            config_path = root / "chamber.yaml"
+            run_dir = root / ".chamber/runs/kubernetes-failure"
+            save_config(_kubernetes_config(repo), config_path)
+            runner = _FakeKubernetesRunner(fail_apply=True)
+
+            with patch("chamber.workflow.Path.cwd", return_value=root):
+                with patch("chamber.workflow._new_run_dir", return_value=run_dir):
+                    with self.assertRaisesRegex(WorkflowError, "apply adapted manifest"):
+                        workflow._assess_kubernetes_config(
+                            config_path,
+                            agents_mode="off",
+                            context="dev-cluster",
+                            prometheus_url="http://prometheus.example",
+                            runner=runner,
+                        )
+
+            metadata = json.loads((run_dir / "run-metadata.json").read_text(encoding="utf-8"))
+            commands = json.loads(
+                (run_dir / "evidence/kubernetes-commands.json").read_text(encoding="utf-8")
+            )
+            findings_exists = (run_dir / "findings.json").exists()
+            report_exists = (run_dir / "report.md").exists()
+
+        self.assertEqual(metadata["stage"], "failed")
+        self.assertIn("apply adapted manifest", metadata["error"])
+        self.assertTrue(metadata["cleanup_performed"])
+        self.assertTrue(findings_exists)
+        self.assertTrue(report_exists)
+        self.assertTrue(
+            any("apply failed" in command["stderr"] for command in commands["commands"])
+        )
+        self.assertTrue(any("delete" in command["command"] for command in commands["commands"]))
+
+    def test_kubernetes_command_recording_redacts_secret_like_output(self) -> None:
+        commands: list[dict[str, object]] = []
+        command = ("kubectl", "--context", "dev-cluster", "logs", "deployment/app")
+        runner = _FakeKubernetesRunner(
+            responses={
+                command: _completed(
+                    command,
+                    stdout="TOKEN=plain-secret\nnormal line\n",
+                    stderr="PASSWORD=plain-secret\n",
+                )
+            }
+        )
+
+        workflow._run_kubernetes_recorded(runner, command, commands)
+
+        rendered = json.dumps(commands)
+        self.assertIn("<redacted>", rendered)
+        self.assertIn("normal line", rendered)
+        self.assertNotIn("plain-secret", rendered)
+
     def test_resume_rejects_non_run_directory(self) -> None:
         with TemporaryDirectory() as tmp:
             with self.assertRaisesRegex(WorkflowError, "not a resumable"):
@@ -517,6 +772,78 @@ spec:
         encoding="utf-8",
     )
     return repo
+
+
+def _kubernetes_config(repo: Path) -> dict[str, object]:
+    config = infer_config(repo)
+    runtime = config["runtime"]
+    runtime.update(
+        {
+            "provider": "kubernetes",
+            "kubernetesContext": "dev-cluster",
+            "namespaceBase": "chamber-target-service",
+            "cleanup": True,
+            "prometheusUrl": "http://prometheus.example",
+            "trafficAccess": {
+                "mode": "port-forward",
+                "service": "target-service",
+                "servicePort": 8080,
+            },
+        }
+    )
+    config["agents"]["mode"] = "off"
+    config["deployment"]["images"]["replacements"] = [
+        {
+            "source": "registry.example/target-service:prod",
+            "target": "registry.example/target-service:20260618",
+        }
+    ]
+    return config
+
+
+class _FakeKubernetesRunner:
+    def __init__(
+        self,
+        responses: dict[tuple[str, ...], subprocess.CompletedProcess[str]] | None = None,
+        *,
+        deny_events: bool = False,
+        fail_apply: bool = False,
+    ) -> None:
+        self.responses = responses or {}
+        self.deny_events = deny_events
+        self.fail_apply = fail_apply
+        self.commands: list[tuple[str, ...]] = []
+
+    def run(
+        self,
+        command: tuple[str, ...],
+        *,
+        input_text: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        self.commands.append(command)
+        if command in self.responses:
+            return self.responses[command]
+        if self.fail_apply and command[0] == "kubectl" and "apply" in command:
+            return _completed(command, returncode=1, stderr="apply failed\n")
+        if command == ("kubectl", "config", "current-context"):
+            return _completed(command, stdout="dev-cluster\n")
+        if self.deny_events and command[5:8] == ("get", "events", "-n"):
+            return _completed(command, stdout="no\n")
+        if "can-i" in command:
+            return _completed(command, stdout="yes\n")
+        if command[:4] == ("kubectl", "--context", "dev-cluster", "version"):
+            return _completed(command, stdout='{"serverVersion":{"gitVersion":"v1.30.0"}}\n')
+        return _completed(command, stdout="ok\n")
+
+
+def _completed(
+    command: tuple[str, ...],
+    *,
+    returncode: int = 0,
+    stdout: str = "",
+    stderr: str = "",
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(command, returncode, stdout, stderr)
 
 
 class _FakeAgentsRunner:

@@ -38,6 +38,21 @@ uv run ampule-chamber assess --config chamber.yaml --mode local
 Local assessment writes evidence, findings, agent output, metadata, and a
 report from the standard run directory.
 
+For reviewed configs whose images are already pullable by a non-production
+cluster, run generic Kubernetes assessment with an explicit context:
+
+```bash
+uv run ampule-chamber assess \
+  --config chamber.yaml \
+  --mode kubernetes \
+  --context <kube-context> \
+  --prometheus-url <prometheus-url>
+```
+
+Generic Kubernetes mode uses `kubectl`, starts with preflight checks, and keeps
+all applied resources inside a chamber-owned namespace. See
+[Generic Kubernetes Assessment](kubernetes-assessment.md).
+
 ## Report
 
 ```bash

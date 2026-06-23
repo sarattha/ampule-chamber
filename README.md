@@ -1,6 +1,6 @@
 # Ampule Chamber
 
-Version: 1.0.0
+Version: 1.1.0
 
 Production-ready release for agent-driven reliability testing of Kubernetes
 services before production.
@@ -15,10 +15,10 @@ teams that need to answer:
 
 ## Release Status
 
-Ampule Chamber `1.0.0` is the first production-ready release line. It includes
-the guided assessment CLI, standard run artifacts, bounded agent workflow,
-report generation, MkDocs documentation, release metadata validation, and
-GitHub Actions CI/CD automation.
+Ampule Chamber `1.1.0` adds generic Kubernetes assessment mode on top of the
+production-ready guided workflow, standard run artifacts, bounded agent
+workflow, report generation, MkDocs documentation, release metadata validation,
+and GitHub Actions CI/CD automation.
 
 ## What It Tests
 
@@ -65,6 +65,17 @@ uv run ampule-chamber assess --config chamber.yaml --mode local
 uv run ampule-chamber report --run .chamber/runs/<run-id>
 ```
 
+For a reviewed config and a non-production Kubernetes context, generic
+Kubernetes mode uses `kubectl` and chamber-owned namespaces:
+
+```bash
+uv run ampule-chamber assess \
+  --config chamber.yaml \
+  --mode kubernetes \
+  --context <kube-context> \
+  --prometheus-url <prometheus-url>
+```
+
 Scenario-based live kind runs remain available:
 
 ```bash
@@ -101,6 +112,7 @@ Documentation entry points:
 - `docs/index.md`
 - `docs/getting-started.md`
 - `docs/guided-workflow.md`
+- `docs/kubernetes-assessment.md`
 - `docs/agent-pipeline.md`
 - `docs/release-process.md`
 
