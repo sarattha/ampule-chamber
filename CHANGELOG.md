@@ -2,6 +2,23 @@
 
 All notable changes to Ampule Chamber are documented in this file.
 
+## 1.1.0 - 2026-06-23
+
+### Added
+
+- Added provider-neutral `runtime.provider: kubernetes` ChamberConfig support
+  with explicit context, namespace, cleanup, Prometheus, traffic access, and
+  image replacement metadata in `plan.json`.
+- Added generic Kubernetes kubectl preflight checks with explicit context
+  safety validation, chamber-owned namespace validation, RBAC probes, server
+  metadata capture, redaction, and reportable evidence.
+- Added `ampule-chamber assess --config chamber.yaml --mode kubernetes` for
+  live assessments against non-production Kubernetes contexts reachable through
+  `kubectl`.
+- Added a generic Kubernetes assessment guide covering prerequisites,
+  optional AKS/EKS/GKE kubeconfig examples, safety model, minimal config,
+  command flow, report regeneration, and troubleshooting.
+
 ## 1.0.0 - 2026-06-18
 
 ### Added

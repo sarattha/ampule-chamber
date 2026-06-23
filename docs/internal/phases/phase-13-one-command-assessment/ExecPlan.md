@@ -36,9 +36,42 @@ GitHub issue #9.
 
 - [x] Implemented one-command and resume paths in `chamber.workflow`.
 - [x] Added phase 13 tests in `tests/test_phase11_12_13_workflow.py`.
+- [x] GitHub issue #13: extended `ChamberConfig` validation and `plan.json`
+      metadata for provider-neutral Kubernetes runtime settings, including
+      context, namespace intent, traffic access, cleanup, Prometheus URL, and
+      explicit image replacement intent.
+- [x] GitHub issue #12: added reusable generic Kubernetes kubectl preflight
+      checks with explicit context validation, chamber-owned namespace
+      validation, RBAC probes, server metadata capture, redaction, and
+      JSON-safe evidence conversion.
+- [x] GitHub issue #11: added config-driven
+      `ampule-chamber assess --config chamber.yaml --mode kubernetes` support
+      that plans a run directory, runs generic preflight before apply, deploys
+      adapted manifests, waits for readiness, executes configured traffic,
+      records Kubernetes command evidence, cleans up chamber-owned resources,
+      and renders the standard report.
+- [x] GitHub issue #14: added a generic Kubernetes assessment operator guide
+      with mode comparison, prerequisites, optional AKS/EKS/GKE kubeconfig
+      examples, safety model, minimal config, command flow, report
+      regeneration, and troubleshooting.
+
+## Acceptance Evidence
+
+- `uv run python -m unittest tests/test_phase11_12_13_workflow.py` passed 27
+  tests after the #13 config-contract change.
+- `uv run python -m unittest tests/test_kubernetes_preflight.py` passed 4
+  tests for generic Kubernetes preflight behavior.
+- `uv run python -m unittest tests/test_phase11_12_13_workflow.py` passed 29
+  tests after the #11 Kubernetes assessment path was added.
+- `uv run python -m unittest tests/test_kubernetes_preflight.py` passed again
+  after #11 integration.
+- `uv run mkdocs build --strict` passed after the #14 documentation update.
 
 ## Decision Log
 
 - Chose not to run live Kubernetes from the new shortcut yet; the established
   live path remains `ampule-chamber run` until config-driven live execution has
   separate acceptance evidence.
+- Chose to record only operator-declared image replacements in runtime plan
+  metadata. Inferred replacements still adapt manifests, but local plan
+  metadata does not expose original production image names.

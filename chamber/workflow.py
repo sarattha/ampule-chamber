@@ -12,6 +12,7 @@ from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import yaml
 
@@ -33,6 +34,10 @@ from chamber.agents import (
     validate_evidence_bound_output,
 )
 from chamber.agents.sdk import OpenAIAgentsSdkRunner
+from chamber.environment import preflight_to_evidence, run_kubernetes_preflight
+from chamber.environment.preflight import (
+    CommandRunner as KubernetesCommandRunner,
+)
 from chamber.onboarding import (
     ExternalDependencyPolicy,
     FollowUpCheck,
@@ -60,6 +65,8 @@ DEFAULT_AGENT_MODE = "offline"
 AGENT_MODES = {"off", "offline", "live"}
 SECRET_NAME_FRAGMENTS = ("SECRET", "TOKEN", "PASSWORD", "API_KEY", "KEY")
 PRODUCTION_CONTEXT_FRAGMENTS = ("prod", "production", "aks-prod", "prd", "live")
+RUNTIME_PROVIDERS = {"local", "kind", "kubernetes"}
+TRAFFIC_ACCESS_MODES = {"port-forward", "endpoint"}
 
 AGENT_OUTPUT_TYPES = (
     OnboardingAgentDraft
@@ -73,6 +80,30 @@ AGENT_OUTPUT_TYPES = (
 
 class WorkflowError(RuntimeError):
     """Raised when the guided workflow cannot continue."""
+
+
+class WorkflowSubprocessRunner:
+    """Default command runner for guided live Kubernetes assessment."""
+
+    def run(
+        self, command: tuple[str, ...], *, input_text: str | None = None
+    ) -> subprocess.CompletedProcess[str]:  # pragma: no cover
+        return subprocess.run(
+            command,
+            input=input_text,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+    def popen(
+        self,
+        command: tuple[str, ...],
+        *,
+        stdout: Any | None = subprocess.PIPE,
+        stderr: Any | None = subprocess.PIPE,
+    ) -> subprocess.Popen[str]:  # pragma: no cover
+        return subprocess.Popen(command, stdout=stdout, stderr=stderr, text=True)
 
 
 def main(argv: list[str] | None = None) -> int:  # pragma: no cover
@@ -109,6 +140,8 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover
                 resume=Path(args.resume) if args.resume else None,
                 mode=args.mode,
                 agents_mode=args.agents_mode,
+                context=args.context,
+                prometheus_url=args.prometheus_url,
             )
             print(f"report {run_dir / 'report.md'}")
             return 0
@@ -245,10 +278,7 @@ def validate_config(
             f"{source}.agents.mode must be one of: {', '.join(sorted(AGENT_MODES))}"
         )
     runtime = _mapping(config.get("runtime", {}), f"{source}.runtime")
-    _validate_runtime_config(
-        _mapping(runtime.get("config", {}), f"{source}.runtime.config"),
-        source=f"{source}.runtime.config",
-    )
+    _validate_runtime(runtime, source=f"{source}.runtime")
 
 
 def config_to_onboarding_spec(config: dict[str, Any]) -> OnboardingSpec:
@@ -308,7 +338,8 @@ def plan_config(config_path: Path, *, run_dir: Path | None = None) -> Path:
     save_config(config, config_copy)
     _ensure_run_subdirs(target_run_dir)
     plan = build_onboarding_plan(config_to_onboarding_spec(config), run_id=target_run_dir.name)
-    _write_plan(target_run_dir, plan)
+    runtime_plan = _runtime_plan(config, plan)
+    _write_plan(target_run_dir, plan, runtime=runtime_plan)
     _write_metadata(
         target_run_dir,
         {
@@ -317,6 +348,7 @@ def plan_config(config_path: Path, *, run_dir: Path | None = None) -> Path:
             "config": str(config_copy),
             "cleanup_performed": False,
             "agent_mode": _agent_mode(config, None),
+            "runtime": runtime_plan,
         },
     )
     _write_agents(target_run_dir, config, evidence_ids=("plan",), stage="plan")
@@ -330,9 +362,21 @@ def assess(
     resume: Path | None = None,
     mode: str = "local",
     agents_mode: str | None = None,
+    context: str | None = None,
+    prometheus_url: str | None = None,
 ) -> Path:
     """Run the guided assessment workflow in local artifact-producing mode."""
 
+    if mode == "kubernetes":
+        if config is None or repo is not None or resume is not None:
+            raise WorkflowError("assess --mode kubernetes requires --config only")
+        return _assess_kubernetes_config(
+            config,
+            agents_mode=agents_mode,
+            context=context,
+            prometheus_url=prometheus_url,
+            runner=WorkflowSubprocessRunner(),
+        )
     if mode != "local":
         raise WorkflowError("only --mode local is supported by the guided workflow")
     if resume is not None:
@@ -377,6 +421,131 @@ def assess(
     return run_dir
 
 
+def _assess_kubernetes_config(
+    config_path: Path,
+    *,
+    agents_mode: str | None,
+    context: str | None,
+    prometheus_url: str | None,
+    runner: KubernetesCommandRunner,
+) -> Path:
+    """Run a config-driven live Kubernetes assessment."""
+
+    config = load_config(config_path)
+    if agents_mode:
+        config.setdefault("agents", {})["mode"] = agents_mode
+    runtime = _mapping(config.get("runtime", {}), "runtime")
+    if str(runtime.get("provider", "local")) != "kubernetes":
+        raise WorkflowError("assess --mode kubernetes requires runtime.provider: kubernetes")
+    selected_context = context or str(runtime["kubernetesContext"])
+    selected_prometheus = prometheus_url or runtime.get("prometheusUrl")
+    init_workspace()
+    run_dir = _new_run_dir(str(config["service"]["name"]))
+    run_dir.mkdir(parents=True, exist_ok=True)
+    config_copy = run_dir / "chamber.yaml"
+    save_config(config, config_copy)
+    _ensure_run_subdirs(run_dir)
+    plan = build_onboarding_plan(config_to_onboarding_spec(config), run_id=run_dir.name)
+    runtime_plan = _runtime_plan(config, plan)
+    runtime_plan["kubernetes_context"] = selected_context
+    if selected_prometheus:
+        runtime_plan["prometheus_url"] = str(selected_prometheus)
+    _write_plan(run_dir, plan, runtime=runtime_plan)
+    _write_agents(run_dir, config, evidence_ids=("plan",), stage="plan")
+
+    preflight = run_kubernetes_preflight(
+        context=selected_context,
+        namespace=plan.namespace,
+        runner=runner,
+    )
+    _write_json(run_dir / "evidence/preflight.json", preflight_to_evidence(preflight))
+    if not preflight.ready:
+        _write_metadata(
+            run_dir,
+            {
+                "run_id": run_dir.name,
+                "stage": "preflight_failed",
+                "mode": "kubernetes",
+                "config": str(config_copy),
+                "runtime": runtime_plan,
+                "cleanup_performed": False,
+                "cleanup_notes": ["No Kubernetes resources were applied after failed preflight."],
+                "preflight": preflight_to_evidence(preflight),
+                "agent_mode": _agent_mode(config, agents_mode),
+            },
+        )
+        raise WorkflowError("Kubernetes preflight failed: " + "; ".join(preflight.blockers))
+
+    commands: list[dict[str, object]] = []
+    traffic_result: dict[str, object] = {
+        "success": False,
+        "command": [],
+        "exit_status": None,
+        "stdout": "",
+        "stderr": "",
+        "summary_path": "",
+    }
+    cleanup_performed = False
+    success = False
+    try:
+        _apply_kubernetes_plan(
+            plan.manifests, context=selected_context, runner=runner, commands=commands
+        )
+        _wait_kubernetes_readiness(plan, context=selected_context, runner=runner, commands=commands)
+        traffic_result = _execute_kubernetes_traffic(
+            config=config,
+            run_dir=run_dir,
+            context=selected_context,
+            namespace=plan.namespace,
+            runner=runner,
+        )
+        _collect_kubernetes_command_evidence(
+            plan,
+            context=selected_context,
+            runner=runner,
+            commands=commands,
+        )
+        success = bool(traffic_result.get("success"))
+    finally:
+        if bool(runtime.get("cleanup", True)):
+            _cleanup_kubernetes(plan, context=selected_context, runner=runner, commands=commands)
+            cleanup_performed = True
+
+    _write_json(run_dir / "evidence/kubernetes-commands.json", {"commands": commands})
+    _write_json(run_dir / "findings.json", [])
+    _write_metadata(
+        run_dir,
+        {
+            "run_id": run_dir.name,
+            "stage": "assessed",
+            "mode": "kubernetes",
+            "config": str(config_copy),
+            "runtime": runtime_plan,
+            "provider": "kubernetes",
+            "context": selected_context,
+            "namespace": plan.namespace,
+            "traffic_result": traffic_result,
+            "cleanup_performed": cleanup_performed,
+            "cleanup_notes": [
+                "Deleted chamber-owned Kubernetes resources and namespace."
+                if cleanup_performed
+                else "Cleanup was disabled by runtime.cleanup."
+            ],
+            "preflight": preflight_to_evidence(preflight),
+            "success": success,
+            "agent_mode": _agent_mode(config, agents_mode),
+        },
+    )
+    _write_agents(
+        run_dir,
+        config,
+        evidence_ids=("plan", "preflight", "kubernetes-commands"),
+        stage="assess",
+    )
+    render_report_from_run(run_dir)
+    return run_dir
+
+
 def render_report_from_run(run_dir: Path) -> Path:
     """Render `report.md` from a standard run directory."""
 
@@ -416,6 +585,8 @@ def _parser() -> argparse.ArgumentParser:
     source.add_argument("--resume")
     assess_parser.add_argument("--mode", default="local")
     assess_parser.add_argument("--agents-mode", choices=sorted(AGENT_MODES))
+    assess_parser.add_argument("--context")
+    assess_parser.add_argument("--prometheus-url")
     report_parser = subparsers.add_parser(
         "report",
         description="Render a report from a run directory.",
@@ -426,8 +597,11 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _write_plan(run_dir: Path, plan: Any) -> None:
-    _write_json(run_dir / "plan.json", _jsonable(plan))
+def _write_plan(run_dir: Path, plan: Any, *, runtime: dict[str, Any] | None = None) -> None:
+    payload = _jsonable(plan)
+    if runtime is not None:
+        payload["runtime"] = runtime
+    _write_json(run_dir / "plan.json", payload)
     adapted_dir = run_dir / "adapted-manifests"
     shutil.rmtree(adapted_dir, ignore_errors=True)
     adapted_dir.mkdir(parents=True, exist_ok=True)
@@ -438,6 +612,261 @@ def _write_plan(run_dir: Path, plan: Any) -> None:
             yaml.safe_dump(manifest, sort_keys=False),
             encoding="utf-8",
         )
+
+
+def _apply_kubernetes_plan(
+    manifests: tuple[dict[str, Any], ...],
+    *,
+    context: str,
+    runner: KubernetesCommandRunner,
+    commands: list[dict[str, object]],
+) -> None:
+    for manifest in manifests:
+        completed = _run_kubernetes_recorded(
+            runner,
+            ("kubectl", "--context", context, "apply", "-f", "-"),
+            commands,
+            input_text=yaml.safe_dump(manifest, sort_keys=False),
+        )
+        _require_command_success(completed, "apply adapted manifest")
+
+
+def _wait_kubernetes_readiness(
+    plan: Any,
+    *,
+    context: str,
+    runner: KubernetesCommandRunner,
+    commands: list[dict[str, object]],
+) -> None:
+    namespace = str(plan.namespace)
+    for workload in plan.workloads:
+        if workload.kind != "Deployment":
+            continue
+        completed = _run_kubernetes_recorded(
+            runner,
+            (
+                "kubectl",
+                "--context",
+                context,
+                "-n",
+                namespace,
+                "rollout",
+                "status",
+                f"deployment/{workload.name}",
+                "--timeout=180s",
+            ),
+            commands,
+        )
+        _require_command_success(completed, f"wait for deployment/{workload.name}")
+    for workload in plan.workloads:
+        if workload.kind != "Service":
+            continue
+        completed = _run_kubernetes_recorded(
+            runner,
+            (
+                "kubectl",
+                "--context",
+                context,
+                "-n",
+                namespace,
+                "get",
+                "endpoints",
+                workload.name,
+                "-o",
+                "json",
+            ),
+            commands,
+        )
+        _require_command_success(completed, f"read endpoints/{workload.name}")
+
+
+def _execute_kubernetes_traffic(
+    *,
+    config: dict[str, Any],
+    run_dir: Path,
+    context: str,
+    namespace: str,
+    runner: Any,
+) -> dict[str, object]:  # pragma: no cover - covered by real/kind exercise or patched tests
+    runtime = _mapping(config["runtime"], "runtime")
+    access = _mapping(runtime["trafficAccess"], "runtime.trafficAccess")
+    traffic = _mapping(config["traffic"], "traffic")
+    journey = _mapping(_list(traffic["journeys"], "traffic.journeys")[0], "traffic.journeys[0]")
+    method = str(journey.get("method", "GET"))
+    expected_status = int(journey.get("expectedStatus", 200))
+    summary_path = run_dir / "evidence/k6-summary.json"
+    script_path = run_dir / "evidence/k6.js"
+    if access["mode"] == "endpoint":
+        target_url = str(access["url"]).rstrip("/") + str(journey.get("path", "/health"))
+        port_forward = None
+    else:
+        service = str(access["service"])
+        service_port = int(access["servicePort"])
+        local_port = int(access.get("localPort", 18080))
+        target_url = f"http://127.0.0.1:{local_port}{journey.get('path', '/health')}"
+        port_forward = runner.popen(
+            (
+                "kubectl",
+                "--context",
+                context,
+                "-n",
+                namespace,
+                "port-forward",
+                f"service/{service}",
+                f"{local_port}:{service_port}",
+            )
+        )
+    script_path.write_text(
+        "\n".join(
+            (
+                "import http from 'k6/http';",
+                "import { check } from 'k6';",
+                "export const options = { vus: 1, iterations: 1 };",
+                "export default function () {",
+                f"  const res = http.request({method!r}, {target_url!r});",
+                f"  check(res, {{ 'status is expected': r => r.status === {expected_status} }});",
+                "}",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+    try:
+        completed = runner.run(
+            ("k6", "run", "--summary-export", str(summary_path), str(script_path))
+        )
+    finally:
+        if port_forward is not None:
+            _stop_kubernetes_process(port_forward)
+    return {
+        "success": completed.returncode == 0,
+        "command": list(completed.args) if isinstance(completed.args, tuple | list) else [],
+        "exit_status": completed.returncode,
+        "stdout": completed.stdout,
+        "stderr": completed.stderr,
+        "summary_path": str(summary_path),
+    }
+
+
+def _collect_kubernetes_command_evidence(
+    plan: Any,
+    *,
+    context: str,
+    runner: KubernetesCommandRunner,
+    commands: list[dict[str, object]],
+) -> None:
+    namespace = str(plan.namespace)
+    selector = ",".join(f"{key}={value}" for key, value in sorted(plan.labels.items()))
+    evidence_commands = (
+        (
+            "kubectl",
+            "--context",
+            context,
+            "-n",
+            namespace,
+            "get",
+            "pods",
+            "-l",
+            selector,
+            "-o",
+            "json",
+        ),
+        ("kubectl", "--context", context, "-n", namespace, "get", "events", "-o", "json"),
+    )
+    for command in evidence_commands:
+        _run_kubernetes_recorded(runner, command, commands)
+    for workload in plan.workloads:
+        if workload.kind != "Deployment":
+            continue
+        _run_kubernetes_recorded(
+            runner,
+            (
+                "kubectl",
+                "--context",
+                context,
+                "-n",
+                namespace,
+                "logs",
+                f"deployment/{workload.name}",
+                "--all-containers=true",
+                "--tail=200",
+            ),
+            commands,
+        )
+
+
+def _cleanup_kubernetes(
+    plan: Any,
+    *,
+    context: str,
+    runner: KubernetesCommandRunner,
+    commands: list[dict[str, object]],
+) -> None:
+    namespace = str(plan.namespace)
+    selector = ",".join(f"{key}={value}" for key, value in sorted(plan.labels.items()))
+    cleanup_commands = (
+        (
+            "kubectl",
+            "--context",
+            context,
+            "-n",
+            namespace,
+            "delete",
+            "all,configmap,secret,networkpolicy",
+            "-l",
+            selector,
+            "--ignore-not-found=true",
+        ),
+        (
+            "kubectl",
+            "--context",
+            context,
+            "delete",
+            "namespace",
+            namespace,
+            "--ignore-not-found=true",
+        ),
+    )
+    for command in cleanup_commands:
+        completed = _run_kubernetes_recorded(runner, command, commands)
+        _require_command_success(completed, "cleanup chamber-owned resources")
+
+
+def _run_kubernetes_recorded(
+    runner: KubernetesCommandRunner,
+    command: tuple[str, ...],
+    commands: list[dict[str, object]],
+    *,
+    input_text: str | None = None,
+) -> subprocess.CompletedProcess[str]:
+    completed = runner.run(command, input_text=input_text)
+    commands.append(
+        {
+            "command": list(command),
+            "exit_status": completed.returncode,
+            "stdout": completed.stdout,
+            "stderr": completed.stderr,
+        }
+    )
+    return completed
+
+
+def _require_command_success(completed: subprocess.CompletedProcess[str], description: str) -> None:
+    if completed.returncode != 0:
+        raise WorkflowError(
+            f"failed to {description}: {completed.stderr.strip() or completed.stdout.strip()}"
+        )
+
+
+def _stop_kubernetes_process(process: subprocess.Popen[str]) -> None:  # pragma: no cover
+    if process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
 
 
 def _write_agents(
@@ -642,6 +1071,41 @@ def _report_input(
                 str(run_dir / "evidence/local-assessment.json"),
             )
         )
+    if (run_dir / "evidence/preflight.json").exists():
+        evidence.append(
+            EvidenceReference(
+                "preflight",
+                "kubectl",
+                "kubernetes_preflight",
+                str(metadata.get("namespace", plan.get("namespace", ""))),
+                "from-file",
+                str(run_dir / "evidence/preflight.json"),
+            )
+        )
+    if (run_dir / "evidence/kubernetes-commands.json").exists():
+        evidence.append(
+            EvidenceReference(
+                "kubernetes-commands",
+                "kubectl",
+                "kubernetes_runtime",
+                str(metadata.get("namespace", plan.get("namespace", ""))),
+                "from-file",
+                str(run_dir / "evidence/kubernetes-commands.json"),
+            )
+        )
+    traffic_result = _mapping(metadata.get("traffic_result", {}), "metadata.traffic_result")
+    summary_path = traffic_result.get("summary_path")
+    if summary_path:
+        evidence.append(
+            EvidenceReference(
+                "k6-summary",
+                "k6",
+                "traffic_summary",
+                str(metadata.get("namespace", plan.get("namespace", ""))),
+                "from-file",
+                str(summary_path),
+            )
+        )
     return ReportInput(
         title="Ampule Chamber Reliability Report",
         service=ServiceMetadata(
@@ -655,7 +1119,11 @@ def _report_input(
             test_date=datetime.now(UTC).date().isoformat(),
             duration_seconds=int(metadata.get("duration_seconds", 1)),
             namespace=str(plan.get("namespace", "")),
-            provider="kind",
+            provider=str(
+                metadata.get(
+                    "provider", _mapping(plan.get("runtime", {}), "runtime").get("provider", "kind")
+                )
+            ),
             lifecycle_state=str(metadata.get("stage", "planned")),
         ),
         scenario=TestedScenario(
@@ -912,8 +1380,11 @@ def _image_specs(
     images: dict[str, Any],
 ) -> tuple[tuple[ImageBuildSpec, ...], tuple[ImageReplacement, ...]]:
     builds = []
-    replacements = []
+    replacements = list(_explicit_image_replacements(images))
+    explicit_sources = {item.source for item in replacements}
     for name, value in images.items():
+        if name == "replacements":
+            continue
         if isinstance(value, str):
             builds.append(ImageBuildSpec(str(name), "Dockerfile", value))
             continue
@@ -928,9 +1399,115 @@ def _image_specs(
                 context=str(value.get("context", ".")),
             )
         )
-        if value.get("sourceImage"):
+        if value.get("sourceImage") and str(value["sourceImage"]) not in explicit_sources:
             replacements.append(ImageReplacement(str(value["sourceImage"]), image))
     return tuple(builds), tuple(replacements)
+
+
+def _explicit_image_replacements(images: dict[str, Any]) -> tuple[ImageReplacement, ...]:
+    replacements = []
+    for item in _list(images.get("replacements", []), "deployment.images.replacements"):
+        replacement = _mapping(item, "deployment.images.replacements[]")
+        replacements.append(
+            ImageReplacement(
+                source=_non_empty(
+                    replacement.get("source"),
+                    "deployment.images.replacements[].source",
+                ),
+                target=_non_empty(
+                    replacement.get("target"),
+                    "deployment.images.replacements[].target",
+                ),
+            )
+        )
+    return tuple(replacements)
+
+
+def _validate_runtime(runtime: dict[str, Any], *, source: str) -> None:
+    provider = str(runtime.get("provider", "local"))
+    if provider not in RUNTIME_PROVIDERS:
+        raise WorkflowError(
+            f"{source}.provider must be one of: {', '.join(sorted(RUNTIME_PROVIDERS))}"
+        )
+    for key, value in runtime.items():
+        if key in {
+            "provider",
+            "kubernetesContext",
+            "namespaceBase",
+            "cleanup",
+            "prometheusUrl",
+            "trafficAccess",
+            "requiredEnv",
+            "secretEnv",
+            "config",
+        }:
+            continue
+        if isinstance(value, str) and _secret_like_name(str(key)):
+            raise WorkflowError(
+                f"{source}.{key} looks secret-like; move it to runtime.secretEnv "
+                "so run artifacts record only presence or absence"
+            )
+    _validate_runtime_config(
+        _mapping(runtime.get("config", {}), f"{source}.config"),
+        source=f"{source}.config",
+    )
+    if provider != "kubernetes":
+        return
+    _non_empty(runtime.get("kubernetesContext"), f"{source}.kubernetesContext")
+    if "trafficAccess" not in runtime:
+        raise WorkflowError(f"{source}.trafficAccess is required for Kubernetes runtime")
+    _validate_traffic_access(
+        _mapping(runtime.get("trafficAccess"), f"{source}.trafficAccess"),
+        source=f"{source}.trafficAccess",
+    )
+    prometheus_url = runtime.get("prometheusUrl")
+    if prometheus_url is not None:
+        _require_http_url(str(prometheus_url), f"{source}.prometheusUrl")
+
+
+def _validate_traffic_access(access: dict[str, Any], *, source: str) -> None:
+    mode = str(access.get("mode", ""))
+    if mode not in TRAFFIC_ACCESS_MODES:
+        raise WorkflowError(
+            f"{source}.mode must be one of: {', '.join(sorted(TRAFFIC_ACCESS_MODES))}"
+        )
+    if mode == "port-forward":
+        _non_empty(access.get("service"), f"{source}.service")
+        port = access.get("servicePort")
+        if not isinstance(port, int) or port <= 0:
+            raise WorkflowError(f"{source}.servicePort must be a positive integer")
+    if mode == "endpoint":
+        _require_http_url(_non_empty(access.get("url"), f"{source}.url"), f"{source}.url")
+
+
+def _runtime_plan(config: dict[str, Any], plan: Any) -> dict[str, Any]:
+    runtime = _mapping(config.get("runtime", {}), "runtime")
+    provider = str(runtime.get("provider", "local"))
+    namespace_base = str(runtime.get("namespaceBase", config.get("namespaceBase", "")))
+    result: dict[str, Any] = {
+        "provider": provider,
+        "namespace": str(getattr(plan, "namespace", "")),
+        "namespace_base": namespace_base or None,
+        "cleanup": bool(runtime.get("cleanup", True)),
+        "traffic_access": _jsonable(runtime.get("trafficAccess", {})),
+        "image_replacements": [
+            {"source": item.source, "target": item.target}
+            for item in _explicit_image_replacements(
+                _mapping(config.get("deployment", {}).get("images", {}), "deployment.images")
+            )
+        ],
+    }
+    if provider == "kubernetes":
+        result["kubernetes_context"] = str(runtime["kubernetesContext"])
+        if runtime.get("prometheusUrl"):
+            result["prometheus_url"] = str(runtime["prometheusUrl"])
+    return result
+
+
+def _require_http_url(url: str, name: str) -> None:
+    scheme = urlparse(url).scheme
+    if scheme not in {"http", "https"}:
+        raise WorkflowError(f"{name} must be an HTTP(S) URL")
 
 
 def _validate_runtime_config(config: dict[str, Any], *, source: str) -> None:

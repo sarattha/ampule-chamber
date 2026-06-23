@@ -1,6 +1,6 @@
 # Ampule Chamber
 
-Version: 1.0.0
+Version: 1.1.0
 
 Ampule Chamber is a production-ready reliability testing chamber for Kubernetes
 services before production. It deploys services into isolated chamber
@@ -9,9 +9,10 @@ collects runtime evidence, and produces evidence-backed readiness reports.
 
 ## Production-Ready Release
 
-The `1.0.0` release stabilizes the guided workflow, standard run directory,
-bounded agent pipeline, report generation, release metadata checks, and
-GitHub Actions automation needed for repeatable release operations.
+The `1.1.0` release adds generic Kubernetes assessment mode while preserving
+the guided workflow, standard run directory, bounded agent pipeline, report
+generation, release metadata checks, and GitHub Actions automation needed for
+repeatable release operations.
 
 ## Core Commands
 
@@ -28,6 +29,20 @@ For a supported local service repository, the shortcut is:
 ```bash
 uv run ampule-chamber assess --repo ../target-service
 ```
+
+For a reviewed config and any non-production Kubernetes context reachable
+through `kubectl`, use generic Kubernetes mode:
+
+```bash
+uv run ampule-chamber assess \
+  --config chamber.yaml \
+  --mode kubernetes \
+  --context <kube-context> \
+  --prometheus-url <prometheus-url>
+```
+
+See [Generic Kubernetes Assessment](kubernetes-assessment.md) for the safety
+model, minimal config, provider credential examples, and troubleshooting.
 
 ## Evidence Model
 
