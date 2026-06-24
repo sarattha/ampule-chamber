@@ -15,10 +15,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.13"
 
@@ -28,7 +28,7 @@ jobs:
         run: python scripts/validate_release_metadata.py "$RELEASE_TAG"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v8.2.0
 
       - name: Sync dependencies
         run: uv sync --group dev
@@ -48,9 +48,15 @@ jobs:
         run: syft dist --output "spdx-json=ampule-chamber-${RELEASE_TAG}.spdx.json"
 
       - name: Attest package provenance
-        uses: actions/attest-build-provenance@v2
+        if: ${{ !github.event.repository.private }}
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: dist/*
+
+      - name: Skip package provenance attestation
+        if: ${{ github.event.repository.private }}
+        run: |
+          echo "Skipping package provenance attestation because GitHub attestations are not available for user-owned private repositories."
 
       - name: Extract release notes
         env:
@@ -82,7 +88,7 @@ jobs:
           PY
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           body_path: release-notes.md
           files: |
