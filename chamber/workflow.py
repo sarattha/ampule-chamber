@@ -803,9 +803,9 @@ def _k6_script_for_journeys(journeys: tuple[dict[str, Any], ...], *, base_url: s
     journey_payloads = []
     scenario_options: dict[str, Any] = {}
     start_after_seconds = 0
-    for journey in journeys:
+    for index, journey in enumerate(journeys, start=1):
         name = _journey_name(journey)
-        function_name = _k6_function_name(name)
+        function_name = _k6_function_name(name, index=index)
         stages = _journey_stages(journey)
         scenario: dict[str, Any]
         if stages:
@@ -829,6 +829,7 @@ def _k6_script_for_journeys(journeys: tuple[dict[str, Any], ...], *, base_url: s
         start_after_seconds += max(duration_seconds, 1)
         journey_payloads.append(
             {
+                "key": function_name,
                 "name": name,
                 "functionName": function_name,
                 "method": str(journey.get("method", "GET")).upper(),
@@ -841,11 +842,11 @@ def _k6_script_for_journeys(journeys: tuple[dict[str, Any], ...], *, base_url: s
     functions = []
     for payload in journey_payloads:
         function_name = str(payload["functionName"])
-        name = str(payload["name"])
-        functions.append(f"export function {function_name}() {{ runJourney({name!r}); }}")
+        key = str(payload["key"])
+        functions.append(f"export function {function_name}() {{ runJourney({key!r}); }}")
     options_json = json.dumps({"scenarios": scenario_options}, sort_keys=True)
     journeys_json = json.dumps(
-        {item["name"]: item for item in journey_payloads},
+        {item["key"]: item for item in journey_payloads},
         sort_keys=True,
     )
     return "\n".join(
@@ -866,8 +867,9 @@ def _k6_script_for_journeys(journeys: tuple[dict[str, Any], ...], *, base_url: s
             "  }",
             "  return JSON.stringify(body);",
             "}",
-            "function runJourney(name) {",
-            "  const journey = JOURNEYS[name];",
+            "function runJourney(key) {",
+            "  const journey = JOURNEYS[key];",
+            "  const name = journey.name;",
             "  const body = requestBody(journey);",
             "  const params = {",
             "    headers: { 'Content-Type': 'application/json' },",
@@ -890,12 +892,12 @@ def _journey_name(journey: dict[str, Any]) -> str:
     return str(journey.get("name") or journey.get("path") or "traffic")
 
 
-def _k6_function_name(value: str) -> str:
+def _k6_function_name(value: str, *, index: int) -> str:
     candidate = re.sub(r"[^0-9A-Za-z_]", "_", value)
     candidate = re.sub(r"_+", "_", candidate).strip("_") or "journey"
     if candidate[0].isdigit():
         candidate = f"journey_{candidate}"
-    return candidate
+    return f"{candidate}_{index}"
 
 
 def _journey_stages(journey: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1192,9 +1194,7 @@ def _agent_missing_signals(*, stage: str, evidence_ids: tuple[str, ...]) -> tupl
     if stage == "plan":
         return ("live Kubernetes execution",)
     if stage == "assess" and not (
-        "local-assessment" in evidence_ids
-        or "kubernetes-commands" in evidence_ids
-        or "k6-summary" in evidence_ids
+        "kubernetes-commands" in evidence_ids or "k6-summary" in evidence_ids
     ):
         return ("live Kubernetes execution",)
     return ()

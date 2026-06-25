@@ -88,6 +88,11 @@ GitHub issue #9.
   and rejection of non-HTTP schemes before the audited request, added focused
   regression tests, confirmed `semgrep scan --config auto chamber/workflow.py`
   reports 0 findings, and reran `make check` successfully with 129 tests.
+- 2026-06-26 PR review fixes: kept local `assess` agent context marked as
+  missing live Kubernetes execution unless Kubernetes command or k6 evidence is
+  present, made generated k6 scenario/function names unique by journey index,
+  added regression tests for both review comments, and reran `make check`
+  successfully with 132 tests.
 
 ## Decision Log
 

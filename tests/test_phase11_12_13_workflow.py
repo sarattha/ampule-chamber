@@ -705,6 +705,34 @@ class Phase13OneCommandAssessmentTests(unittest.TestCase):
         self.assertIn("body.task_id = `${body.task_id}-${__VU}-${__ITER}-${Date.now()}`", script)
         self.assertIn('"startTime": "5s"', script)
 
+    def test_kubernetes_k6_script_uses_unique_function_names_for_collisions(self) -> None:
+        script = workflow._k6_script_for_journeys(
+            (
+                {
+                    "name": "health-check",
+                    "method": "GET",
+                    "path": "/health",
+                    "expectedStatus": 200,
+                    "iterations": 1,
+                },
+                {
+                    "name": "health_check",
+                    "method": "GET",
+                    "path": "/health",
+                    "expectedStatus": 200,
+                    "iterations": 1,
+                },
+            ),
+            base_url="http://127.0.0.1:18891",
+        )
+
+        self.assertIn("export function health_check_1()", script)
+        self.assertIn("export function health_check_2()", script)
+        self.assertIn('"health_check_1": {"body": null', script)
+        self.assertIn('"health_check_2": {"body": null', script)
+        self.assertIn("runJourney('health_check_1')", script)
+        self.assertIn("runJourney('health_check_2')", script)
+
     def test_prometheus_query_url_rejects_non_http_urls(self) -> None:
         result = workflow._prometheus_query(
             "file:///etc/passwd",
@@ -724,6 +752,24 @@ class Phase13OneCommandAssessmentTests(unittest.TestCase):
         self.assertTrue(url.startswith("https://prometheus.example/base/api/v1/query?"))
         self.assertIn("container_memory_working_set_bytes", url)
         self.assertIn("namespace%3D%22chamber-test%22", url)
+
+    def test_local_assessment_keeps_live_execution_missing_signal(self) -> None:
+        self.assertEqual(
+            workflow._agent_missing_signals(
+                stage="assess",
+                evidence_ids=("plan", "local-assessment"),
+            ),
+            ("live Kubernetes execution",),
+        )
+
+    def test_runtime_assessment_clears_live_execution_missing_signal(self) -> None:
+        self.assertEqual(
+            workflow._agent_missing_signals(
+                stage="assess",
+                evidence_ids=("plan", "kubernetes-commands"),
+            ),
+            (),
+        )
 
     def test_kubernetes_live_agents_receive_runtime_evidence(self) -> None:
         with TemporaryDirectory() as tmp:
