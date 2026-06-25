@@ -252,10 +252,7 @@ def build_onboarding_plan(
         follow_up_checks=spec.follow_up_checks,
         evidence_attribution=evidence_attribution,
         blockers=blockers,
-        limitations=(
-            "Raw Kubernetes YAML is supported; Helm and Kustomize are not rendered in this pass.",
-            "External repository is read-only and provided by the operator at run time.",
-        ),
+        limitations=_onboarding_limitations(spec),
     )
 
 
@@ -578,6 +575,26 @@ def _traffic_dict(
             for item in follow_up_checks
         ]
     return data
+
+
+def _onboarding_limitations(spec: OnboardingSpec) -> tuple[str, ...]:
+    limitations = [
+        "External repository is read-only and provided by the operator at run time.",
+    ]
+    if _manifest_paths_need_overlay_rendering(spec.manifest_paths):
+        limitations.append(
+            "Input manifests were treated as already-rendered Kubernetes YAML; "
+            "Helm/Kustomize rendering was not performed by this run."
+        )
+    return tuple(limitations)
+
+
+def _manifest_paths_need_overlay_rendering(paths: tuple[str, ...]) -> bool:
+    overlay_markers = ("helm", "chart", "kustomize", "kustomization")
+    return any(
+        any(marker in Path(path).as_posix().lower() for marker in overlay_markers)
+        for path in paths
+    )
 
 
 def _image_build(

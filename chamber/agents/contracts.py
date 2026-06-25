@@ -30,6 +30,8 @@ class ChamberAgentContext:
     finding_ids: tuple[str, ...]
     artifact_paths: tuple[str, ...]
     missing_signals: tuple[str, ...] = ()
+    evidence_summaries: tuple[str, ...] = ()
+    evidence_details: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -225,6 +227,9 @@ def deterministic_report_narrative(context: ChamberAgentContext) -> ReportNarrat
 def deterministic_onboarding_draft(context: ChamberAgentContext) -> OnboardingAgentDraft:
     """Build a stable onboarding brief for CI and offline runs."""
 
+    limitations = context.missing_signals
+    if not context.evidence_details:
+        limitations = (*limitations, "Detailed artifact excerpts were not supplied.")
     return OnboardingAgentDraft(
         service_name=context.service_name,
         assumptions=(
@@ -234,7 +239,7 @@ def deterministic_onboarding_draft(context: ChamberAgentContext) -> OnboardingAg
         manifest_paths=context.artifact_paths,
         workload_roles=("target",),
         citations=_citations(context, "onboarding input"),
-        limitations=context.missing_signals,
+        limitations=limitations,
     )
 
 
@@ -257,11 +262,15 @@ def deterministic_scenario_planner_brief(context: ChamberAgentContext) -> Scenar
 def deterministic_run_supervisor_brief(context: ChamberAgentContext) -> RunSupervisorBrief:
     """Build a stable run-supervisor brief from current run state."""
 
+    status = "ready" if not context.missing_signals else "blocked"
+    notes = context.evidence_summaries or (
+        "Offline mode records planned readiness checks without running kubectl.",
+    )
     return RunSupervisorBrief(
         run_id=context.run_id,
-        status="offline-reviewed",
+        status=status,
         blockers=(),
-        readiness_notes=("Offline mode records planned readiness checks without running kubectl.",),
+        readiness_notes=notes,
         citations=_citations(context, "run evidence"),
         limitations=context.missing_signals,
     )
@@ -288,7 +297,8 @@ def deterministic_evidence_analyst_brief(context: ChamberAgentContext) -> Eviden
     hypothesis_ids = context.evidence_ids[:1]
     return EvidenceAnalystBrief(
         scenario_id=context.scenario_id,
-        observed_facts=tuple(
+        observed_facts=context.evidence_summaries
+        or tuple(
             f"Evidence artifact {item} was supplied for review." for item in context.evidence_ids
         )
         or ("No runtime evidence was supplied.",),

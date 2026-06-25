@@ -112,6 +112,51 @@ class Phase10OnboardingTests(unittest.TestCase):
         self.assertTrue(
             any(item.signal_type == "external_dependency" for item in plan.evidence_attribution)
         )
+        self.assertNotIn("Helm", " ".join(plan.limitations))
+        self.assertNotIn("Kustomize", " ".join(plan.limitations))
+
+    def test_generic_onboarding_records_overlay_limitation_only_when_path_requires_it(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            repo = _generic_service_repo(Path(tmp))
+            (repo / "helm").mkdir(parents=True, exist_ok=True)
+            (repo / "helm/rendered.yaml").write_text(
+                _generic_app_manifest(),
+                encoding="utf-8",
+            )
+            spec = OnboardingSpec(
+                service_name="payments-api",
+                repo_path=repo,
+                scenario_id="payments-api-001",
+                namespace_base="chamber-payments",
+                manifest_paths=("helm/rendered.yaml",),
+                workload_roles=(WorkloadSpec("payments-api", "target", readiness=("http",)),),
+                image_builds=(
+                    ImageBuildSpec("api", "Dockerfile.api", "ampule/payments-api:local"),
+                ),
+                image_replacements=(
+                    ImageReplacement(
+                        "registry.example/payments-api:prod", "ampule/payments-api:local"
+                    ),
+                ),
+                traffic=TrafficJourney(
+                    tool="k6",
+                    method="POST",
+                    entrypoint="/payments",
+                    expected_status=202,
+                ),
+            )
+
+            plan = build_onboarding_plan(
+                spec,
+                run_id="phase10-generic",
+                env={},
+            )
+
+        limitations = " ".join(plan.limitations)
+        self.assertIn("already-rendered Kubernetes YAML", limitations)
+        self.assertIn("Helm/Kustomize rendering was not performed", limitations)
 
     def test_live_preflight_records_missing_prerequisites_as_blockers(self) -> None:
         with TemporaryDirectory() as tmp:

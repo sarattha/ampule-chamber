@@ -24,6 +24,8 @@ wire deterministic offline outputs into the guided workflow.
 - Agent mode `off` suppresses agent output.
 - Live mode reports a clear missing-key error.
 - Live mode writes six structured role outputs from `gpt-5.4-mini`.
+- Reviewed configs can skip selected roles with `agents.exclude`, for example
+  `onboarding-agent` when there is no local source repository to inspect.
 - `make check` passes.
 
 ## Acceptance Criteria
@@ -47,6 +49,9 @@ wire deterministic offline outputs into the guided workflow.
       `onboarding-agent.json`, `scenario-planner-agent.json`,
       `run-supervisor-agent.json`, `traffic-chaos-agent.json`,
       `evidence-analyst-agent.json`, and `report-writer-agent.json`.
+- [x] Added role-level agent exclusion in config and CLI overrides. This keeps
+      full-agent mode as the default while allowing already-deployed
+      Kubernetes service assessments to skip `onboarding-agent`.
 
 ## Decision Log
 
@@ -54,3 +59,5 @@ wire deterministic offline outputs into the guided workflow.
 - Chose the existing OpenAI Agents SDK adapter for every live Phase 12 role so
   `agents.mode: live` exercises the full agent-assisted workflow, not only
   final report writing.
+- Chose an explicit exclusion list instead of changing full-agent defaults so
+  historical all-six-role acceptance evidence remains valid.
