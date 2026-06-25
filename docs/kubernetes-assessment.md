@@ -75,6 +75,20 @@ traffic:
       method: GET
       path: /health
       expectedStatus: 200
+      stages:
+        - duration: 30s
+          targetVus: 4
+        - duration: 30s
+          targetVus: 0
+    - name: large-payload
+      method: POST
+      path: /translations
+      expectedStatus: 202
+      vus: 1
+      iterations: 3
+      textBytes: 32768
+      body:
+        language_target: th
 runtime:
   provider: kubernetes
   kubernetesContext: <kube-context>
@@ -87,6 +101,8 @@ runtime:
     servicePort: 8080
 agents:
   mode: offline
+  exclude:
+    - onboarding-agent
 ```
 
 Store secrets as environment requirements, not plaintext runtime values:
@@ -131,6 +147,7 @@ The run directory keeps the standard artifact contract:
     preflight.json
     kubernetes-commands.json
     k6-summary.json
+    prometheus-memory.json
   findings.json
   agent/
   run-metadata.json
@@ -142,6 +159,44 @@ Regenerate a report from an archived run directory with:
 ```bash
 uv run ampule-chamber report --run .chamber/runs/<run-id>
 ```
+
+## Traffic And Evidence
+
+Kubernetes assessments execute every configured `traffic.journeys` item as a
+named k6 scenario. Use `stages` for ramping VU traffic, or `vus` plus
+`iterations` for bounded workloads such as large payload admission tests. POST
+journeys can include a JSON `body`; `textBytes` expands the configured text
+payload to a bounded size for memory-oriented service tests.
+
+When `runtime.prometheusUrl` or `--prometheus-url` is set, the run captures
+`evidence/prometheus-memory.json` with container memory working set, container
+CPU usage, and restart counter queries for the chamber namespace. This evidence
+is supplied to agents and reports alongside k6 and Kubernetes command output.
+
+## Agent Selection
+
+Reviewed configs can skip selected agent roles:
+
+```yaml
+agents:
+  mode: live
+  exclude:
+    - onboarding-agent
+```
+
+The same override is available from the CLI:
+
+```bash
+uv run ampule-chamber assess \
+  --config chamber.yaml \
+  --mode kubernetes \
+  --context <kube-context> \
+  --agents-exclude onboarding-agent
+```
+
+This is useful for services that are already deployed into the target cluster
+or when the local source repository is unavailable. Excluded roles are recorded
+in `run-metadata.json`.
 
 ## Troubleshooting
 

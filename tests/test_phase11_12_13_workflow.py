@@ -705,6 +705,26 @@ class Phase13OneCommandAssessmentTests(unittest.TestCase):
         self.assertIn("body.task_id = `${body.task_id}-${__VU}-${__ITER}-${Date.now()}`", script)
         self.assertIn('"startTime": "5s"', script)
 
+    def test_prometheus_query_url_rejects_non_http_urls(self) -> None:
+        result = workflow._prometheus_query(
+            "file:///etc/passwd",
+            'container_memory_working_set_bytes{namespace="chamber-test"}',
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertIn("HTTP(S) URL", result["error"])
+        self.assertEqual(result["series"], [])
+
+    def test_prometheus_query_url_builds_http_path(self) -> None:
+        url = workflow._prometheus_query_url(
+            "https://prometheus.example/base/",
+            'container_memory_working_set_bytes{namespace="chamber-test"}',
+        )
+
+        self.assertTrue(url.startswith("https://prometheus.example/base/api/v1/query?"))
+        self.assertIn("container_memory_working_set_bytes", url)
+        self.assertIn("namespace%3D%22chamber-test%22", url)
+
     def test_kubernetes_live_agents_receive_runtime_evidence(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -1013,10 +1013,9 @@ def _collect_prometheus_memory_evidence(
 
 
 def _prometheus_query(prometheus_url: str, query: str) -> dict[str, Any]:
-    url = f"{prometheus_url.rstrip('/')}/api/v1/query?{urlencode({'query': query})}"
     try:
-        with urlopen(url, timeout=10) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+        url = _prometheus_query_url(prometheus_url, query)
+        payload = _read_prometheus_payload(url)
     except Exception as exc:
         return {"ok": False, "query": query, "error": str(exc), "series": []}
     data = payload.get("data") if isinstance(payload, dict) else None
@@ -1029,6 +1028,19 @@ def _prometheus_query(prometheus_url: str, query: str) -> dict[str, Any]:
         "series_count": len(result),
         "series": result[:20],
     }
+
+
+def _prometheus_query_url(prometheus_url: str, query: str) -> str:
+    parsed = urlparse(prometheus_url.rstrip("/"))
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("Prometheus URL must be an HTTP(S) URL")
+    path = f"{parsed.path.rstrip('/')}/api/v1/query?{urlencode({'query': query})}"
+    return f"{parsed.scheme}://{parsed.netloc}{path}"
+
+
+def _read_prometheus_payload(url: str) -> dict[str, Any]:
+    with urlopen(url, timeout=10) as response:  # nosemgrep: dynamic-urllib-use-detected
+        return json.loads(response.read().decode("utf-8"))
 
 
 def _cleanup_kubernetes(

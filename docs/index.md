@@ -1,6 +1,6 @@
 # Ampule Chamber
 
-Version: 1.1.0
+Version: 1.2.0
 
 Ampule Chamber is a production-ready reliability testing chamber for Kubernetes
 services before production. It deploys services into isolated chamber
@@ -9,10 +9,12 @@ collects runtime evidence, and produces evidence-backed readiness reports.
 
 ## Production-Ready Release
 
-The `1.1.0` release adds generic Kubernetes assessment mode while preserving
-the guided workflow, standard run directory, bounded agent pipeline, report
-generation, release metadata checks, and GitHub Actions automation needed for
-repeatable release operations.
+The `1.2.0` release adds richer Kubernetes assessment evidence, multi-journey
+k6 traffic execution, optional agent-role exclusion for reviewed configs, and
+memory-focused translation-service scenarios while preserving the guided
+workflow, standard run directory, bounded agent pipeline, report generation,
+release metadata checks, and GitHub Actions automation needed for repeatable
+release operations.
 
 ## Core Commands
 

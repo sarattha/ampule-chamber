@@ -1,5 +1,20 @@
 # Releases
 
+## 1.2.0 - 2026-06-25
+
+Ampule Chamber `1.2.0` improves Kubernetes assessment runs for already-deployed
+services and memory-focused reliability checks.
+
+Highlights:
+
+- Multi-journey k6 execution for Kubernetes assessments.
+- Optional `agents.exclude` and `--agents-exclude` controls for reviewed
+  configs.
+- Prometheus memory, CPU, and restart evidence captured in run artifacts.
+- Translation-service memory scenarios for health ramp, large-text admission,
+  and backpressure reads.
+- Deduplicated report limitations with conditional Helm/Kustomize wording.
+
 ## 1.1.0 - 2026-06-23
 
 Ampule Chamber `1.1.0` adds generic Kubernetes assessment mode for reviewed
