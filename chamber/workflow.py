@@ -1039,7 +1039,10 @@ def _prometheus_query_url(prometheus_url: str, query: str) -> str:
 
 
 def _read_prometheus_payload(url: str) -> dict[str, Any]:
-    with urlopen(url, timeout=10) as response:  # nosemgrep: dynamic-urllib-use-detected
+    # The URL is built by _prometheus_query_url, which rejects non-HTTP(S) schemes.
+    # fmt: off
+    with urlopen(url, timeout=10) as response:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected  # noqa: E501
+        # fmt: on
         return json.loads(response.read().decode("utf-8"))
 
 
