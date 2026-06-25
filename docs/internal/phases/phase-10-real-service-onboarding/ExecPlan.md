@@ -357,3 +357,34 @@ one repository name or source layout into Ampule Chamber.
       chamber/workflow.py tests/test_phase05_reporting.py
       tests/test_phase10_onboarding.py tests/test_phase11_12_13_workflow.py`
       passed.
+- 2026-06-25 translation memory assessment:
+  - Added three translation-service memory scenarios:
+    `scenarios/translation-memory-health-ramp.yaml`,
+    `scenarios/translation-memory-large-text-admission.yaml`, and
+    `scenarios/translation-memory-backpressure-read.yaml`.
+  - Updated the Docker Desktop chamber config to run three matching k6 journeys:
+    `memory-health-ramp`, `memory-large-text-admission`, and
+    `memory-backpressure-read`.
+  - Extended Kubernetes assessment traffic to generate one k6 script with
+    multiple named journeys and per-journey k6 scenarios.
+  - Added Prometheus memory evidence collection for
+    `container_memory_working_set_bytes`,
+    `container_cpu_usage_seconds_total`, and
+    `kube_pod_container_status_restarts_total`.
+  - Validation passed:
+    - `uv run python -m unittest tests.test_phase11_12_13_workflow
+      tests.test_phase05_reporting tests.test_phase10_onboarding`
+    - `uv run python scripts/validate_scenarios.py`
+    - `uv run ruff check chamber/workflow.py
+      tests/test_phase11_12_13_workflow.py`
+    - `uv run ty check chamber/workflow.py
+      tests/test_phase11_12_13_workflow.py`
+  - Live Docker Desktop run
+    `.chamber/runs/chamber-docker-desktop-translation-service-20260625162155/`
+    completed with cleanup. k6 executed all three journeys and recorded 63,111
+    HTTP requests, 62,968 passed checks, 143 failed checks, 0.2266% HTTP failure
+    rate, p95 latency 8.724 ms, and Prometheus memory series for six
+    container/pod series.
+  - Limitation: Docker Desktop's Metrics API returned `Metrics API not
+    available` for `kubectl top pods --containers`; Prometheus memory evidence
+    was collected successfully instead.

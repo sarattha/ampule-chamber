@@ -662,6 +662,48 @@ class Phase13OneCommandAssessmentTests(unittest.TestCase):
             any(command[0] == "kubectl" and "apply" in command for command in runner.commands)
         )
         self.assertTrue(any("delete" in command for command in runner.commands))
+        self.assertTrue(any("top" in command for command in runner.commands))
+
+    def test_kubernetes_k6_script_supports_multiple_memory_journeys(self) -> None:
+        script = workflow._k6_script_for_journeys(
+            (
+                {
+                    "name": "memory-health-ramp",
+                    "method": "GET",
+                    "path": "/health",
+                    "expectedStatus": 200,
+                    "stages": [{"duration": "5s", "targetVus": 1}],
+                },
+                {
+                    "name": "memory-large-text-admission",
+                    "method": "POST",
+                    "path": "/translations",
+                    "expectedStatus": 202,
+                    "iterations": 2,
+                    "body": {
+                        "task_id": "memory-large-text",
+                        "text": "Ampule memory payload. ",
+                        "language_target": "Thai",
+                    },
+                    "textBytes": 4096,
+                },
+                {
+                    "name": "memory-backpressure-read",
+                    "method": "GET",
+                    "path": "/relayna/runtime/backpressure",
+                    "expectedStatus": 200,
+                    "iterations": 1,
+                },
+            ),
+            base_url="http://127.0.0.1:18891",
+        )
+
+        self.assertIn("memory_health_ramp", script)
+        self.assertIn("memory_large_text_admission", script)
+        self.assertIn("memory_backpressure_read", script)
+        self.assertIn('"textBytes": 4096', script)
+        self.assertIn("body.task_id = `${body.task_id}-${__VU}-${__ITER}-${Date.now()}`", script)
+        self.assertIn('"startTime": "5s"', script)
 
     def test_kubernetes_live_agents_receive_runtime_evidence(self) -> None:
         with TemporaryDirectory() as tmp:

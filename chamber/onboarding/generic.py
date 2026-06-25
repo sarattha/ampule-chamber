@@ -592,8 +592,7 @@ def _onboarding_limitations(spec: OnboardingSpec) -> tuple[str, ...]:
 def _manifest_paths_need_overlay_rendering(paths: tuple[str, ...]) -> bool:
     overlay_markers = ("helm", "chart", "kustomize", "kustomization")
     return any(
-        any(marker in Path(path).as_posix().lower() for marker in overlay_markers)
-        for path in paths
+        any(marker in Path(path).as_posix().lower() for marker in overlay_markers) for path in paths
     )
 
 

@@ -1,0 +1,98 @@
+apiVersion: chamber.ampule.dev/v1alpha1
+kind: Scenario
+metadata:
+  id: translation-memory-large-text-admission-001
+  name: Translation API large-text memory admission
+  description: Submit bounded large direct-text translation requests to expose request parsing, queue admission, and worker memory pressure.
+  owner: platform-reliability
+  tags:
+    - translation-service
+    - memory
+    - large-payload
+target:
+  service:
+    name: translation-service
+    image: ampule/external-translation-api:local
+    ports:
+      - name: http
+        port: 8887
+    healthEndpoint: /health
+    readinessEndpoint: /health
+  runtime:
+    provider: existing_kubernetes
+environment:
+  provider: existing_kubernetes
+  namespace: chamber-external-translation-prep
+  replicas: 1
+  resources:
+    cpuRequest: 250m
+    cpuLimit: "1"
+    memoryRequest: 256Mi
+    memoryLimit: 768Mi
+  dependencies:
+    - name: rabbitmq
+      type: message_broker
+      protocol: amqp
+      endpoint: amqp://rabbitmq:5672
+      criticality: required
+    - name: redis-master
+      type: cache
+      protocol: redis
+      endpoint: redis://redis-master:6379
+      criticality: required
+baseline:
+  checks:
+    - type: readiness_http_200
+      description: Translation API /health returns HTTP 200 before large-text admission.
+    - type: metrics_available
+      description: Kubernetes memory metrics can be collected for API and worker pods.
+traffic:
+  tool: k6
+  method: POST
+  entrypoint: /translations
+  expectedStatus: 202
+  body:
+    task_id: ampule-memory-large-text
+    text: Ampule Chamber memory payload.
+    language_target: Thai
+    priority: 5
+  stages:
+    - duration: 15s
+      targetVus: 1
+    - duration: 30s
+      targetVus: 2
+    - duration: 15s
+      targetVus: 0
+faults:
+  - type: none
+    description: No explicit fault is injected; large payloads create bounded memory pressure at the API and worker.
+observability:
+  signals:
+    - pod_status
+    - kubernetes_events
+    - container_restarts
+    - memory_usage
+    - cpu_usage
+    - queue_depth
+    - request_latency
+    - error_rate
+    - logs
+failureConditions:
+  - type: oom_killed
+    description: Any translation API or worker container terminates with OOMKilled.
+  - type: restart_count_increase
+    description: Any API, worker, or aggregator restart count increases during large-text admission.
+  - type: queue_backlog_not_draining
+    description: Translation queue depth does not return toward baseline after traffic stops.
+successConditions:
+  - type: no_oom_killed
+    description: No OOMKilled event is observed.
+  - type: no_restart_loop
+    description: Translation API and workers do not enter a restart loop.
+  - type: error_rate_below_percent
+    description: Large-text admission error rate remains below 1 percent.
+    threshold: 1
+safety:
+  maxDuration: 3m
+  maxVirtualUsers: "2"
+  productionContextAllowed: false
