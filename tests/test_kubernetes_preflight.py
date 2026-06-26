@@ -6,7 +6,9 @@ import unittest
 from chamber.environment.preflight import (
     KubernetesPreflightError,
     preflight_to_evidence,
+    run_kubernetes_attach_preflight,
     run_kubernetes_preflight,
+    validate_kubernetes_attach_target,
     validate_kubernetes_preflight_target,
 )
 
@@ -41,6 +43,21 @@ class KubernetesPreflightTests(unittest.TestCase):
 
         with self.assertRaisesRegex(KubernetesPreflightError, "chamber-owned namespace"):
             validate_kubernetes_preflight_target("dev-cluster", "default")
+
+    def test_attach_target_validation_requires_explicit_non_production_inputs(self) -> None:
+        validate_kubernetes_attach_target("dev-cluster", "translation-test")
+
+        with self.assertRaisesRegex(KubernetesPreflightError, "explicit context"):
+            validate_kubernetes_attach_target("", "translation-test")
+
+        with self.assertRaisesRegex(KubernetesPreflightError, "explicit namespace"):
+            validate_kubernetes_attach_target("dev-cluster", "")
+
+        with self.assertRaisesRegex(KubernetesPreflightError, "unsafe Kubernetes context"):
+            validate_kubernetes_attach_target("prd-cluster", "translation-test")
+
+        with self.assertRaisesRegex(KubernetesPreflightError, "unsafe Kubernetes namespace"):
+            validate_kubernetes_attach_target("dev-cluster", "translation-live")
 
     def test_preflight_runs_required_kubectl_checks(self) -> None:
         runner = FakeRunner(
@@ -85,6 +102,61 @@ class KubernetesPreflightTests(unittest.TestCase):
         evidence = preflight_to_evidence(result)
         self.assertTrue(evidence["ready"])
         self.assertEqual(evidence["context"], "dev-cluster")
+
+    def test_attach_preflight_checks_existing_namespace_workload_and_service(self) -> None:
+        runner = FakeRunner()
+
+        result = run_kubernetes_attach_preflight(
+            context="dev-cluster",
+            namespace="translation-test",
+            workloads=(("Deployment", "translation-service"),),
+            services=("translation-service",),
+            runner=runner,
+        )
+
+        self.assertTrue(result.ready)
+        self.assertIn(
+            (
+                "kubectl",
+                "--context",
+                "dev-cluster",
+                "get",
+                "namespace",
+                "translation-test",
+                "-o",
+                "json",
+            ),
+            runner.commands,
+        )
+        self.assertIn(
+            (
+                "kubectl",
+                "--context",
+                "dev-cluster",
+                "-n",
+                "translation-test",
+                "get",
+                "deployment/translation-service",
+                "-o",
+                "json",
+            ),
+            runner.commands,
+        )
+        self.assertIn(
+            (
+                "kubectl",
+                "--context",
+                "dev-cluster",
+                "-n",
+                "translation-test",
+                "get",
+                "service",
+                "translation-service",
+                "-o",
+                "json",
+            ),
+            runner.commands,
+        )
 
     def test_preflight_blocks_failed_or_denied_permissions(self) -> None:
         denied = (

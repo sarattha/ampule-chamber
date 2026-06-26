@@ -1,0 +1,252 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: chamber-external-translation-prep
+  labels:
+    chamber.ampule.dev/allow-faults: "true"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: translation-service-config
+  namespace: chamber-external-translation-prep
+data:
+  DEBUG: "False"
+  LOG_ENVIRONMENT: test
+  PYTHONPATH: /app
+  REDIS_HOST: redis-master
+  REDIS_PORT: "6379"
+  RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+  RABBITMQ_MANAGEMENT_URL: http://rabbitmq:15672/
+  TASKS_EXCHANGE: translation-tasks.exchange
+  TASKS_QUEUE: translation-tasks.queue
+  TASKS_ROUTING_KEY: translation.request
+  DEAD_LETTER_EXCHANGE: translation-tasks.dlx
+  STATUS_EXCHANGE: translation-status.exchange
+  STATUS_QUEUE: translation-tasks.status
+  STATUS_STORE_PREFIX: translation-status
+  STATUS_STREAM_INITIAL_OFFSET: first
+  STATUS_STREAM_MAX_LENGTH_GB: "1"
+  STATUS_STREAM_MAX_SEGMENT_SIZE_MB: "50"
+  SERVICE_EVENT_STORE_PREFIX: translation-service-events
+  SERVICE_EVENT_STORE_TTL_SECONDS: "86400"
+  SERVICE_EVENT_FEED_MAXLEN: "5000"
+  WORKER_HEALTH_STORE_PREFIX: translation-worker-health
+  WORKER_HEARTBEAT_INTERVAL_SECONDS: "30"
+  WORKER_HEARTBEAT_TTL_SECONDS: "120"
+  WORKER_IDLE_SHUTDOWN_SECONDS: "0"
+  WORKER_MAX_DELIVERY_ATTEMPTS: "2"
+  WORKER_TASK_TIMEOUT_SECONDS: "900"
+  PREFETCH_COUNT: "1"
+  TRANSLATION_CONCURRENCY: "2"
+  AGGREGATION_QUEUE: translation-aggregation.queue.{shard}
+  AGGREGATION_SHARD_COUNT: "1"
+  AGGREGATION_STATE_CLEANUP_INTERVAL_SECONDS: "60"
+  AGGREGATION_STATE_TTL_SECONDS: "3600"
+  AGGREGATION_MEMORY_TRIM_ENABLED: "True"
+  METRICS_SERVICE_NAME: translation-service
+  API_METRICS_PORT: "8887"
+  WORKER_METRICS_PORT: "8001"
+  AGGREGATOR_METRICS_PORT: "8002"
+  OTEL_EXPORTER_OTLP_ENDPOINT: ""
+  OTEL_EXPORTER_OTLP_INSECURE: "true"
+  OTEL_RESOURCE_ATTRIBUTES: deployment.environment=ampule-chamber
+  DOCUMENT_SERVICE_BASE_URL: http://document-service-disabled.chamber.local
+  AI_LLM_UTILS_BASE_URL: http://ai-llm-utils-service.default.svc.cluster.local:8885
+  LLM_BACKEND: openai
+  LLM_ENDPOINT: https://api.openai.com/v1
+  MODEL_NAME: gpt-5.4-mini
+  MAX_RETRIES: "5"
+  MAX_TOKENS: "5600"
+  TEMPERATURE: "0.2"
+  TOP_P: "0.9"
+  USE_SEMANTIC_CHUNKING: "False"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-master
+  namespace: chamber-external-translation-prep
+  labels:
+    app: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: redis
+              containerPort: 6379
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-master
+  namespace: chamber-external-translation-prep
+spec:
+  selector:
+    app: redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rabbitmq
+  namespace: chamber-external-translation-prep
+  labels:
+    app: rabbitmq
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rabbitmq
+  template:
+    metadata:
+      labels:
+        app: rabbitmq
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: rabbitmq
+          image: rabbitmq:4.2.4-management
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: amqp
+              containerPort: 5672
+            - name: management
+              containerPort: 15672
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 768Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq
+  namespace: chamber-external-translation-prep
+spec:
+  selector:
+    app: rabbitmq
+  ports:
+    - name: amqp
+      port: 5672
+      targetPort: amqp
+    - name: management
+      port: 15672
+      targetPort: management
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: translation-service
+  namespace: chamber-external-translation-prep
+  labels:
+    app: translation-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: translation-service
+  template:
+    metadata:
+      labels:
+        app: translation-service
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: translation-api
+          image: ampule/external-translation-api:local
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: translation-service-config
+          ports:
+            - name: http
+              containerPort: 8887
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            runAsUser: 1000
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: translation-service
+  namespace: chamber-external-translation-prep
+spec:
+  selector:
+    app: translation-service
+  ports:
+    - name: http
+      port: 8887
+      targetPort: http

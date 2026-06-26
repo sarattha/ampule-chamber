@@ -8,6 +8,7 @@ from typing import Protocol
 
 PRODUCTION_CONTEXT_FRAGMENTS = ("prod", "production", "aks-prod", "prd", "live")
 CHAMBER_NAMESPACE_PREFIX = "chamber-"
+ATTACH_SAFE_NAME_FRAGMENTS = ("prod", "production", "prd", "live")
 
 
 class KubernetesPreflightError(RuntimeError):
@@ -61,6 +62,21 @@ def validate_kubernetes_preflight_target(context: str, namespace: str) -> None:
         )
 
 
+def validate_kubernetes_attach_target(context: str, namespace: str) -> None:
+    """Validate static attach-mode safety inputs before running kubectl."""
+
+    if not context.strip():
+        raise KubernetesPreflightError("Kubernetes attach mode requires an explicit context")
+    if not namespace.strip():
+        raise KubernetesPreflightError("Kubernetes attach mode requires an explicit namespace")
+    lowered_context = context.lower()
+    if any(fragment in lowered_context for fragment in PRODUCTION_CONTEXT_FRAGMENTS):
+        raise KubernetesPreflightError(f"refusing unsafe Kubernetes context {context!r}")
+    lowered_namespace = namespace.lower()
+    if any(fragment in lowered_namespace for fragment in ATTACH_SAFE_NAME_FRAGMENTS):
+        raise KubernetesPreflightError(f"refusing unsafe Kubernetes namespace {namespace!r}")
+
+
 def run_kubernetes_preflight(
     *,
     context: str,
@@ -72,6 +88,42 @@ def run_kubernetes_preflight(
     validate_kubernetes_preflight_target(context, namespace)
     checks = tuple(
         _run_check(name, command, runner) for name, command in _commands(context, namespace)
+    )
+    blockers = tuple(
+        f"{check.name} failed with exit status {check.exit_status}"
+        for check in checks
+        if not check.passed
+    )
+    return KubernetesPreflightResult(
+        context=context,
+        namespace=namespace,
+        ready=not blockers,
+        blockers=blockers,
+        checks=checks,
+    )
+
+
+def run_kubernetes_attach_preflight(
+    *,
+    context: str,
+    namespace: str,
+    workloads: tuple[tuple[str, str], ...],
+    services: tuple[str, ...],
+    fault_types: tuple[str, ...] = (),
+    runner: CommandRunner,
+) -> KubernetesPreflightResult:
+    """Run read-focused preflight checks for an existing Kubernetes deployment."""
+
+    validate_kubernetes_attach_target(context, namespace)
+    checks = tuple(
+        _run_check(name, command, runner)
+        for name, command in _attach_commands(
+            context,
+            namespace,
+            workloads,
+            services,
+            fault_types,
+        )
     )
     blockers = tuple(
         f"{check.name} failed with exit status {check.exit_status}"
@@ -133,6 +185,57 @@ def _commands(context: str, namespace: str) -> tuple[tuple[str, tuple[str, ...]]
         ("can-delete-namespace", (*base, "auth", "can-i", "delete", "namespace")),
         ("server-version", (*base, "version", "-o", "json")),
     )
+
+
+def _attach_commands(
+    context: str,
+    namespace: str,
+    workloads: tuple[tuple[str, str], ...],
+    services: tuple[str, ...],
+    fault_types: tuple[str, ...],
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    base = ("kubectl", "--context", context)
+    commands: list[tuple[str, tuple[str, ...]]] = [
+        ("current-context", ("kubectl", "config", "current-context")),
+        ("cluster-info", (*base, "cluster-info")),
+        ("namespace-exists", (*base, "get", "namespace", namespace, "-o", "json")),
+        ("can-get-pods", (*base, "auth", "can-i", "get", "pods", "-n", namespace)),
+        ("can-get-events", (*base, "auth", "can-i", "get", "events", "-n", namespace)),
+        ("can-get-pod-logs", (*base, "auth", "can-i", "get", "pods/log", "-n", namespace)),
+        ("can-get-services", (*base, "auth", "can-i", "get", "services", "-n", namespace)),
+        ("can-get-endpoints", (*base, "auth", "can-i", "get", "endpoints", "-n", namespace)),
+        ("server-version", (*base, "version", "-o", "json")),
+    ]
+    for kind, name in workloads:
+        resource = f"{kind.lower()}/{name}"
+        commands.append(
+            (
+                f"workload-{kind.lower()}-{name}-exists",
+                (*base, "-n", namespace, "get", resource, "-o", "json"),
+            )
+        )
+    for service in services:
+        commands.append(
+            (
+                f"service-{service}-exists",
+                (*base, "-n", namespace, "get", "service", service, "-o", "json"),
+            )
+        )
+    if "pod_kill" in fault_types:
+        commands.append(
+            (
+                "can-delete-pods-for-faults",
+                (*base, "auth", "can-i", "delete", "pods", "-n", namespace),
+            )
+        )
+    if "deployment_scale" in fault_types:
+        commands.append(
+            (
+                "can-patch-deployment-scale-for-faults",
+                (*base, "auth", "can-i", "patch", "deployments/scale", "-n", namespace),
+            )
+        )
+    return tuple(commands)
 
 
 def _run_check(
