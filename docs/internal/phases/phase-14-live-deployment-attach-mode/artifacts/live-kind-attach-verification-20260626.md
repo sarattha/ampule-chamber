@@ -100,3 +100,26 @@ Evidence:
 Live kind verification passed for observe-only attach assessment and gated
 pod-kill attach fault rollback against an already-live translation-service
 deployment.
+
+## Security CI Follow-Up
+
+After opening PR #18, Semgrep flagged the Redis and RabbitMQ containers in
+`live-attach-manifests.yaml` for missing non-root and privilege-escalation
+security contexts.
+
+Fix and verification:
+
+- Added pod-level `runAsNonRoot`, `runAsUser`, `runAsGroup`, `fsGroup`, and
+  `seccompProfile` settings for Redis and RabbitMQ.
+- Added container-level `allowPrivilegeEscalation: false` and dropped all
+  Linux capabilities for Redis and RabbitMQ.
+- `semgrep scan --config auto
+  docs/internal/phases/phase-14-live-deployment-attach-mode/artifacts/live-attach-manifests.yaml`
+  completed with 0 findings.
+- Reapplied the hardened manifest to `kind-ampule-chamber`; `redis-master`,
+  `rabbitmq`, and `translation-service` all rolled out successfully.
+- Direct health smoke still returned `{"status":"ok"}`.
+- Post-hardening observe-only attach run
+  `.chamber/runs/chamber-translation-service-20260626015405/` passed 2,446 k6
+  checks with 0 failures, `runtime_mode=attach`, `cleanup_performed=false`, and
+  no apply/delete/scale commands in runtime evidence.

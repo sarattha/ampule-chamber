@@ -89,6 +89,13 @@ GitHub issue #17 as one coherent phase and one PR.
   verification updates. The gate ran format, lint, typecheck, 138 tests,
   coverage at 90%, scenario validation, release metadata validation for
   `1.3.0`, strict MkDocs build, and package build.
+- 2026-06-26: PR #18 security CI initially failed because Semgrep flagged
+  Redis and RabbitMQ containers in the live attach manifest for missing
+  non-root and privilege-escalation security contexts. Hardened those
+  containers, verified the manifest with local Semgrep at 0 findings, reapplied
+  it to kind, confirmed dependency and target rollouts, and reran observe-only
+  attach as `.chamber/runs/chamber-translation-service-20260626015405/` with
+  2,446/2,446 k6 checks passing.
 
 ## Decision Log
 
