@@ -1694,11 +1694,20 @@ def _run_attach_pod_kill(
     pods = [item for item in discovery.get("pods", []) if isinstance(item, dict)]
     if not pods:
         raise WorkflowError("attach pod_kill fault requires at least one discovered pod")
-    pod_name = str(fault.get("pod") or pods[0]["name"])
+    pod_by_name = {str(item["name"]): item for item in pods if item.get("name")}
+    requested_pod = fault.get("pod")
+    if requested_pod:
+        pod_name = str(requested_pod)
+        selected_pod = pod_by_name.get(pod_name)
+        if selected_pod is None:
+            raise WorkflowError(f"attach pod_kill fault target {pod_name!r} was not discovered")
+    else:
+        selected_pod = pods[0]
+        pod_name = str(selected_pod["name"])
     action: dict[str, object] = {
         "type": "pod_kill",
         "pod": pod_name,
-        "restore_snapshot": {"pod": pods[0]},
+        "restore_snapshot": {"pod": selected_pod},
     }
     completed = _run_kubernetes_recorded(
         runner,
@@ -1761,9 +1770,20 @@ def _run_attach_deployment_scale(
     ]
     if not deployments:
         raise WorkflowError("attach deployment_scale fault requires a discovered Deployment")
-    deployment = str(fault.get("workload") or deployments[0]["name"])
-    selected = next((item for item in deployments if item["name"] == deployment), deployments[0])
-    original = int(selected.get("replicas") or 1)
+    deployment_by_name = {str(item["name"]): item for item in deployments if item.get("name")}
+    requested_workload = fault.get("workload")
+    if requested_workload:
+        deployment = str(requested_workload)
+        selected = deployment_by_name.get(deployment)
+        if selected is None:
+            raise WorkflowError(
+                f"attach deployment_scale fault target {deployment!r} was not discovered"
+            )
+    else:
+        selected = deployments[0]
+        deployment = str(selected["name"])
+    replicas_value = selected.get("replicas")
+    original = 1 if replicas_value is None else int(replicas_value)
     replicas = int(fault["replicas"])
     action: dict[str, object] = {
         "type": "deployment_scale",

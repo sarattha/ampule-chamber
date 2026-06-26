@@ -893,6 +893,128 @@ class Phase13OneCommandAssessmentTests(unittest.TestCase):
             runner.commands,
         )
 
+    def test_kubernetes_attach_pod_kill_rejects_undiscovered_pod(self) -> None:
+        discovery = {
+            "namespace": {
+                "labels": {"chamber.ampule.dev/allow-faults": "true"},
+            },
+            "pods": [{"name": "translation-service-abc"}],
+            "workloads": [{"kind": "Deployment", "name": "translation-service", "replicas": 2}],
+        }
+        runner = _FakeKubernetesRunner()
+        commands: list[dict[str, object]] = []
+
+        with self.assertRaisesRegex(WorkflowError, "was not discovered"):
+            workflow._run_attach_faults(
+                ({"type": "pod_kill", "pod": "unrelated-pod"},),
+                discovery=discovery,
+                context="dev-cluster",
+                namespace="translation-test",
+                runner=runner,
+                commands=commands,
+            )
+
+        self.assertNotIn(
+            (
+                "kubectl",
+                "--context",
+                "dev-cluster",
+                "-n",
+                "translation-test",
+                "delete",
+                "pod",
+                "unrelated-pod",
+            ),
+            runner.commands,
+        )
+
+    def test_kubernetes_attach_deployment_scale_rejects_undiscovered_workload(
+        self,
+    ) -> None:
+        discovery = {
+            "namespace": {
+                "labels": {"chamber.ampule.dev/allow-faults": "true"},
+            },
+            "pods": [{"name": "translation-service-abc"}],
+            "workloads": [{"kind": "Deployment", "name": "translation-service", "replicas": 2}],
+        }
+        runner = _FakeKubernetesRunner()
+        commands: list[dict[str, object]] = []
+
+        with self.assertRaisesRegex(WorkflowError, "was not discovered"):
+            workflow._run_attach_faults(
+                (
+                    {
+                        "type": "deployment_scale",
+                        "workload": "unrelated-deployment",
+                        "replicas": 0,
+                    },
+                ),
+                discovery=discovery,
+                context="dev-cluster",
+                namespace="translation-test",
+                runner=runner,
+                commands=commands,
+            )
+
+        self.assertNotIn(
+            (
+                "kubectl",
+                "--context",
+                "dev-cluster",
+                "-n",
+                "translation-test",
+                "scale",
+                "deployment/unrelated-deployment",
+                "--replicas=0",
+            ),
+            runner.commands,
+        )
+
+    def test_kubernetes_attach_deployment_scale_preserves_zero_replica_rollback(
+        self,
+    ) -> None:
+        discovery = {
+            "namespace": {
+                "labels": {"chamber.ampule.dev/allow-faults": "true"},
+            },
+            "pods": [{"name": "translation-service-abc"}],
+            "workloads": [{"kind": "Deployment", "name": "translation-service", "replicas": 0}],
+        }
+        runner = _FakeKubernetesRunner()
+        commands: list[dict[str, object]] = []
+
+        evidence = workflow._run_attach_faults(
+            ({"type": "deployment_scale", "replicas": 1},),
+            discovery=discovery,
+            context="dev-cluster",
+            namespace="translation-test",
+            runner=runner,
+            commands=commands,
+        )
+        restored = workflow._restore_attach_faults(
+            evidence,
+            context="dev-cluster",
+            namespace="translation-test",
+            runner=runner,
+            commands=commands,
+        )
+
+        self.assertTrue(restored["verified"])
+        self.assertIn(
+            (
+                "kubectl",
+                "--context",
+                "dev-cluster",
+                "-n",
+                "translation-test",
+                "scale",
+                "deployment/translation-service",
+                "--replicas=0",
+            ),
+            runner.commands,
+        )
+
     def test_kubernetes_k6_script_supports_multiple_memory_journeys(self) -> None:
         script = workflow._k6_script_for_journeys(
             (

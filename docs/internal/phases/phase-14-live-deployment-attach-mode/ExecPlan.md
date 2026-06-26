@@ -70,6 +70,9 @@ GitHub issue #17 as one coherent phase and one PR.
 - 2026-06-26: Added attach-mode validation, preflight, planning, discovery,
   scoped evidence, Prometheus pod scoping, gated pod kill and Deployment scale
   faults, rollback evidence, report references, and focused tests.
+- 2026-06-26: Addressed PR review feedback by constraining explicit
+  attach-mode fault targets to discovered pods/Deployments and preserving
+  zero-replica Deployment rollback state.
 
 ## Acceptance Evidence
 
@@ -96,6 +99,13 @@ GitHub issue #17 as one coherent phase and one PR.
   it to kind, confirmed dependency and target rollouts, and reran observe-only
   attach as `.chamber/runs/chamber-translation-service-20260626015405/` with
   2,446/2,446 k6 checks passing.
+- 2026-06-26: `uv run python -m unittest tests/test_phase11_12_13_workflow.py`
+  passed 47 tests after adding regression coverage for undiscovered
+  `pod_kill` targets, undiscovered `deployment_scale` targets, and
+  zero-replica rollback preservation.
+- 2026-06-26: `make check` passed after PR review fixes. The gate ran format,
+  lint, typecheck, 141 tests, coverage at 90%, scenario validation, release
+  metadata validation for `1.3.0`, strict MkDocs build, and package build.
 
 ## Decision Log
 
