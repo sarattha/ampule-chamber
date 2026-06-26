@@ -1,6 +1,6 @@
 # Ampule Chamber
 
-Version: 1.2.0
+Version: 1.3.0
 
 Production-ready release for agent-driven reliability testing of Kubernetes
 services before production.
@@ -15,10 +15,9 @@ teams that need to answer:
 
 ## Release Status
 
-Ampule Chamber `1.2.0` adds richer Kubernetes assessment evidence, multi-journey
-k6 traffic execution, optional agent-role exclusion for reviewed configs, and
-memory-focused translation-service scenarios on top of the production-ready
-guided workflow.
+Ampule Chamber `1.3.0` adds Kubernetes attach mode for assessing already-live
+non-production deployments without redeploying or deleting externally owned
+resources, while preserving the deploy-oriented chamber namespace workflow.
 
 ## What It Tests
 
@@ -66,7 +65,7 @@ uv run ampule-chamber report --run .chamber/runs/<run-id>
 ```
 
 For a reviewed config and a non-production Kubernetes context, generic
-Kubernetes mode uses `kubectl` and chamber-owned namespaces:
+Kubernetes deploy mode uses `kubectl` and chamber-owned namespaces:
 
 ```bash
 uv run ampule-chamber assess \

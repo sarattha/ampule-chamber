@@ -2,6 +2,30 @@
 
 All notable changes to Ampule Chamber are documented in this file.
 
+## 1.3.0 - 2026-06-26
+
+### Added
+
+- Added Kubernetes attach mode for assessing existing non-production
+  deployments without applying manifests or deleting externally owned
+  namespaces/resources.
+- Added attach-mode preflight checks for explicit context and namespace safety,
+  existing namespace/workload/service verification, and read-focused RBAC.
+- Added attach discovery and pre-test state evidence for workloads, services,
+  endpoints, selectors, rollout status, pods, and ownership metadata.
+- Added scoped attach evidence collection for discovered pods, including pod
+  logs, pod events, pod status, and optional Prometheus pod-scoped metrics.
+- Added gated attach fault primitives for pod restart and Deployment scale with
+  allow-list enforcement and rollback evidence.
+- Added phase 14 planning docs for live deployment attach mode.
+
+### Changed
+
+- Kubernetes report generation now includes attach-specific evidence references,
+  lifecycle mode, cleanup notes, and rollback status when attach mode is used.
+- Public Kubernetes docs now cover deploy mode and attach mode separately,
+  including attach config, safety warnings, evidence files, and fault gating.
+
 ## 1.2.0 - 2026-06-25
 
 ### Added

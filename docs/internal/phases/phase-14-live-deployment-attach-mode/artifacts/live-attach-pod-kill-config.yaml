@@ -1,0 +1,40 @@
+apiVersion: chamber.ampule.dev/v1alpha1
+kind: ChamberConfig
+service:
+  name: translation-service
+  repo: .
+deployment:
+  manifests: []
+  workloads:
+    - name: translation-service
+      role: target
+      kind: Deployment
+  services:
+    - name: translation-service
+      port: 8887
+traffic:
+  entrypoint: translation-service
+  journeys:
+    - name: attach-health-after-pod-kill
+      method: GET
+      path: /health
+      expectedStatus: 200
+      stages:
+        - duration: 5s
+          targetVus: 1
+        - duration: 5s
+          targetVus: 0
+runtime:
+  provider: kubernetes
+  mode: attach
+  kubernetesContext: kind-ampule-chamber
+  namespace: chamber-external-translation-prep
+  cleanup: false
+  trafficAccess:
+    mode: port-forward
+    service: translation-service
+    servicePort: 8887
+  faults:
+    - type: pod_kill
+agents:
+  mode: "off"

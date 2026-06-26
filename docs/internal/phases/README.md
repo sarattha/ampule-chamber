@@ -29,6 +29,7 @@ agent.
 11. `phase-11-guided-assessment-workflow`
 12. `phase-12-full-agent-assessment-pipeline`
 13. `phase-13-one-command-assessment`
+14. `phase-14-live-deployment-attach-mode`
 
 Phases may overlap during exploration, but acceptance criteria should be closed
 in order so later work has stable contracts to build on.

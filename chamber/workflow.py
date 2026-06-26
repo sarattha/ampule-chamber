@@ -9,10 +9,11 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlencode, urlparse
 from urllib.request import urlopen
 
@@ -39,6 +40,9 @@ from chamber.agents.sdk import OpenAIAgentsSdkRunner
 from chamber.environment import preflight_to_evidence, run_kubernetes_preflight
 from chamber.environment.preflight import (
     CommandRunner as KubernetesCommandRunner,
+)
+from chamber.environment.preflight import (
+    run_kubernetes_attach_preflight,
 )
 from chamber.onboarding import (
     ExternalDependencyPolicy,
@@ -77,6 +81,9 @@ SECRET_NAME_FRAGMENTS = ("SECRET", "TOKEN", "PASSWORD", "API_KEY", "KEY")
 PRODUCTION_CONTEXT_FRAGMENTS = ("prod", "production", "aks-prod", "prd", "live")
 RUNTIME_PROVIDERS = {"local", "kind", "kubernetes"}
 TRAFFIC_ACCESS_MODES = {"port-forward", "endpoint"}
+RUNTIME_MODES = {"deploy", "attach"}
+ATTACH_FAULT_TYPES = {"pod_kill", "deployment_scale"}
+ATTACH_ALLOW_FAULTS_KEY = "chamber.ampule.dev/allow-faults"
 AGENT_DETAIL_LIMIT = 1200
 AGENT_DETAIL_TOTAL_LIMIT = 12000
 _KUBERNETES_API_GROUPS = {
@@ -280,13 +287,34 @@ def validate_config(
     repo = _non_empty(service.get("repo"), f"{source}.service.repo")
     if require_repo and not Path(repo).exists():
         raise WorkflowError(f"{source}.service.repo does not exist: {repo}")
+    runtime = _mapping(config.get("runtime", {}), f"{source}.runtime")
+    runtime_mode = str(runtime.get("mode", "deploy"))
     deployment = _mapping(config.get("deployment"), f"{source}.deployment")
     manifests = _string_list(deployment.get("manifests"), f"{source}.deployment.manifests")
-    if not manifests:
+    if runtime_mode != "attach" and not manifests:
         raise WorkflowError(f"{source}.deployment.manifests must not be empty")
     workloads = _list(deployment.get("workloads", []), f"{source}.deployment.workloads")
     if not workloads:
         raise WorkflowError(f"{source}.deployment.workloads must not be empty")
+    if runtime_mode == "attach":
+        services = _list(deployment.get("services", []), f"{source}.deployment.services")
+        if not services:
+            raise WorkflowError(f"{source}.deployment.services must not be empty in attach mode")
+        for index, service_item in enumerate(services):
+            service_doc = _mapping(service_item, f"{source}.deployment.services[{index}]")
+            _non_empty(service_doc.get("name"), f"{source}.deployment.services[{index}].name")
+            port = service_doc.get("port")
+            if not isinstance(port, int) or port <= 0:
+                raise WorkflowError(
+                    f"{source}.deployment.services[{index}].port must be a positive integer"
+                )
+    for index, workload_item in enumerate(workloads):
+        workload_doc = _mapping(workload_item, f"{source}.deployment.workloads[{index}]")
+        _non_empty(workload_doc.get("name"), f"{source}.deployment.workloads[{index}].name")
+        _non_empty(
+            workload_doc.get("kind", "Deployment"),
+            f"{source}.deployment.workloads[{index}].kind",
+        )
     traffic = _mapping(config.get("traffic"), f"{source}.traffic")
     journeys = _list(traffic.get("journeys", []), f"{source}.traffic.journeys")
     if not journeys:
@@ -306,7 +334,6 @@ def validate_config(
         _normalized_agent_names(_optional_string_tuple(agents, "exclude")),
         source=f"{source}.agents.exclude",
     )
-    runtime = _mapping(config.get("runtime", {}), f"{source}.runtime")
     _validate_runtime(runtime, source=f"{source}.runtime")
 
 
@@ -368,6 +395,36 @@ def plan_config(config_path: Path, *, run_dir: Path | None = None) -> Path:
     config_copy = target_run_dir / "chamber.yaml"
     save_config(config, config_copy)
     _ensure_run_subdirs(target_run_dir)
+    runtime = _mapping(config.get("runtime", {}), "runtime")
+    if (
+        str(runtime.get("provider", "local")) == "kubernetes"
+        and str(runtime.get("mode", "deploy")) == "attach"
+    ):
+        deployment = _mapping(config["deployment"], "deployment")
+        namespace = str(runtime["namespace"])
+        runtime_plan = _attach_runtime_plan(config, namespace=namespace)
+        _write_attach_plan(
+            target_run_dir,
+            config=config,
+            namespace=namespace,
+            workloads=tuple(_attach_workload(item) for item in deployment["workloads"]),
+            services=tuple(_attach_service(item) for item in deployment["services"]),
+            runtime=runtime_plan,
+        )
+        _write_metadata(
+            target_run_dir,
+            {
+                "run_id": target_run_dir.name,
+                "stage": "planned",
+                "config": str(config_copy),
+                "cleanup_performed": False,
+                "agent_mode": _agent_mode(config, None),
+                "agent_exclude": _agent_exclusions(config, ()),
+                "runtime": runtime_plan,
+            },
+        )
+        _write_agents(target_run_dir, config, evidence_ids=("plan",), stage="plan")
+        return target_run_dir
     plan = build_onboarding_plan(config_to_onboarding_spec(config), run_id=target_run_dir.name)
     runtime_plan = _runtime_plan(config, plan)
     _write_plan(target_run_dir, plan, runtime=runtime_plan)
@@ -476,6 +533,16 @@ def _assess_kubernetes_config(
     runtime = _mapping(config.get("runtime", {}), "runtime")
     if str(runtime.get("provider", "local")) != "kubernetes":
         raise WorkflowError("assess --mode kubernetes requires runtime.provider: kubernetes")
+    if str(runtime.get("mode", "deploy")) == "attach":
+        return _assess_kubernetes_attach_config(
+            config,
+            config_path=config_path,
+            agents_mode=agents_mode,
+            agents_exclude=agents_exclude,
+            context=context,
+            prometheus_url=prometheus_url,
+            runner=runner,
+        )
     selected_context = context or str(runtime["kubernetesContext"])
     selected_prometheus = prometheus_url or runtime.get("prometheusUrl")
     init_workspace()
@@ -598,6 +665,196 @@ def _assess_kubernetes_config(
     return run_dir
 
 
+def _assess_kubernetes_attach_config(
+    config: dict[str, Any],
+    *,
+    config_path: Path,
+    agents_mode: str | None,
+    agents_exclude: tuple[str, ...],
+    context: str | None,
+    prometheus_url: str | None,
+    runner: KubernetesCommandRunner,
+) -> Path:
+    """Run an in-place assessment against existing Kubernetes resources."""
+
+    runtime = _mapping(config["runtime"], "runtime")
+    deployment = _mapping(config["deployment"], "deployment")
+    selected_context = context or str(runtime["kubernetesContext"])
+    namespace = str(runtime["namespace"])
+    selected_prometheus = prometheus_url or runtime.get("prometheusUrl")
+    init_workspace()
+    run_dir = _new_run_dir(str(config["service"]["name"]))
+    run_dir.mkdir(parents=True, exist_ok=True)
+    config_copy = run_dir / "chamber.yaml"
+    save_config(config, config_copy)
+    _ensure_run_subdirs(run_dir)
+
+    workloads = tuple(_attach_workload(item) for item in deployment["workloads"])
+    services = tuple(_attach_service(item) for item in deployment["services"])
+    runtime_plan = _attach_runtime_plan(config, namespace=namespace)
+    runtime_plan["kubernetes_context"] = selected_context
+    if selected_prometheus:
+        runtime_plan["prometheus_url"] = str(selected_prometheus)
+    _write_attach_plan(
+        run_dir,
+        config=config,
+        namespace=namespace,
+        workloads=workloads,
+        services=services,
+        runtime=runtime_plan,
+    )
+    _write_agents(run_dir, config, evidence_ids=("plan",), stage="plan")
+
+    preflight = run_kubernetes_attach_preflight(
+        context=selected_context,
+        namespace=namespace,
+        workloads=tuple((item["kind"], item["name"]) for item in workloads),
+        services=tuple(item["name"] for item in services),
+        fault_types=tuple(
+            str(_mapping(item, "runtime.faults[]").get("type"))
+            for item in runtime.get("faults", ())
+        ),
+        runner=runner,
+    )
+    _write_json(run_dir / "evidence/preflight.json", preflight_to_evidence(preflight))
+    if not preflight.ready:
+        _write_metadata(
+            run_dir,
+            {
+                "run_id": run_dir.name,
+                "stage": "preflight_failed",
+                "mode": "kubernetes",
+                "runtime_mode": "attach",
+                "config": str(config_copy),
+                "runtime": runtime_plan,
+                "provider": "kubernetes",
+                "context": selected_context,
+                "namespace": namespace,
+                "cleanup_performed": False,
+                "cleanup_notes": [
+                    "Attach preflight failed before traffic, faults, or cleanup mutations."
+                ],
+                "preflight": preflight_to_evidence(preflight),
+                "agent_mode": _agent_mode(config, agents_mode),
+                "agent_exclude": _agent_exclusions(config, agents_exclude),
+            },
+        )
+        raise WorkflowError("Kubernetes attach preflight failed: " + "; ".join(preflight.blockers))
+
+    commands: list[dict[str, object]] = []
+    traffic_result: dict[str, object] = {
+        "success": False,
+        "command": [],
+        "exit_status": None,
+        "stdout": "",
+        "stderr": "",
+        "summary_path": "",
+    }
+    rollback_evidence: dict[str, object] = {"faults_requested": False, "actions": []}
+    success = False
+    failure: Exception | None = None
+    discovery: dict[str, Any] = {}
+    try:
+        discovery = _discover_attach_target(
+            context=selected_context,
+            namespace=namespace,
+            workloads=workloads,
+            services=services,
+            runner=runner,
+            commands=commands,
+        )
+        _write_json(run_dir / "evidence/attach-discovery.json", discovery)
+        _write_json(run_dir / "evidence/pre-test-state.json", discovery)
+        faults = tuple(_mapping(item, "runtime.faults[]") for item in runtime.get("faults", ()))
+        if faults:
+            rollback_evidence = _run_attach_faults(
+                faults,
+                discovery=discovery,
+                context=selected_context,
+                namespace=namespace,
+                runner=runner,
+                commands=commands,
+            )
+        traffic_result = _execute_kubernetes_traffic(
+            config=config,
+            run_dir=run_dir,
+            context=selected_context,
+            namespace=namespace,
+            runner=runner,
+        )
+        _collect_attach_kubernetes_evidence(
+            discovery,
+            context=selected_context,
+            namespace=namespace,
+            runner=runner,
+            commands=commands,
+        )
+        if selected_prometheus:
+            _collect_prometheus_memory_evidence(
+                run_dir,
+                prometheus_url=str(selected_prometheus),
+                namespace=namespace,
+                pod_names=tuple(str(item["name"]) for item in discovery.get("pods", ())),
+            )
+        success = bool(traffic_result.get("success"))
+    except Exception as exc:
+        failure = exc
+    finally:
+        if rollback_evidence.get("pending_restore"):
+            rollback_evidence = _restore_attach_faults(
+                rollback_evidence,
+                context=selected_context,
+                namespace=namespace,
+                runner=runner,
+                commands=commands,
+            )
+
+    _write_json(run_dir / "evidence/rollback.json", rollback_evidence)
+    _write_json(run_dir / "evidence/kubernetes-commands.json", {"commands": commands})
+    _write_json(run_dir / "findings.json", [])
+    rollback_verified = bool(rollback_evidence.get("verified", True))
+    stage = "assessed" if failure is None and rollback_verified else "failed"
+    metadata = {
+        "run_id": run_dir.name,
+        "stage": stage,
+        "mode": "kubernetes",
+        "runtime_mode": "attach",
+        "config": str(config_copy),
+        "runtime": runtime_plan,
+        "provider": "kubernetes",
+        "context": selected_context,
+        "namespace": namespace,
+        "traffic_result": traffic_result,
+        "cleanup_performed": False,
+        "cleanup_notes": [
+            "Attach mode did not delete the target namespace or externally deployed resources.",
+            "Port-forward setup was stopped after traffic execution.",
+        ],
+        "rollback": rollback_evidence,
+        "preflight": preflight_to_evidence(preflight),
+        "success": success and rollback_verified,
+        "agent_mode": _agent_mode(config, agents_mode),
+        "agent_exclude": _agent_exclusions(config, agents_exclude),
+    }
+    if failure is not None:
+        metadata["error"] = str(failure)
+    if not rollback_verified:
+        metadata["error"] = "attach fault rollback could not be verified"
+    _write_metadata(run_dir, metadata)
+    _write_agents(
+        run_dir,
+        config,
+        evidence_ids=_kubernetes_assess_evidence_ids(traffic_result, run_dir=run_dir),
+        stage="assess",
+    )
+    render_report_from_run(run_dir)
+    if failure is not None:
+        raise failure
+    if not rollback_verified:
+        raise WorkflowError("attach fault rollback could not be verified")
+    return run_dir
+
+
 def render_report_from_run(run_dir: Path) -> Path:
     """Render `report.md` from a standard run directory."""
 
@@ -656,6 +913,40 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _write_attach_plan(
+    run_dir: Path,
+    *,
+    config: dict[str, Any],
+    namespace: str,
+    workloads: tuple[dict[str, Any], ...],
+    services: tuple[dict[str, Any], ...],
+    runtime: dict[str, Any],
+) -> None:
+    service = _mapping(config["service"], "service")
+    traffic = _mapping(config["traffic"], "traffic")
+    _write_json(
+        run_dir / "plan.json",
+        {
+            "service_name": str(service["name"]),
+            "namespace": namespace,
+            "runtime": runtime,
+            "workloads": workloads,
+            "services": services,
+            "traffic_journey": _jsonable(_traffic_journeys(traffic)),
+            "manifests": [],
+            "redacted_config": [],
+            "external_dependencies": [],
+            "limitations": [
+                "Attach mode assesses externally deployed resources in place.",
+                "Attach mode does not adapt, apply, delete, or own target manifests.",
+            ],
+        },
+    )
+    adapted_dir = run_dir / "adapted-manifests"
+    shutil.rmtree(adapted_dir, ignore_errors=True)
+    adapted_dir.mkdir(parents=True, exist_ok=True)
+
+
 def _write_plan(run_dir: Path, plan: Any, *, runtime: dict[str, Any] | None = None) -> None:
     payload = _jsonable(plan)
     if runtime is not None:
@@ -671,6 +962,225 @@ def _write_plan(run_dir: Path, plan: Any, *, runtime: dict[str, Any] | None = No
             yaml.safe_dump(manifest, sort_keys=False),
             encoding="utf-8",
         )
+
+
+def _attach_workload(item: Any) -> dict[str, Any]:
+    workload = _mapping(item, "deployment.workloads[]")
+    return {
+        "name": _non_empty(workload.get("name"), "deployment.workloads[].name"),
+        "kind": str(workload.get("kind", "Deployment")),
+        "role": str(workload.get("role", "target")),
+    }
+
+
+def _attach_service(item: Any) -> dict[str, Any]:
+    service = _mapping(item, "deployment.services[]")
+    return {
+        "name": _non_empty(service.get("name"), "deployment.services[].name"),
+        "port": int(service["port"]),
+    }
+
+
+def _discover_attach_target(
+    *,
+    context: str,
+    namespace: str,
+    workloads: tuple[dict[str, Any], ...],
+    services: tuple[dict[str, Any], ...],
+    runner: KubernetesCommandRunner,
+    commands: list[dict[str, object]],
+) -> dict[str, Any]:
+    namespace_doc = _kubectl_json(
+        runner,
+        ("kubectl", "--context", context, "get", "namespace", namespace, "-o", "json"),
+        commands,
+        "read target namespace",
+    )
+    discovered_workloads = []
+    selectors: list[dict[str, str]] = []
+    for workload in workloads:
+        kind = str(workload["kind"])
+        name = str(workload["name"])
+        resource = f"{kind.lower()}/{name}"
+        workload_doc = _kubectl_json(
+            runner,
+            ("kubectl", "--context", context, "-n", namespace, "get", resource, "-o", "json"),
+            commands,
+            f"read {resource}",
+        )
+        selector = _match_labels_selector(workload_doc)
+        if selector:
+            selectors.append(selector)
+        if kind == "Deployment":
+            _run_kubernetes_recorded(
+                runner,
+                (
+                    "kubectl",
+                    "--context",
+                    context,
+                    "-n",
+                    namespace,
+                    "rollout",
+                    "status",
+                    f"deployment/{name}",
+                    "--timeout=180s",
+                ),
+                commands,
+            )
+        discovered_workloads.append(
+            {
+                "kind": kind,
+                "name": name,
+                "role": workload.get("role", "target"),
+                "selector": selector,
+                "replicas": workload_doc.get("spec", {}).get("replicas"),
+                "labels": workload_doc.get("metadata", {}).get("labels", {}),
+                "annotations": workload_doc.get("metadata", {}).get("annotations", {}),
+                "owner_references": workload_doc.get("metadata", {}).get("ownerReferences", []),
+            }
+        )
+    discovered_services = []
+    for service in services:
+        name = str(service["name"])
+        service_doc = _kubectl_json(
+            runner,
+            (
+                "kubectl",
+                "--context",
+                context,
+                "-n",
+                namespace,
+                "get",
+                "service",
+                name,
+                "-o",
+                "json",
+            ),
+            commands,
+            f"read service/{name}",
+        )
+        endpoints_doc = _kubectl_json(
+            runner,
+            (
+                "kubectl",
+                "--context",
+                context,
+                "-n",
+                namespace,
+                "get",
+                "endpoints",
+                name,
+                "-o",
+                "json",
+            ),
+            commands,
+            f"read endpoints/{name}",
+        )
+        service_selector = service_doc.get("spec", {}).get("selector", {})
+        if isinstance(service_selector, dict) and service_selector:
+            selectors.append({str(key): str(value) for key, value in service_selector.items()})
+        discovered_services.append(
+            {
+                "name": name,
+                "port": service["port"],
+                "selector": service_selector if isinstance(service_selector, dict) else {},
+                "ports": service_doc.get("spec", {}).get("ports", []),
+                "endpoints": endpoints_doc.get("subsets", []),
+            }
+        )
+    pods = _discover_attach_pods(
+        context=context,
+        namespace=namespace,
+        selectors=tuple(selectors),
+        runner=runner,
+        commands=commands,
+    )
+    return {
+        "mode": "attach",
+        "namespace": {
+            "name": namespace,
+            "labels": namespace_doc.get("metadata", {}).get("labels", {}),
+            "annotations": namespace_doc.get("metadata", {}).get("annotations", {}),
+        },
+        "workloads": discovered_workloads,
+        "services": discovered_services,
+        "pods": pods,
+    }
+
+
+def _discover_attach_pods(
+    *,
+    context: str,
+    namespace: str,
+    selectors: tuple[dict[str, str], ...],
+    runner: KubernetesCommandRunner,
+    commands: list[dict[str, object]],
+) -> list[dict[str, Any]]:
+    pods_by_name: dict[str, dict[str, Any]] = {}
+    for selector in selectors:
+        selector_text = _selector_text(selector)
+        if not selector_text:
+            continue
+        payload = _kubectl_json(
+            runner,
+            (
+                "kubectl",
+                "--context",
+                context,
+                "-n",
+                namespace,
+                "get",
+                "pods",
+                "-l",
+                selector_text,
+                "-o",
+                "json",
+            ),
+            commands,
+            f"read pods matching {selector_text}",
+        )
+        for pod in payload.get("items", []):
+            if not isinstance(pod, dict):
+                continue
+            name = pod.get("metadata", {}).get("name")
+            if not name:
+                continue
+            pods_by_name[str(name)] = {
+                "name": str(name),
+                "phase": pod.get("status", {}).get("phase"),
+                "labels": pod.get("metadata", {}).get("labels", {}),
+                "owner_references": pod.get("metadata", {}).get("ownerReferences", []),
+                "container_statuses": pod.get("status", {}).get("containerStatuses", []),
+            }
+    return list(pods_by_name.values())
+
+
+def _kubectl_json(
+    runner: KubernetesCommandRunner,
+    command: tuple[str, ...],
+    commands: list[dict[str, object]],
+    description: str,
+) -> dict[str, Any]:
+    completed = _run_kubernetes_recorded(runner, command, commands)
+    _require_command_success(completed, description)
+    try:
+        payload = json.loads(completed.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        raise WorkflowError(f"failed to parse {description} JSON") from exc
+    if not isinstance(payload, dict):
+        raise WorkflowError(f"{description} JSON must be an object")
+    return payload
+
+
+def _match_labels_selector(resource: dict[str, Any]) -> dict[str, str]:
+    selector = resource.get("spec", {}).get("selector", {}).get("matchLabels", {})
+    if not isinstance(selector, dict):
+        return {}
+    return {str(key): str(value) for key, value in selector.items()}
+
+
+def _selector_text(selector: dict[str, str]) -> str:
+    return ",".join(f"{key}={value}" for key, value in sorted(selector.items()))
 
 
 def _apply_kubernetes_plan(
@@ -773,6 +1283,7 @@ def _execute_kubernetes_traffic(
                 f"{local_port}:{service_port}",
             )
         )
+        time.sleep(2)
     script_path.write_text(_k6_script_for_journeys(journeys, base_url=base_url), encoding="utf-8")
     try:
         completed = runner.run(
@@ -979,21 +1490,349 @@ def _collect_kubernetes_command_evidence(
         )
 
 
+def _collect_attach_kubernetes_evidence(
+    discovery: dict[str, Any],
+    *,
+    context: str,
+    namespace: str,
+    runner: KubernetesCommandRunner,
+    commands: list[dict[str, object]],
+) -> None:
+    pod_names = [str(item["name"]) for item in discovery.get("pods", []) if item.get("name")]
+    for pod_name in pod_names:
+        _run_kubernetes_recorded(
+            runner,
+            (
+                "kubectl",
+                "--context",
+                context,
+                "-n",
+                namespace,
+                "get",
+                "pod",
+                pod_name,
+                "-o",
+                "json",
+            ),
+            commands,
+        )
+        _run_kubernetes_recorded(
+            runner,
+            (
+                "kubectl",
+                "--context",
+                context,
+                "-n",
+                namespace,
+                "get",
+                "events",
+                "--field-selector",
+                f"involvedObject.name={pod_name}",
+                "-o",
+                "json",
+            ),
+            commands,
+        )
+        _run_kubernetes_recorded(
+            runner,
+            (
+                "kubectl",
+                "--context",
+                context,
+                "-n",
+                namespace,
+                "logs",
+                f"pod/{pod_name}",
+                "--all-containers=true",
+                "--tail=200",
+            ),
+            commands,
+        )
+    if pod_names:
+        _run_kubernetes_recorded(
+            runner,
+            (
+                "kubectl",
+                "--context",
+                context,
+                "-n",
+                namespace,
+                "top",
+                "pods",
+                *pod_names,
+                "--containers",
+            ),
+            commands,
+        )
+
+
+def _run_attach_faults(
+    faults: tuple[dict[str, Any], ...],
+    *,
+    discovery: dict[str, Any],
+    context: str,
+    namespace: str,
+    runner: KubernetesCommandRunner,
+    commands: list[dict[str, object]],
+) -> dict[str, object]:
+    if not _attach_faults_allowed(discovery):
+        raise WorkflowError(
+            "attach faults require chamber.ampule.dev/allow-faults=true on the namespace "
+            "or selected workload"
+        )
+    evidence: dict[str, object] = {
+        "faults_requested": True,
+        "verified": True,
+        "pending_restore": [],
+        "actions": [],
+    }
+    for fault in faults:
+        fault_type = str(fault["type"])
+        if fault_type == "pod_kill":
+            action = _run_attach_pod_kill(
+                fault,
+                discovery=discovery,
+                context=context,
+                namespace=namespace,
+                runner=runner,
+                commands=commands,
+            )
+        elif fault_type == "deployment_scale":
+            action = _run_attach_deployment_scale(
+                fault,
+                discovery=discovery,
+                context=context,
+                namespace=namespace,
+                runner=runner,
+                commands=commands,
+            )
+            pending = evidence["pending_restore"]
+            if isinstance(pending, list):
+                pending.append(action)
+        else:  # pragma: no cover - validate_config rejects this first
+            raise WorkflowError(f"unsupported attach fault type {fault_type!r}")
+        actions = evidence["actions"]
+        if isinstance(actions, list):
+            actions.append(action)
+    return evidence
+
+
+def _restore_attach_faults(
+    evidence: dict[str, object],
+    *,
+    context: str,
+    namespace: str,
+    runner: KubernetesCommandRunner,
+    commands: list[dict[str, object]],
+) -> dict[str, object]:
+    verified = True
+    pending = evidence.get("pending_restore")
+    if not isinstance(pending, list):
+        evidence["verified"] = False
+        return evidence
+    for action in pending:
+        if not isinstance(action, dict) or action.get("type") != "deployment_scale":
+            verified = False
+            continue
+        action_payload = cast(dict[str, Any], action)
+        deployment = str(action_payload.get("deployment", ""))
+        replicas_value = action_payload.get("original_replicas", 1)
+        replicas = replicas_value if isinstance(replicas_value, int) else int(str(replicas_value))
+        completed = _run_kubernetes_recorded(
+            runner,
+            (
+                "kubectl",
+                "--context",
+                context,
+                "-n",
+                namespace,
+                "scale",
+                f"deployment/{deployment}",
+                f"--replicas={replicas}",
+            ),
+            commands,
+        )
+        if completed.returncode != 0:
+            verified = False
+            action_payload["manual_remediation"] = (
+                f"kubectl --context {context} -n {namespace} scale "
+                f"deployment/{deployment} --replicas={replicas}"
+            )
+            continue
+        status = _run_kubernetes_recorded(
+            runner,
+            (
+                "kubectl",
+                "--context",
+                context,
+                "-n",
+                namespace,
+                "rollout",
+                "status",
+                f"deployment/{deployment}",
+                "--timeout=180s",
+            ),
+            commands,
+        )
+        if status.returncode != 0:
+            verified = False
+        action_payload["restored"] = status.returncode == 0
+    evidence["verified"] = verified
+    evidence["pending_restore"] = []
+    return evidence
+
+
+def _run_attach_pod_kill(
+    fault: dict[str, Any],
+    *,
+    discovery: dict[str, Any],
+    context: str,
+    namespace: str,
+    runner: KubernetesCommandRunner,
+    commands: list[dict[str, object]],
+) -> dict[str, object]:
+    pods = [item for item in discovery.get("pods", []) if isinstance(item, dict)]
+    if not pods:
+        raise WorkflowError("attach pod_kill fault requires at least one discovered pod")
+    pod_name = str(fault.get("pod") or pods[0]["name"])
+    action: dict[str, object] = {
+        "type": "pod_kill",
+        "pod": pod_name,
+        "restore_snapshot": {"pod": pods[0]},
+    }
+    completed = _run_kubernetes_recorded(
+        runner,
+        ("kubectl", "--context", context, "-n", namespace, "delete", "pod", pod_name),
+        commands,
+    )
+    _require_command_success(completed, f"delete pod/{pod_name} for attach fault")
+    for workload in discovery.get("workloads", []):
+        if isinstance(workload, dict) and workload.get("kind") == "Deployment":
+            status = _run_kubernetes_recorded(
+                runner,
+                (
+                    "kubectl",
+                    "--context",
+                    context,
+                    "-n",
+                    namespace,
+                    "rollout",
+                    "status",
+                    f"deployment/{workload['name']}",
+                    "--timeout=180s",
+                ),
+                commands,
+            )
+            wait = _run_kubernetes_recorded(
+                runner,
+                (
+                    "kubectl",
+                    "--context",
+                    context,
+                    "-n",
+                    namespace,
+                    "wait",
+                    "--for=condition=available",
+                    f"deployment/{workload['name']}",
+                    "--timeout=180s",
+                ),
+                commands,
+            )
+            action["restored"] = status.returncode == 0 and wait.returncode == 0
+            break
+    if not action.get("restored"):
+        raise WorkflowError("pod_kill rollback could not verify deployment availability")
+    return action
+
+
+def _run_attach_deployment_scale(
+    fault: dict[str, Any],
+    *,
+    discovery: dict[str, Any],
+    context: str,
+    namespace: str,
+    runner: KubernetesCommandRunner,
+    commands: list[dict[str, object]],
+) -> dict[str, object]:
+    deployments = [
+        item
+        for item in discovery.get("workloads", [])
+        if isinstance(item, dict) and item.get("kind") == "Deployment"
+    ]
+    if not deployments:
+        raise WorkflowError("attach deployment_scale fault requires a discovered Deployment")
+    deployment = str(fault.get("workload") or deployments[0]["name"])
+    selected = next((item for item in deployments if item["name"] == deployment), deployments[0])
+    original = int(selected.get("replicas") or 1)
+    replicas = int(fault["replicas"])
+    action: dict[str, object] = {
+        "type": "deployment_scale",
+        "deployment": deployment,
+        "original_replicas": original,
+        "fault_replicas": replicas,
+        "restored": False,
+    }
+    completed = _run_kubernetes_recorded(
+        runner,
+        (
+            "kubectl",
+            "--context",
+            context,
+            "-n",
+            namespace,
+            "scale",
+            f"deployment/{deployment}",
+            f"--replicas={replicas}",
+        ),
+        commands,
+    )
+    _require_command_success(completed, f"scale deployment/{deployment} for attach fault")
+    return action
+
+
+def _attach_faults_allowed(discovery: dict[str, Any]) -> bool:
+    namespace = discovery.get("namespace", {})
+    if isinstance(namespace, dict) and _metadata_allows_faults(namespace):
+        return True
+    for workload in discovery.get("workloads", []):
+        if isinstance(workload, dict) and _metadata_allows_faults(workload):
+            return True
+    return False
+
+
+def _metadata_allows_faults(metadata: dict[str, Any]) -> bool:
+    labels = metadata.get("labels", {})
+    annotations = metadata.get("annotations", {})
+    return _allows_faults(labels) or _allows_faults(annotations)
+
+
+def _allows_faults(values: Any) -> bool:
+    return (
+        isinstance(values, dict) and str(values.get(ATTACH_ALLOW_FAULTS_KEY, "")).lower() == "true"
+    )
+
+
 def _collect_prometheus_memory_evidence(
     run_dir: Path,
     *,
     prometheus_url: str,
     namespace: str,
+    pod_names: tuple[str, ...] = (),
 ) -> None:
+    pod_filter = ""
+    if pod_names:
+        escaped = "|".join(re.escape(name) for name in pod_names)
+        pod_filter = f',pod=~"{escaped}"'
     evidence = {
         "prometheus_url": prometheus_url,
         "namespace": namespace,
+        "pod_names": list(pod_names),
         "queries": {
             "container_memory_working_set_bytes": _prometheus_query(
                 prometheus_url,
                 (
                     "container_memory_working_set_bytes{"
-                    f'namespace="{namespace}",container!="",pod!=""'
+                    f'namespace="{namespace}",container!="",pod!=""{pod_filter}'
                     "}"
                 ),
             ),
@@ -1001,13 +1840,17 @@ def _collect_prometheus_memory_evidence(
                 prometheus_url,
                 (
                     "container_cpu_usage_seconds_total{"
-                    f'namespace="{namespace}",container!="",pod!=""'
+                    f'namespace="{namespace}",container!="",pod!=""{pod_filter}'
                     "}"
                 ),
             ),
             "kube_pod_container_status_restarts_total": _prometheus_query(
                 prometheus_url,
-                f'kube_pod_container_status_restarts_total{{namespace="{namespace}"}}',
+                (
+                    "kube_pod_container_status_restarts_total{"
+                    f'namespace="{namespace}"{pod_filter}'
+                    "}"
+                ),
             ),
         },
     }
@@ -1183,6 +2026,12 @@ def _kubernetes_assess_evidence_ids(
     run_dir: Path | None = None,
 ) -> tuple[str, ...]:
     evidence_ids = ["plan", "preflight", "kubernetes-commands"]
+    if run_dir is not None and (run_dir / "evidence/attach-discovery.json").exists():
+        evidence_ids.append("attach-discovery")
+    if run_dir is not None and (run_dir / "evidence/pre-test-state.json").exists():
+        evidence_ids.append("pre-test-state")
+    if run_dir is not None and (run_dir / "evidence/rollback.json").exists():
+        evidence_ids.append("rollback")
     if traffic_result.get("summary_path"):
         evidence_ids.append("k6-summary")
     if run_dir is not None and (run_dir / "evidence/prometheus-memory.json").exists():
@@ -1217,6 +2066,11 @@ def _agent_evidence_summaries(run_dir: Path, evidence_ids: tuple[str, ...]) -> t
                 summaries.append(f"traffic exit status: {traffic['exit_status']}")
         if "cleanup_performed" in metadata:
             summaries.append(f"cleanup performed: {bool(metadata['cleanup_performed'])}")
+        if metadata.get("runtime_mode"):
+            summaries.append(f"runtime mode: {metadata['runtime_mode']}")
+        rollback = metadata.get("rollback")
+        if isinstance(rollback, dict) and rollback.get("faults_requested"):
+            summaries.append(f"rollback verified: {bool(rollback.get('verified'))}")
     if "preflight" in evidence_ids:
         preflight_path = run_dir / "evidence/preflight.json"
         if preflight_path.exists():
@@ -1292,6 +2146,14 @@ def _agent_evidence_details(run_dir: Path, evidence_ids: tuple[str, ...]) -> tup
         path = run_dir / "evidence/kubernetes-commands.json"
         if path.exists():
             details.extend(_kubernetes_command_agent_details(_read_json(path)))
+    if "attach-discovery" in evidence_ids:
+        path = run_dir / "evidence/attach-discovery.json"
+        if path.exists():
+            details.extend(_attach_discovery_agent_details(_read_json(path)))
+    if "rollback" in evidence_ids:
+        path = run_dir / "evidence/rollback.json"
+        if path.exists():
+            details.append(_agent_detail("rollback", _read_json(path)))
     if "k6-summary" in evidence_ids:
         path = run_dir / "evidence/k6-summary.json"
         if path.exists():
@@ -1413,6 +2275,47 @@ def _kubernetes_command_agent_details(payload: dict[str, Any]) -> list[str]:
                 "command_count": len(commands),
                 "failed_command_count": len(failed),
                 "selected_commands": compact[:10],
+            },
+        )
+    ]
+
+
+def _attach_discovery_agent_details(payload: dict[str, Any]) -> list[str]:
+    workloads = [
+        {
+            "kind": item.get("kind"),
+            "name": item.get("name"),
+            "role": item.get("role"),
+            "selector": item.get("selector"),
+            "replicas": item.get("replicas"),
+        }
+        for item in payload.get("workloads", [])
+        if isinstance(item, dict)
+    ]
+    services = [
+        {
+            "name": item.get("name"),
+            "port": item.get("port"),
+            "selector": item.get("selector"),
+        }
+        for item in payload.get("services", [])
+        if isinstance(item, dict)
+    ]
+    pods = [
+        {"name": item.get("name"), "phase": item.get("phase")}
+        for item in payload.get("pods", [])
+        if isinstance(item, dict)
+    ]
+    return [
+        _agent_detail(
+            "attach-discovery",
+            {
+                "namespace": payload.get("namespace", {}).get("name")
+                if isinstance(payload.get("namespace"), dict)
+                else None,
+                "workloads": workloads,
+                "services": services,
+                "pods": pods,
             },
         )
     ]
@@ -1690,6 +2593,39 @@ def _report_input(
                 str(run_dir / "evidence/kubernetes-commands.json"),
             )
         )
+    if (run_dir / "evidence/attach-discovery.json").exists():
+        evidence.append(
+            EvidenceReference(
+                "attach-discovery",
+                "kubectl",
+                "attach_target_discovery",
+                str(metadata.get("namespace", plan.get("namespace", ""))),
+                "from-file",
+                str(run_dir / "evidence/attach-discovery.json"),
+            )
+        )
+    if (run_dir / "evidence/pre-test-state.json").exists():
+        evidence.append(
+            EvidenceReference(
+                "pre-test-state",
+                "kubectl",
+                "attach_pre_test_state",
+                str(metadata.get("namespace", plan.get("namespace", ""))),
+                "from-file",
+                str(run_dir / "evidence/pre-test-state.json"),
+            )
+        )
+    if (run_dir / "evidence/rollback.json").exists():
+        evidence.append(
+            EvidenceReference(
+                "rollback",
+                "kubectl",
+                "attach_fault_rollback",
+                str(metadata.get("namespace", plan.get("namespace", ""))),
+                "from-file",
+                str(run_dir / "evidence/rollback.json"),
+            )
+        )
     traffic_result = _mapping(metadata.get("traffic_result", {}), "metadata.traffic_result")
     summary_path = traffic_result.get("summary_path")
     if summary_path:
@@ -1726,13 +2662,13 @@ def _report_input(
             run_id=str(metadata.get("run_id", run_dir.name)),
             test_date=datetime.now(UTC).date().isoformat(),
             duration_seconds=int(metadata.get("duration_seconds", 1)),
-            namespace=str(plan.get("namespace", "")),
+            namespace=str(metadata.get("namespace", plan.get("namespace", ""))),
             provider=str(
                 metadata.get(
                     "provider", _mapping(plan.get("runtime", {}), "runtime").get("provider", "kind")
                 )
             ),
-            lifecycle_state=str(metadata.get("stage", "planned")),
+            lifecycle_state=_lifecycle_state(metadata),
         ),
         scenario=TestedScenario(
             scenario_id=str(config.get("scenarioId", f"{service['name']}-assessment")),
@@ -1740,7 +2676,7 @@ def _report_input(
             path=str(run_dir / "chamber.yaml"),
             traffic_tool=str(journey.get("tool", "k6")),
             max_virtual_users=1,
-            fault_summary="none",
+            fault_summary=_fault_summary(config, metadata),
         ),
         findings=(),
         evidence=tuple(evidence),
@@ -1778,6 +2714,25 @@ def _agent_sections(run_dir: Path) -> tuple[ReportSection, ...]:
             )
         )
     return tuple(sections)
+
+
+def _lifecycle_state(metadata: dict[str, Any]) -> str:
+    state = str(metadata.get("stage", "planned"))
+    runtime_mode = metadata.get("runtime_mode")
+    if runtime_mode:
+        return f"{state} (mode: {runtime_mode})"
+    return state
+
+
+def _fault_summary(config: dict[str, Any], metadata: dict[str, Any]) -> str:
+    runtime = _mapping(config.get("runtime", {}), "runtime")
+    faults = _list(runtime.get("faults", []), "runtime.faults")
+    if not faults:
+        return "none"
+    rollback = metadata.get("rollback")
+    verified = rollback.get("verified") if isinstance(rollback, dict) else None
+    fault_names = ", ".join(str(_mapping(item, "runtime.faults[]").get("type")) for item in faults)
+    return f"{fault_names}; rollback verified: {bool(verified)}"
 
 
 def _resume_assessment(run_dir: Path) -> Path:
@@ -2048,14 +3003,20 @@ def _validate_runtime(runtime: dict[str, Any], *, source: str) -> None:
         raise WorkflowError(
             f"{source}.provider must be one of: {', '.join(sorted(RUNTIME_PROVIDERS))}"
         )
+    runtime_mode = str(runtime.get("mode", "deploy"))
+    if runtime_mode not in RUNTIME_MODES:
+        raise WorkflowError(f"{source}.mode must be one of: {', '.join(sorted(RUNTIME_MODES))}")
     for key, value in runtime.items():
         if key in {
             "provider",
+            "mode",
             "kubernetesContext",
+            "namespace",
             "namespaceBase",
             "cleanup",
             "prometheusUrl",
             "trafficAccess",
+            "faults",
             "requiredEnv",
             "secretEnv",
             "config",
@@ -2073,6 +3034,11 @@ def _validate_runtime(runtime: dict[str, Any], *, source: str) -> None:
     if provider != "kubernetes":
         return
     _non_empty(runtime.get("kubernetesContext"), f"{source}.kubernetesContext")
+    if runtime_mode == "attach":
+        _non_empty(runtime.get("namespace"), f"{source}.namespace")
+        if bool(runtime.get("cleanup", False)):
+            raise WorkflowError(f"{source}.cleanup must be false in attach mode")
+        _validate_attach_faults(_list(runtime.get("faults", []), f"{source}.faults"), source=source)
     if "trafficAccess" not in runtime:
         raise WorkflowError(f"{source}.trafficAccess is required for Kubernetes runtime")
     _validate_traffic_access(
@@ -2082,6 +3048,21 @@ def _validate_runtime(runtime: dict[str, Any], *, source: str) -> None:
     prometheus_url = runtime.get("prometheusUrl")
     if prometheus_url is not None:
         _require_http_url(str(prometheus_url), f"{source}.prometheusUrl")
+
+
+def _validate_attach_faults(faults: list[Any], *, source: str) -> None:
+    for index, item in enumerate(faults):
+        path = f"{source}.faults[{index}]"
+        fault = _mapping(item, path)
+        fault_type = str(fault.get("type", ""))
+        if fault_type not in ATTACH_FAULT_TYPES:
+            raise WorkflowError(
+                f"{path}.type must be one of: {', '.join(sorted(ATTACH_FAULT_TYPES))}"
+            )
+        if fault_type == "deployment_scale":
+            replicas = fault.get("replicas")
+            if not isinstance(replicas, int) or replicas < 0:
+                raise WorkflowError(f"{path}.replicas must be a non-negative integer")
 
 
 def _validate_traffic_access(access: dict[str, Any], *, source: str) -> None:
@@ -2102,9 +3083,11 @@ def _validate_traffic_access(access: dict[str, Any], *, source: str) -> None:
 def _runtime_plan(config: dict[str, Any], plan: Any) -> dict[str, Any]:
     runtime = _mapping(config.get("runtime", {}), "runtime")
     provider = str(runtime.get("provider", "local"))
+    runtime_mode = str(runtime.get("mode", "deploy"))
     namespace_base = str(runtime.get("namespaceBase", config.get("namespaceBase", "")))
     result: dict[str, Any] = {
         "provider": provider,
+        "mode": runtime_mode,
         "namespace": str(getattr(plan, "namespace", "")),
         "namespace_base": namespace_base or None,
         "cleanup": bool(runtime.get("cleanup", True)),
@@ -2121,6 +3104,21 @@ def _runtime_plan(config: dict[str, Any], plan: Any) -> dict[str, Any]:
         if runtime.get("prometheusUrl"):
             result["prometheus_url"] = str(runtime["prometheusUrl"])
     return result
+
+
+def _attach_runtime_plan(config: dict[str, Any], *, namespace: str) -> dict[str, Any]:
+    runtime = _mapping(config.get("runtime", {}), "runtime")
+    return {
+        "provider": "kubernetes",
+        "mode": "attach",
+        "namespace": namespace,
+        "namespace_base": None,
+        "cleanup": False,
+        "traffic_access": _jsonable(runtime.get("trafficAccess", {})),
+        "faults": _jsonable(runtime.get("faults", [])),
+        "external_resources": True,
+        "ownership": "externally_deployed",
+    }
 
 
 def _require_http_url(url: str, name: str) -> None:

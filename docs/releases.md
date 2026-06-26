@@ -1,5 +1,22 @@
 # Releases
 
+## 1.3.0 - 2026-06-26
+
+Ampule Chamber `1.3.0` adds Kubernetes attach mode for already-live
+non-production deployments.
+
+Highlights:
+
+- `runtime.mode: attach` for assessing existing Deployments and Services
+  without applying manifests.
+- Attach preflight verifies explicit context, namespace safety, existing
+  workloads/services, and read permissions.
+- Attach discovery records selectors, endpoints, pods, rollout state, and
+  pre-test snapshots.
+- Kubernetes and Prometheus evidence are scoped to discovered target pods.
+- Optional attach faults require an allow-list label or annotation and record
+  rollback evidence.
+
 ## 1.2.0 - 2026-06-25
 
 Ampule Chamber `1.2.0` improves Kubernetes assessment runs for already-deployed

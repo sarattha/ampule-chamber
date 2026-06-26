@@ -664,6 +664,235 @@ class Phase13OneCommandAssessmentTests(unittest.TestCase):
         self.assertTrue(any("delete" in command for command in runner.commands))
         self.assertTrue(any("top" in command for command in runner.commands))
 
+    def test_kubernetes_attach_assess_discovers_existing_resources_without_apply_or_delete(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = _fixture_repo(root)
+            config_path = root / "chamber.yaml"
+            config = _attach_kubernetes_config(repo)
+            save_config(config, config_path)
+            runner = _attach_runner()
+
+            def fake_traffic(**kwargs: object) -> dict[str, object]:
+                run_dir_arg = cast(Path, kwargs["run_dir"])
+                (run_dir_arg / "evidence/k6-summary.json").write_text(
+                    json.dumps({"metrics": {"checks": {"passes": 1, "fails": 0}}}) + "\n",
+                    encoding="utf-8",
+                )
+                return {
+                    "success": True,
+                    "command": ["k6", "run", "traffic.js"],
+                    "exit_status": 0,
+                    "stdout": "ok",
+                    "stderr": "",
+                    "summary_path": str(run_dir_arg / "evidence/k6-summary.json"),
+                }
+
+            with patch("chamber.workflow.Path.cwd", return_value=root):
+                with patch(
+                    "chamber.workflow._execute_kubernetes_traffic",
+                    side_effect=fake_traffic,
+                ):
+                    run_dir = workflow._assess_kubernetes_config(
+                        config_path,
+                        agents_mode="off",
+                        context="dev-cluster",
+                        prometheus_url=None,
+                        runner=runner,
+                    )
+
+            metadata = json.loads((run_dir / "run-metadata.json").read_text(encoding="utf-8"))
+            plan = json.loads((run_dir / "plan.json").read_text(encoding="utf-8"))
+            report = (run_dir / "report.md").read_text(encoding="utf-8")
+
+        self.assertEqual(metadata["runtime_mode"], "attach")
+        self.assertEqual(metadata["namespace"], "translation-test")
+        self.assertFalse(metadata["cleanup_performed"])
+        self.assertEqual(plan["runtime"]["mode"], "attach")
+        self.assertTrue((run_dir / "evidence/attach-discovery.json").exists())
+        self.assertTrue((run_dir / "evidence/pre-test-state.json").exists())
+        self.assertIn("mode: attach", report)
+        self.assertIn("attach-discovery", report)
+        self.assertFalse(any("apply" in command for command in runner.commands))
+        self.assertFalse(
+            any(
+                command[:6]
+                == ("kubectl", "--context", "dev-cluster", "-n", "translation-test", "delete")
+                for command in runner.commands
+            )
+        )
+        self.assertTrue(
+            any(
+                command[:7]
+                == (
+                    "kubectl",
+                    "--context",
+                    "dev-cluster",
+                    "-n",
+                    "translation-test",
+                    "get",
+                    "events",
+                )
+                and "involvedObject.name=translation-service-abc" in command
+                for command in runner.commands
+            )
+        )
+
+    def test_kubernetes_attach_faults_require_allow_list_label(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = _fixture_repo(root)
+            config_path = root / "chamber.yaml"
+            config = _attach_kubernetes_config(repo)
+            cast(dict[str, Any], config["runtime"])["faults"] = [{"type": "pod_kill"}]
+            save_config(config, config_path)
+            runner = _attach_runner(allow_faults=False)
+
+            with patch("chamber.workflow.Path.cwd", return_value=root):
+                with self.assertRaisesRegex(WorkflowError, "allow-faults"):
+                    workflow._assess_kubernetes_config(
+                        config_path,
+                        agents_mode="off",
+                        context="dev-cluster",
+                        prometheus_url=None,
+                        runner=runner,
+                    )
+
+        self.assertFalse(
+            any(
+                command[:6]
+                == ("kubectl", "--context", "dev-cluster", "-n", "translation-test", "delete")
+                for command in runner.commands
+            )
+        )
+
+    def test_kubernetes_attach_pod_kill_fault_waits_for_deployment_availability(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = _fixture_repo(root)
+            config_path = root / "chamber.yaml"
+            config = _attach_kubernetes_config(repo)
+            cast(dict[str, Any], config["runtime"])["faults"] = [{"type": "pod_kill"}]
+            save_config(config, config_path)
+            runner = _attach_runner(allow_faults=True)
+
+            with patch("chamber.workflow.Path.cwd", return_value=root):
+                with patch(
+                    "chamber.workflow._execute_kubernetes_traffic",
+                    return_value={
+                        "success": True,
+                        "command": ["k6", "run", "traffic.js"],
+                        "exit_status": 0,
+                        "stdout": "ok",
+                        "stderr": "",
+                        "summary_path": "",
+                    },
+                ):
+                    run_dir = workflow._assess_kubernetes_config(
+                        config_path,
+                        agents_mode="off",
+                        context="dev-cluster",
+                        prometheus_url=None,
+                        runner=runner,
+                    )
+
+            rollback = json.loads((run_dir / "evidence/rollback.json").read_text(encoding="utf-8"))
+
+        self.assertTrue(rollback["verified"])
+        self.assertEqual(rollback["actions"][0]["type"], "pod_kill")
+        self.assertTrue(rollback["actions"][0]["restored"])
+        self.assertIn(
+            (
+                "kubectl",
+                "--context",
+                "dev-cluster",
+                "-n",
+                "translation-test",
+                "delete",
+                "pod",
+                "translation-service-abc",
+            ),
+            runner.commands,
+        )
+        self.assertIn(
+            (
+                "kubectl",
+                "--context",
+                "dev-cluster",
+                "-n",
+                "translation-test",
+                "wait",
+                "--for=condition=available",
+                "deployment/translation-service",
+                "--timeout=180s",
+            ),
+            runner.commands,
+        )
+
+    def test_kubernetes_attach_deployment_scale_fault_restores_original_replicas(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = _fixture_repo(root)
+            config_path = root / "chamber.yaml"
+            config = _attach_kubernetes_config(repo)
+            cast(dict[str, Any], config["runtime"])["faults"] = [
+                {"type": "deployment_scale", "replicas": 0}
+            ]
+            save_config(config, config_path)
+            runner = _attach_runner(allow_faults=True)
+
+            with patch("chamber.workflow.Path.cwd", return_value=root):
+                with patch(
+                    "chamber.workflow._execute_kubernetes_traffic",
+                    return_value={
+                        "success": True,
+                        "command": ["k6", "run", "traffic.js"],
+                        "exit_status": 0,
+                        "stdout": "ok",
+                        "stderr": "",
+                        "summary_path": "",
+                    },
+                ):
+                    run_dir = workflow._assess_kubernetes_config(
+                        config_path,
+                        agents_mode="off",
+                        context="dev-cluster",
+                        prometheus_url=None,
+                        runner=runner,
+                    )
+
+            rollback = json.loads((run_dir / "evidence/rollback.json").read_text(encoding="utf-8"))
+
+        self.assertTrue(rollback["verified"])
+        self.assertIn(
+            (
+                "kubectl",
+                "--context",
+                "dev-cluster",
+                "-n",
+                "translation-test",
+                "scale",
+                "deployment/translation-service",
+                "--replicas=0",
+            ),
+            runner.commands,
+        )
+        self.assertIn(
+            (
+                "kubectl",
+                "--context",
+                "dev-cluster",
+                "-n",
+                "translation-test",
+                "scale",
+                "deployment/translation-service",
+                "--replicas=2",
+            ),
+            runner.commands,
+        )
+
     def test_kubernetes_k6_script_supports_multiple_memory_journeys(self) -> None:
         script = workflow._k6_script_for_journeys(
             (
@@ -1007,6 +1236,203 @@ def _kubernetes_config(repo: Path) -> dict[str, object]:
         }
     ]
     return config
+
+
+def _attach_kubernetes_config(repo: Path) -> dict[str, object]:
+    config = infer_config(repo)
+    config["deployment"]["manifests"] = []
+    config["deployment"]["services"] = [{"name": "translation-service", "port": 8080}]
+    config["deployment"]["workloads"] = [
+        {"name": "translation-service", "role": "target", "kind": "Deployment"}
+    ]
+    runtime = config["runtime"]
+    runtime.update(
+        {
+            "provider": "kubernetes",
+            "mode": "attach",
+            "kubernetesContext": "dev-cluster",
+            "namespace": "translation-test",
+            "cleanup": False,
+            "trafficAccess": {
+                "mode": "port-forward",
+                "service": "translation-service",
+                "servicePort": 8080,
+            },
+        }
+    )
+    config["agents"]["mode"] = "off"
+    return config
+
+
+def _attach_runner(*, allow_faults: bool = False) -> _FakeKubernetesRunner:
+    label_value = "true" if allow_faults else "false"
+    responses = {
+        (
+            "kubectl",
+            "--context",
+            "dev-cluster",
+            "get",
+            "namespace",
+            "translation-test",
+            "-o",
+            "json",
+        ): _completed(
+            (
+                "kubectl",
+                "--context",
+                "dev-cluster",
+                "get",
+                "namespace",
+                "translation-test",
+                "-o",
+                "json",
+            ),
+            stdout=json.dumps(
+                {
+                    "metadata": {
+                        "name": "translation-test",
+                        "labels": {"chamber.ampule.dev/allow-faults": label_value},
+                    }
+                }
+            ),
+        ),
+        (
+            "kubectl",
+            "--context",
+            "dev-cluster",
+            "-n",
+            "translation-test",
+            "get",
+            "deployment/translation-service",
+            "-o",
+            "json",
+        ): _completed(
+            (
+                "kubectl",
+                "--context",
+                "dev-cluster",
+                "-n",
+                "translation-test",
+                "get",
+                "deployment/translation-service",
+                "-o",
+                "json",
+            ),
+            stdout=json.dumps(
+                {
+                    "metadata": {
+                        "name": "translation-service",
+                        "labels": {"app": "translation-service"},
+                    },
+                    "spec": {
+                        "replicas": 2,
+                        "selector": {"matchLabels": {"app": "translation-service"}},
+                    },
+                }
+            ),
+        ),
+        (
+            "kubectl",
+            "--context",
+            "dev-cluster",
+            "-n",
+            "translation-test",
+            "get",
+            "service",
+            "translation-service",
+            "-o",
+            "json",
+        ): _completed(
+            (
+                "kubectl",
+                "--context",
+                "dev-cluster",
+                "-n",
+                "translation-test",
+                "get",
+                "service",
+                "translation-service",
+                "-o",
+                "json",
+            ),
+            stdout=json.dumps(
+                {
+                    "metadata": {"name": "translation-service"},
+                    "spec": {
+                        "selector": {"app": "translation-service"},
+                        "ports": [{"port": 8080, "targetPort": 8080}],
+                    },
+                }
+            ),
+        ),
+        (
+            "kubectl",
+            "--context",
+            "dev-cluster",
+            "-n",
+            "translation-test",
+            "get",
+            "endpoints",
+            "translation-service",
+            "-o",
+            "json",
+        ): _completed(
+            (
+                "kubectl",
+                "--context",
+                "dev-cluster",
+                "-n",
+                "translation-test",
+                "get",
+                "endpoints",
+                "translation-service",
+                "-o",
+                "json",
+            ),
+            stdout=json.dumps({"subsets": [{"addresses": [{"ip": "10.0.0.10"}]}]}),
+        ),
+        (
+            "kubectl",
+            "--context",
+            "dev-cluster",
+            "-n",
+            "translation-test",
+            "get",
+            "pods",
+            "-l",
+            "app=translation-service",
+            "-o",
+            "json",
+        ): _completed(
+            (
+                "kubectl",
+                "--context",
+                "dev-cluster",
+                "-n",
+                "translation-test",
+                "get",
+                "pods",
+                "-l",
+                "app=translation-service",
+                "-o",
+                "json",
+            ),
+            stdout=json.dumps(
+                {
+                    "items": [
+                        {
+                            "metadata": {
+                                "name": "translation-service-abc",
+                                "labels": {"app": "translation-service"},
+                            },
+                            "status": {"phase": "Running", "containerStatuses": []},
+                        }
+                    ]
+                }
+            ),
+        ),
+    }
+    return _FakeKubernetesRunner(responses=responses)
 
 
 class _FakeKubernetesRunner:
