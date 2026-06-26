@@ -2,6 +2,29 @@
 
 All notable changes to Ampule Chamber are documented in this file.
 
+## 1.2.0 - 2026-06-25
+
+### Added
+
+- Added Kubernetes assessment support for running all configured traffic
+  journeys as named k6 scenarios in one pass, including staged ramps and
+  bounded iteration workloads.
+- Added optional agent-role exclusion through `agents.exclude` and
+  `--agents-exclude`, allowing reviewed Kubernetes configs to skip roles such
+  as `onboarding-agent` when no local source repository is available.
+- Added Prometheus memory evidence collection for container working set, CPU
+  usage, and restart counters during Kubernetes assessments.
+- Added three memory-focused translation-service scenarios for health ramp,
+  large-text admission, and runtime backpressure reads.
+
+### Changed
+
+- Normalized k6 evidence summaries so agent assessments focus on observed
+  request, check, latency, and journey results instead of raw threshold
+  bookkeeping.
+- Deduplicated report limitations and made Helm/Kustomize limitation wording
+  conditional on manifest inputs that actually look like Helm or Kustomize.
+
 ## 1.1.0 - 2026-06-23
 
 ### Added

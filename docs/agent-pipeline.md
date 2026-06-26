@@ -1,6 +1,6 @@
 # Agent Pipeline
 
-Ampule Chamber `1.0.0` includes six bounded agent roles.
+Ampule Chamber includes six bounded agent roles.
 
 | Agent | Responsibility |
 | --- | --- |
@@ -24,3 +24,29 @@ agents:
 
 All agent outputs are validated before they are persisted. Outputs that cite
 unavailable evidence IDs fail validation.
+
+## Excluding Roles
+
+Reviewed configs can disable selected roles when their responsibility does not
+apply to the run:
+
+```yaml
+agents:
+  mode: offline
+  exclude:
+    - onboarding-agent
+```
+
+The CLI override is repeatable and accepts comma-separated names:
+
+```bash
+uv run ampule-chamber assess \
+  --config chamber.yaml \
+  --mode kubernetes \
+  --context <kube-context> \
+  --agents-exclude onboarding-agent
+```
+
+Use this for already-deployed Kubernetes services when there is no local source
+repository to inspect. The selected exclusions are persisted in
+`run-metadata.json`.

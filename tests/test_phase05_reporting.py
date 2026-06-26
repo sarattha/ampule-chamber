@@ -15,6 +15,7 @@ from chamber.report import (
     EvidenceReference,
     ReportFinding,
     ReportInput,
+    ReportSection,
     ReproductionDetails,
     RunMetadata,
     ServiceMetadata,
@@ -160,6 +161,32 @@ class Phase05ReportingTests(unittest.TestCase):
         self.assertIn("dependency-failure-001", markdown)
         self.assertIn("live-dependency-fault-k6-summary.json", markdown)
         self.assertIn("## Known Limitations", markdown)
+
+    def test_report_deduplicates_limitations_and_agent_lines(self) -> None:
+        report = _report_input()
+        duplicated = ReportInput(
+            title=report.title,
+            service=report.service,
+            run=report.run,
+            scenario=report.scenario,
+            findings=report.findings,
+            evidence=report.evidence,
+            reproduction=report.reproduction,
+            retest_plan=report.retest_plan,
+            cleanup_notes=report.cleanup_notes,
+            limitations=("same limitation", "same limitation"),
+            agent_sections=(
+                ReportSection(
+                    heading="Agent Analysis",
+                    lines=("limitations: same limitation", "limitations: same limitation"),
+                ),
+            ),
+        )
+
+        markdown = render_markdown_report(duplicated)
+
+        self.assertEqual(markdown.count("- same limitation"), 1)
+        self.assertEqual(markdown.count("- limitations: same limitation"), 1)
 
 
 def _report_input(

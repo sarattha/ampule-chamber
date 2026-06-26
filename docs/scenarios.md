@@ -18,6 +18,9 @@ Current bundled scenarios:
 - `oom-stress.yaml`
 - `retry-storm.yaml`
 - `soak-test.yaml`
+- `translation-memory-backpressure-read.yaml`
+- `translation-memory-health-ramp.yaml`
+- `translation-memory-large-text-admission.yaml`
 
 The live runner remains available for scenario-based kind runs:
 

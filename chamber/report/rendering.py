@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -230,7 +231,7 @@ def render_markdown_report(report: ReportInput) -> str:
             *_list_lines(report.cleanup_notes, empty="No cleanup notes recorded."),
             "",
             "## Known Limitations",
-            *_list_lines(report.limitations, empty="No limitations recorded."),
+            *_list_lines(_unique_strings(report.limitations), empty="No limitations recorded."),
             "",
         ]
     )
@@ -267,9 +268,10 @@ def _evidence_lines(evidence: tuple[EvidenceReference, ...]) -> list[str]:
 
 
 def _optional_section(heading: str, values: tuple[str, ...]) -> list[str]:
-    if not values:
+    unique_values = _unique_strings(values)
+    if not unique_values:
         return []
-    return [f"## {heading}", *_list_lines(values, empty="None recorded."), ""]
+    return [f"## {heading}", *_list_lines(unique_values, empty="None recorded."), ""]
 
 
 def _optional_sections(sections: tuple[ReportSection, ...]) -> list[str]:
@@ -293,6 +295,10 @@ def _list_lines(values: tuple[str, ...], *, empty: str) -> list[str]:
     return [f"- {value}" for value in values]
 
 
+def _unique_strings(values: Iterable[str]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(value for value in values if value))
+
+
 def _indented_list(values: tuple[str, ...]) -> list[str]:
     if not values:
         return ["  - None recorded."]
@@ -314,11 +320,11 @@ def _report_input(raw: dict[str, Any]) -> ReportInput:
         reproduction=_reproduction(_mapping(raw, "reproduction")),
         retest_plan=tuple(_string_list(raw, "retest_plan")),
         cleanup_notes=tuple(_string_list(raw, "cleanup_notes")),
-        limitations=tuple(_string_list(raw, "limitations")),
+        limitations=_unique_strings(_string_list(raw, "limitations")),
         agent_sections=tuple(
             ReportSection(
                 heading=_string(item, "heading"),
-                lines=tuple(_string_list(item, "lines")),
+                lines=_unique_strings(_string_list(item, "lines")),
             )
             for item in _optional_dict_list(raw, "agent_sections")
         ),

@@ -59,6 +59,10 @@ one repository name or source layout into Ampule Chamber.
 - [x] Run an OpenAI-backed direct-text dry run through the prepared chamber path
       with RabbitMQ and Redis in kind, document service omitted, and
       `MODEL_NAME=gpt-5.4-mini`.
+- [x] Run a bounded real chamber translation experiment against the already
+      prepared kind stack on 2026-06-24 with 20 direct-text requests from the
+      Thai government corpus, Prometheus reachable, and queue/runtime evidence
+      recorded.
 
 ## Evaluation Metrics
 
@@ -286,6 +290,29 @@ one repository name or source layout into Ampule Chamber.
 - Verified existing cluster Prometheus in namespace `monitoring` is ready
   through a temporary port-forward. Live runs still need `PROMETHEUS_URL`
   exported while that port-forward is active.
+- Real chamber experiment on 2026-06-24 used the existing
+  `chamber-external-translation-prep` namespace in `kind-ampule-chamber` and
+  wrote raw local evidence to ignored directory `experiments/experiment-003/`.
+  A tracked evidence summary is in
+  `artifacts/real-chamber-translation-experiment-20260624.md`.
+- Experiment 003 submitted 20 direct-text `POST /translations` requests sampled
+  from `dataset/thaigov-v2-corpus-22032023-context.jsonl` with seed
+  `20260624`. All 20 were accepted with HTTP 202 and all 20 completed; there
+  were zero terminal failures and zero timed-out or non-terminal tasks.
+- Experiment 003 end-to-end task latency was p50 4.2291s, p95 16.897435s, max
+  16.8978s, and mean 5.283655s.
+- Experiment 003 RabbitMQ evidence after the run showed zero ready and
+  unacknowledged messages in task, retry, aggregation, aggregation-retry, and
+  aggregation DLQ queues. `translation-tasks.status` retained status messages
+  as expected, and the existing `translation-tasks.queue.dlq` count of 1 still
+  predates the experiment.
+- Experiment 003 Prometheus evidence returned 5 series each for chamber
+  namespace container memory, container CPU rate, and `kube_pod_info`, covering
+  API, worker, aggregator, Redis, and RabbitMQ pods.
+- Experiment 003 limitation: the reused local experiment runner still writes
+  `experiment_id: experiment-001` in `summary.json`; this run is identified by
+  directory `experiments/experiment-003/`, task prefix `experiment-003-real`,
+  and the tracked Phase 10 evidence artifact.
 - The target repository's Git metadata is broken (`fatal: bad object HEAD`), so
   Docker builds succeeded but could not capture commit metadata.
 - Live prerequisite check on this machine after implementation:
@@ -309,3 +336,55 @@ one repository name or source layout into Ampule Chamber.
   - `uv run ty check chamber scripts tests` passed.
   - `make check` passed, including format, lint, typecheck, 86 tests,
     coverage at the 90% threshold, scenario validation, and package build.
+  - 2026-06-25 report wording cleanup:
+    - Plain raw-manifest onboarding plans no longer emit the Helm/Kustomize
+      rendering limitation.
+    - Overlay/chart-looking manifest paths now emit conditional wording:
+      input manifests were treated as already-rendered YAML and Helm/Kustomize
+      rendering was not performed by this run.
+    - Report limitations and agent section lines are deduplicated during
+      rendering.
+    - Agent-facing k6 evidence now exposes normalized request count, failure
+      rate, derived failed request count, and duration stats so LLM agents do
+      not confuse `http_req_failed` threshold bookkeeping with failed requests.
+    - `uv run python -m unittest tests.test_phase05_reporting
+      tests.test_phase10_onboarding tests.test_phase11_12_13_workflow` passed.
+    - `uv run ruff check chamber/onboarding/generic.py
+      chamber/report/rendering.py chamber/workflow.py
+      tests/test_phase05_reporting.py tests/test_phase10_onboarding.py
+      tests/test_phase11_12_13_workflow.py` passed.
+    - `uv run ty check chamber/onboarding/generic.py chamber/report/rendering.py
+      chamber/workflow.py tests/test_phase05_reporting.py
+      tests/test_phase10_onboarding.py tests/test_phase11_12_13_workflow.py`
+      passed.
+- 2026-06-25 translation memory assessment:
+  - Added three translation-service memory scenarios:
+    `scenarios/translation-memory-health-ramp.yaml`,
+    `scenarios/translation-memory-large-text-admission.yaml`, and
+    `scenarios/translation-memory-backpressure-read.yaml`.
+  - Updated the Docker Desktop chamber config to run three matching k6 journeys:
+    `memory-health-ramp`, `memory-large-text-admission`, and
+    `memory-backpressure-read`.
+  - Extended Kubernetes assessment traffic to generate one k6 script with
+    multiple named journeys and per-journey k6 scenarios.
+  - Added Prometheus memory evidence collection for
+    `container_memory_working_set_bytes`,
+    `container_cpu_usage_seconds_total`, and
+    `kube_pod_container_status_restarts_total`.
+  - Validation passed:
+    - `uv run python -m unittest tests.test_phase11_12_13_workflow
+      tests.test_phase05_reporting tests.test_phase10_onboarding`
+    - `uv run python scripts/validate_scenarios.py`
+    - `uv run ruff check chamber/workflow.py
+      tests/test_phase11_12_13_workflow.py`
+    - `uv run ty check chamber/workflow.py
+      tests/test_phase11_12_13_workflow.py`
+  - Live Docker Desktop run
+    `.chamber/runs/chamber-docker-desktop-translation-service-20260625162155/`
+    completed with cleanup. k6 executed all three journeys and recorded 63,111
+    HTTP requests, 62,968 passed checks, 143 failed checks, 0.2266% HTTP failure
+    rate, p95 latency 8.724 ms, and Prometheus memory series for six
+    container/pod series.
+  - Limitation: Docker Desktop's Metrics API returned `Metrics API not
+    available` for `kubectl top pods --containers`; Prometheus memory evidence
+    was collected successfully instead.

@@ -1,6 +1,6 @@
 # Ampule Chamber
 
-Version: 1.1.0
+Version: 1.2.0
 
 Production-ready release for agent-driven reliability testing of Kubernetes
 services before production.
@@ -15,10 +15,10 @@ teams that need to answer:
 
 ## Release Status
 
-Ampule Chamber `1.1.0` adds generic Kubernetes assessment mode on top of the
-production-ready guided workflow, standard run artifacts, bounded agent
-workflow, report generation, MkDocs documentation, release metadata validation,
-and GitHub Actions CI/CD automation.
+Ampule Chamber `1.2.0` adds richer Kubernetes assessment evidence, multi-journey
+k6 traffic execution, optional agent-role exclusion for reviewed configs, and
+memory-focused translation-service scenarios on top of the production-ready
+guided workflow.
 
 ## What It Tests
 
@@ -90,6 +90,8 @@ uv run ampule-chamber run \
 ```yaml
 agents:
   mode: offline
+  exclude:
+    - onboarding-agent
 ```
 
 - `off`: skip agent output.
@@ -98,6 +100,9 @@ agents:
 
 All agent output must cite supplied evidence IDs. Unsupported citations fail
 validation before they can be persisted or rendered into reports.
+Use `agents.exclude` or `--agents-exclude <agent-name>` when a reviewed
+Kubernetes config does not need a specific role, such as onboarding a service
+that is already deployed and has no local source repository.
 
 ## Documentation
 

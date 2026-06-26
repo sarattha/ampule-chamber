@@ -78,6 +78,21 @@ GitHub issue #9.
   reran live kind verification. The hardened run wrote
   `.chamber/runs/chamber-sample-service-20260623163054/report.md`, passed k6,
   and cleaned up namespace `chamber-kind-sample-2f6d3359`.
+- 2026-06-25 release metadata update: bumped project metadata to `1.2.0`,
+  refreshed `uv.lock`, added changelog/release notes for multi-journey
+  Kubernetes traffic, agent exclusion, Prometheus memory evidence, translation
+  memory scenarios, and report limitation cleanup, and updated public docs for
+  the new controls.
+- 2026-06-25 security CI fix: Semgrep flagged the Prometheus memory evidence
+  query path for dynamic `urllib` use. Added explicit HTTP(S) URL construction
+  and rejection of non-HTTP schemes before the audited request, added focused
+  regression tests, confirmed `semgrep scan --config auto chamber/workflow.py`
+  reports 0 findings, and reran `make check` successfully with 129 tests.
+- 2026-06-26 PR review fixes: kept local `assess` agent context marked as
+  missing live Kubernetes execution unless Kubernetes command or k6 evidence is
+  present, made generated k6 scenario/function names unique by journey index,
+  added regression tests for both review comments, and reran `make check`
+  successfully with 132 tests.
 
 ## Decision Log
 

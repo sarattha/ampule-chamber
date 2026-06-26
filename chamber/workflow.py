@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -12,7 +13,8 @@ from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
+from urllib.request import urlopen
 
 import yaml
 
@@ -63,10 +65,20 @@ WORKSPACE_DIR = ".chamber"
 RUNS_DIR = "runs"
 DEFAULT_AGENT_MODE = "offline"
 AGENT_MODES = {"off", "offline", "live"}
+AGENT_NAMES = (
+    "onboarding-agent",
+    "scenario-planner-agent",
+    "run-supervisor-agent",
+    "traffic-chaos-agent",
+    "evidence-analyst-agent",
+    "report-writer-agent",
+)
 SECRET_NAME_FRAGMENTS = ("SECRET", "TOKEN", "PASSWORD", "API_KEY", "KEY")
 PRODUCTION_CONTEXT_FRAGMENTS = ("prod", "production", "aks-prod", "prd", "live")
 RUNTIME_PROVIDERS = {"local", "kind", "kubernetes"}
 TRAFFIC_ACCESS_MODES = {"port-forward", "endpoint"}
+AGENT_DETAIL_LIMIT = 1200
+AGENT_DETAIL_TOTAL_LIMIT = 12000
 _KUBERNETES_API_GROUPS = {
     "v1",
     "apps",
@@ -151,6 +163,7 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover
                 resume=Path(args.resume) if args.resume else None,
                 mode=args.mode,
                 agents_mode=args.agents_mode,
+                agents_exclude=tuple(args.agents_exclude or ()),
                 context=args.context,
                 prometheus_url=args.prometheus_url,
             )
@@ -278,8 +291,9 @@ def validate_config(
     journeys = _list(traffic.get("journeys", []), f"{source}.traffic.journeys")
     if not journeys:
         raise WorkflowError(f"{source}.traffic.journeys must not be empty")
+    agents = _mapping(config.get("agents", {}), f"{source}.agents")
     mode = str(
-        _mapping(config.get("agents", {}), f"{source}.agents").get(
+        agents.get(
             "mode",
             DEFAULT_AGENT_MODE,
         )
@@ -288,6 +302,10 @@ def validate_config(
         raise WorkflowError(
             f"{source}.agents.mode must be one of: {', '.join(sorted(AGENT_MODES))}"
         )
+    _validate_agent_names(
+        _normalized_agent_names(_optional_string_tuple(agents, "exclude")),
+        source=f"{source}.agents.exclude",
+    )
     runtime = _mapping(config.get("runtime", {}), f"{source}.runtime")
     _validate_runtime(runtime, source=f"{source}.runtime")
 
@@ -361,6 +379,7 @@ def plan_config(config_path: Path, *, run_dir: Path | None = None) -> Path:
             "config": str(config_copy),
             "cleanup_performed": False,
             "agent_mode": _agent_mode(config, None),
+            "agent_exclude": _agent_exclusions(config, ()),
             "runtime": runtime_plan,
         },
     )
@@ -375,6 +394,7 @@ def assess(
     resume: Path | None = None,
     mode: str = "local",
     agents_mode: str | None = None,
+    agents_exclude: tuple[str, ...] = (),
     context: str | None = None,
     prometheus_url: str | None = None,
 ) -> Path:
@@ -386,6 +406,7 @@ def assess(
         return _assess_kubernetes_config(
             config,
             agents_mode=agents_mode,
+            agents_exclude=agents_exclude,
             context=context,
             prometheus_url=prometheus_url,
             runner=WorkflowSubprocessRunner(),
@@ -403,6 +424,7 @@ def assess(
         generated = infer_config(repo)
         if agents_mode:
             generated.setdefault("agents", {})["mode"] = agents_mode
+        _apply_agent_exclude_override(generated, agents_exclude)
         config_path = run_dir / "chamber.yaml"
         save_config(generated, config_path)
     else:
@@ -410,6 +432,7 @@ def assess(
         loaded = load_config(config)
         if agents_mode:
             loaded.setdefault("agents", {})["mode"] = agents_mode
+        _apply_agent_exclude_override(loaded, agents_exclude)
         config_path = run_dir / "chamber.yaml"
         save_config(loaded, config_path)
     plan_config(config_path, run_dir=run_dir)
@@ -428,6 +451,7 @@ def assess(
             "cleanup_performed": True,
             "cleanup_notes": ["No live Kubernetes resources were created by local assessment."],
             "agent_mode": _agent_mode(config_data, agents_mode),
+            "agent_exclude": _agent_exclusions(config_data, ()),
         },
     )
     render_report_from_run(run_dir)
@@ -438,6 +462,7 @@ def _assess_kubernetes_config(
     config_path: Path,
     *,
     agents_mode: str | None,
+    agents_exclude: tuple[str, ...] = (),
     context: str | None,
     prometheus_url: str | None,
     runner: KubernetesCommandRunner,
@@ -447,6 +472,7 @@ def _assess_kubernetes_config(
     config = load_config(config_path)
     if agents_mode:
         config.setdefault("agents", {})["mode"] = agents_mode
+    _apply_agent_exclude_override(config, agents_exclude)
     runtime = _mapping(config.get("runtime", {}), "runtime")
     if str(runtime.get("provider", "local")) != "kubernetes":
         raise WorkflowError("assess --mode kubernetes requires runtime.provider: kubernetes")
@@ -485,6 +511,7 @@ def _assess_kubernetes_config(
                 "cleanup_notes": ["No Kubernetes resources were applied after failed preflight."],
                 "preflight": preflight_to_evidence(preflight),
                 "agent_mode": _agent_mode(config, agents_mode),
+                "agent_exclude": _agent_exclusions(config, ()),
             },
         )
         raise WorkflowError("Kubernetes preflight failed: " + "; ".join(preflight.blockers))
@@ -519,6 +546,12 @@ def _assess_kubernetes_config(
             runner=runner,
             commands=commands,
         )
+        if selected_prometheus:
+            _collect_prometheus_memory_evidence(
+                run_dir,
+                prometheus_url=str(selected_prometheus),
+                namespace=plan.namespace,
+            )
         success = bool(traffic_result.get("success"))
     except Exception as exc:
         failure = exc
@@ -548,6 +581,7 @@ def _assess_kubernetes_config(
         "preflight": preflight_to_evidence(preflight),
         "success": success,
         "agent_mode": _agent_mode(config, agents_mode),
+        "agent_exclude": _agent_exclusions(config, ()),
     }
     if failure is not None:
         metadata["error"] = str(failure)
@@ -555,7 +589,7 @@ def _assess_kubernetes_config(
     _write_agents(
         run_dir,
         config,
-        evidence_ids=("plan", "preflight", "kubernetes-commands"),
+        evidence_ids=_kubernetes_assess_evidence_ids(traffic_result, run_dir=run_dir),
         stage="assess",
     )
     render_report_from_run(run_dir)
@@ -603,6 +637,13 @@ def _parser() -> argparse.ArgumentParser:
     source.add_argument("--resume")
     assess_parser.add_argument("--mode", default="local")
     assess_parser.add_argument("--agents-mode", choices=sorted(AGENT_MODES))
+    assess_parser.add_argument(
+        "--agents-exclude",
+        action="append",
+        default=[],
+        metavar="AGENT",
+        help="Skip an agent role for this run, for example onboarding-agent.",
+    )
     assess_parser.add_argument("--context")
     assess_parser.add_argument("--prometheus-url")
     report_parser = subparsers.add_parser(
@@ -709,19 +750,17 @@ def _execute_kubernetes_traffic(
     runtime = _mapping(config["runtime"], "runtime")
     access = _mapping(runtime["trafficAccess"], "runtime.trafficAccess")
     traffic = _mapping(config["traffic"], "traffic")
-    journey = _mapping(_list(traffic["journeys"], "traffic.journeys")[0], "traffic.journeys[0]")
-    method = str(journey.get("method", "GET"))
-    expected_status = int(journey.get("expectedStatus", 200))
+    journeys = _traffic_journeys(traffic)
     summary_path = run_dir / "evidence/k6-summary.json"
     script_path = run_dir / "evidence/k6.js"
     if access["mode"] == "endpoint":
-        target_url = str(access["url"]).rstrip("/") + str(journey.get("path", "/health"))
+        base_url = str(access["url"]).rstrip("/")
         port_forward = None
     else:
         service = str(access["service"])
         service_port = int(access["servicePort"])
         local_port = int(access.get("localPort", 18080))
-        target_url = f"http://127.0.0.1:{local_port}{journey.get('path', '/health')}"
+        base_url = f"http://127.0.0.1:{local_port}"
         port_forward = runner.popen(
             (
                 "kubectl",
@@ -734,21 +773,7 @@ def _execute_kubernetes_traffic(
                 f"{local_port}:{service_port}",
             )
         )
-    script_path.write_text(
-        "\n".join(
-            (
-                "import http from 'k6/http';",
-                "import { check } from 'k6';",
-                "export const options = { vus: 1, iterations: 1 };",
-                "export default function () {",
-                f"  const res = http.request({method!r}, {target_url!r});",
-                f"  check(res, {{ 'status is expected': r => r.status === {expected_status} }});",
-                "}",
-                "",
-            )
-        ),
-        encoding="utf-8",
-    )
+    script_path.write_text(_k6_script_for_journeys(journeys, base_url=base_url), encoding="utf-8")
     try:
         completed = runner.run(
             ("k6", "run", "--summary-export", str(summary_path), str(script_path))
@@ -763,7 +788,138 @@ def _execute_kubernetes_traffic(
         "stdout": completed.stdout,
         "stderr": completed.stderr,
         "summary_path": str(summary_path),
+        "journeys": [_journey_name(journey) for journey in journeys],
     }
+
+
+def _traffic_journeys(traffic: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    return tuple(
+        _mapping(item, f"traffic.journeys[{index}]")
+        for index, item in enumerate(_list(traffic["journeys"], "traffic.journeys"))
+    )
+
+
+def _k6_script_for_journeys(journeys: tuple[dict[str, Any], ...], *, base_url: str) -> str:
+    journey_payloads = []
+    scenario_options: dict[str, Any] = {}
+    start_after_seconds = 0
+    for index, journey in enumerate(journeys, start=1):
+        name = _journey_name(journey)
+        function_name = _k6_function_name(name, index=index)
+        stages = _journey_stages(journey)
+        scenario: dict[str, Any]
+        if stages:
+            scenario = {
+                "executor": "ramping-vus",
+                "exec": function_name,
+                "stages": stages,
+            }
+            duration_seconds = sum(_duration_seconds(str(stage["duration"])) for stage in stages)
+        else:
+            scenario = {
+                "executor": "shared-iterations",
+                "exec": function_name,
+                "vus": int(journey.get("vus", 1)),
+                "iterations": int(journey.get("iterations", 1)),
+            }
+            duration_seconds = int(journey.get("durationSeconds", 1))
+        if start_after_seconds:
+            scenario["startTime"] = f"{start_after_seconds}s"
+        scenario_options[function_name] = scenario
+        start_after_seconds += max(duration_seconds, 1)
+        journey_payloads.append(
+            {
+                "key": function_name,
+                "name": name,
+                "functionName": function_name,
+                "method": str(journey.get("method", "GET")).upper(),
+                "url": base_url + str(journey.get("path", "/health")),
+                "expectedStatus": int(journey.get("expectedStatus", 200)),
+                "body": journey.get("body"),
+                "textBytes": int(journey.get("textBytes", 0)),
+            }
+        )
+    functions = []
+    for payload in journey_payloads:
+        function_name = str(payload["functionName"])
+        key = str(payload["key"])
+        functions.append(f"export function {function_name}() {{ runJourney({key!r}); }}")
+    options_json = json.dumps({"scenarios": scenario_options}, sort_keys=True)
+    journeys_json = json.dumps(
+        {item["key"]: item for item in journey_payloads},
+        sort_keys=True,
+    )
+    return "\n".join(
+        (
+            "import http from 'k6/http';",
+            "import { check } from 'k6';",
+            f"export const options = {options_json};",
+            f"const JOURNEYS = {journeys_json};",
+            "function requestBody(journey) {",
+            "  if (!journey.body) { return null; }",
+            "  const body = JSON.parse(JSON.stringify(journey.body));",
+            "  if (body.task_id) {",
+            "    body.task_id = `${body.task_id}-${__VU}-${__ITER}-${Date.now()}`;",
+            "  }",
+            "  if (journey.textBytes && body.text) {",
+            "    const repeats = Math.ceil(journey.textBytes / body.text.length);",
+            "    body.text = body.text.repeat(repeats).slice(0, journey.textBytes);",
+            "  }",
+            "  return JSON.stringify(body);",
+            "}",
+            "function runJourney(key) {",
+            "  const journey = JOURNEYS[key];",
+            "  const name = journey.name;",
+            "  const body = requestBody(journey);",
+            "  const params = {",
+            "    headers: { 'Content-Type': 'application/json' },",
+            "    tags: { journey: name },",
+            "  };",
+            "  const res = body === null",
+            "    ? http.request(journey.method, journey.url, null, params)",
+            "    : http.request(journey.method, journey.url, body, params);",
+            "  check(res, {",
+            "    [`${name} status is expected`]: r => r.status === journey.expectedStatus,",
+            "  });",
+            "}",
+            *functions,
+            "",
+        )
+    )
+
+
+def _journey_name(journey: dict[str, Any]) -> str:
+    return str(journey.get("name") or journey.get("path") or "traffic")
+
+
+def _k6_function_name(value: str, *, index: int) -> str:
+    candidate = re.sub(r"[^0-9A-Za-z_]", "_", value)
+    candidate = re.sub(r"_+", "_", candidate).strip("_") or "journey"
+    if candidate[0].isdigit():
+        candidate = f"journey_{candidate}"
+    return f"{candidate}_{index}"
+
+
+def _journey_stages(journey: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_stages = journey.get("stages")
+    if raw_stages is None:
+        return []
+    return [
+        {
+            "duration": str(_mapping(stage, "traffic.journeys[].stages[]")["duration"]),
+            "target": int(_mapping(stage, "traffic.journeys[].stages[]")["targetVus"]),
+        }
+        for stage in _list(raw_stages, "traffic.journeys[].stages")
+    ]
+
+
+def _duration_seconds(value: str) -> int:
+    match = re.fullmatch(r"(\d+)([smh])", value.strip())
+    if not match:
+        return 1
+    amount = int(match.group(1))
+    multiplier = {"s": 1, "m": 60, "h": 3600}[match.group(2)]
+    return amount * multiplier
 
 
 def _collect_kubernetes_command_evidence(
@@ -790,6 +946,16 @@ def _collect_kubernetes_command_evidence(
             "json",
         ),
         ("kubectl", "--context", context, "-n", namespace, "get", "events", "-o", "json"),
+        (
+            "kubectl",
+            "--context",
+            context,
+            "-n",
+            namespace,
+            "top",
+            "pods",
+            "--containers",
+        ),
     )
     for command in evidence_commands:
         _run_kubernetes_recorded(runner, command, commands)
@@ -811,6 +977,75 @@ def _collect_kubernetes_command_evidence(
             ),
             commands,
         )
+
+
+def _collect_prometheus_memory_evidence(
+    run_dir: Path,
+    *,
+    prometheus_url: str,
+    namespace: str,
+) -> None:
+    evidence = {
+        "prometheus_url": prometheus_url,
+        "namespace": namespace,
+        "queries": {
+            "container_memory_working_set_bytes": _prometheus_query(
+                prometheus_url,
+                (
+                    "container_memory_working_set_bytes{"
+                    f'namespace="{namespace}",container!="",pod!=""'
+                    "}"
+                ),
+            ),
+            "container_cpu_usage_seconds_total": _prometheus_query(
+                prometheus_url,
+                (
+                    "container_cpu_usage_seconds_total{"
+                    f'namespace="{namespace}",container!="",pod!=""'
+                    "}"
+                ),
+            ),
+            "kube_pod_container_status_restarts_total": _prometheus_query(
+                prometheus_url,
+                f'kube_pod_container_status_restarts_total{{namespace="{namespace}"}}',
+            ),
+        },
+    }
+    _write_json(run_dir / "evidence/prometheus-memory.json", evidence)
+
+
+def _prometheus_query(prometheus_url: str, query: str) -> dict[str, Any]:
+    try:
+        url = _prometheus_query_url(prometheus_url, query)
+        payload = _read_prometheus_payload(url)
+    except Exception as exc:
+        return {"ok": False, "query": query, "error": str(exc), "series": []}
+    data = payload.get("data") if isinstance(payload, dict) else None
+    result = data.get("result") if isinstance(data, dict) else None
+    if not isinstance(result, list):
+        result = []
+    return {
+        "ok": payload.get("status") == "success" if isinstance(payload, dict) else False,
+        "query": query,
+        "series_count": len(result),
+        "series": result[:20],
+    }
+
+
+def _prometheus_query_url(prometheus_url: str, query: str) -> str:
+    parsed = urlparse(prometheus_url.rstrip("/"))
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("Prometheus URL must be an HTTP(S) URL")
+    path = f"{parsed.path.rstrip('/')}/api/v1/query?{urlencode({'query': query})}"
+    return f"{parsed.scheme}://{parsed.netloc}{path}"
+
+
+def _read_prometheus_payload(url: str) -> dict[str, Any]:
+    # The URL is built by _prometheus_query_url, which rejects non-HTTP(S) schemes.
+    # fmt: off
+    with urlopen(url, timeout=10) as response:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected  # noqa: E501
+        # fmt: on
+        return json.loads(response.read().decode("utf-8"))
 
 
 def _cleanup_kubernetes(
@@ -922,9 +1157,12 @@ def _write_agents(
         evidence_ids=evidence_ids,
         finding_ids=(),
         artifact_paths=tuple(_string_list(deployment.get("manifests", []), "deployment.manifests")),
-        missing_signals=("live Kubernetes execution",) if stage in {"plan", "assess"} else (),
+        missing_signals=_agent_missing_signals(stage=stage, evidence_ids=evidence_ids),
+        evidence_summaries=_agent_evidence_summaries(run_dir, evidence_ids),
+        evidence_details=_agent_evidence_details(run_dir, evidence_ids),
     )
-    outputs = _agent_outputs(context, mode=mode)
+    excluded_agents = _agent_exclusions(config, ())
+    outputs = _agent_outputs(context, mode=mode, excluded_agents=excluded_agents)
     available = set(evidence_ids)
     sections = []
     for filename, output in outputs.items():
@@ -939,10 +1177,340 @@ def _write_agents(
     return tuple(sections)
 
 
-def _agent_outputs(context: ChamberAgentContext, *, mode: str) -> dict[str, AGENT_OUTPUT_TYPES]:
+def _kubernetes_assess_evidence_ids(
+    traffic_result: dict[str, object],
+    *,
+    run_dir: Path | None = None,
+) -> tuple[str, ...]:
+    evidence_ids = ["plan", "preflight", "kubernetes-commands"]
+    if traffic_result.get("summary_path"):
+        evidence_ids.append("k6-summary")
+    if run_dir is not None and (run_dir / "evidence/prometheus-memory.json").exists():
+        evidence_ids.append("prometheus-memory")
+    return tuple(evidence_ids)
+
+
+def _agent_missing_signals(*, stage: str, evidence_ids: tuple[str, ...]) -> tuple[str, ...]:
+    if stage == "plan":
+        return ("live Kubernetes execution",)
+    if stage == "assess" and not (
+        "kubernetes-commands" in evidence_ids or "k6-summary" in evidence_ids
+    ):
+        return ("live Kubernetes execution",)
+    return ()
+
+
+def _agent_evidence_summaries(run_dir: Path, evidence_ids: tuple[str, ...]) -> tuple[str, ...]:
+    summaries: list[str] = []
+    metadata_path = run_dir / "run-metadata.json"
+    if metadata_path.exists():
+        metadata = _read_json(metadata_path)
+        if metadata.get("stage"):
+            summaries.append(f"run stage: {metadata['stage']}")
+        if "success" in metadata:
+            summaries.append(f"run success: {bool(metadata['success'])}")
+        traffic = metadata.get("traffic_result")
+        if isinstance(traffic, dict):
+            if "success" in traffic:
+                summaries.append(f"traffic success: {bool(traffic['success'])}")
+            if traffic.get("exit_status") is not None:
+                summaries.append(f"traffic exit status: {traffic['exit_status']}")
+        if "cleanup_performed" in metadata:
+            summaries.append(f"cleanup performed: {bool(metadata['cleanup_performed'])}")
+    if "preflight" in evidence_ids:
+        preflight_path = run_dir / "evidence/preflight.json"
+        if preflight_path.exists():
+            preflight = _read_json(preflight_path)
+            summaries.append(f"preflight ready: {bool(preflight.get('ready'))}")
+            blockers = preflight.get("blockers")
+            if isinstance(blockers, list) and blockers:
+                summaries.append(f"preflight blockers: {len(blockers)}")
+    if "kubernetes-commands" in evidence_ids:
+        commands_path = run_dir / "evidence/kubernetes-commands.json"
+        if commands_path.exists():
+            commands = _read_json(commands_path).get("commands")
+            if isinstance(commands, list):
+                failed = sum(
+                    1
+                    for item in commands
+                    if isinstance(item, dict) and item.get("exit_status") not in {0, None}
+                )
+                summaries.append(f"kubernetes commands recorded: {len(commands)}")
+                summaries.append(f"kubernetes command failures: {failed}")
+    if "k6-summary" in evidence_ids:
+        k6_path = run_dir / "evidence/k6-summary.json"
+        if k6_path.exists():
+            metrics = _read_json(k6_path).get("metrics")
+            if isinstance(metrics, dict):
+                k6_summary = _k6_summary_metrics(metrics)
+                checks = k6_summary.get("checks")
+                if isinstance(checks, dict):
+                    summaries.append(
+                        "k6 checks: "
+                        f"passes={checks.get('passes', 0)} fails={checks.get('fails', 0)}"
+                    )
+                summaries.append(
+                    f"k6 http requests: count={k6_summary.get('http_request_count', 'unknown')}"
+                )
+                summaries.append(
+                    "k6 http request failure rate: "
+                    f"{k6_summary.get('http_failure_rate', 'unknown')}"
+                )
+                summaries.append(
+                    "k6 derived failed http requests: "
+                    f"{k6_summary.get('derived_failed_http_requests', 'unknown')}"
+                )
+    if "prometheus-memory" in evidence_ids:
+        path = run_dir / "evidence/prometheus-memory.json"
+        if path.exists():
+            queries = _read_json(path).get("queries")
+            if isinstance(queries, dict):
+                for name, payload in queries.items():
+                    if isinstance(payload, dict):
+                        summaries.append(
+                            f"prometheus {name} series: {payload.get('series_count', 0)}"
+                        )
+    if "local-assessment" in evidence_ids:
+        local_path = run_dir / "evidence/local-assessment.json"
+        if local_path.exists():
+            observed = _read_json(local_path).get("observed_facts")
+            if isinstance(observed, list):
+                summaries.extend(str(item) for item in observed if item)
+    return tuple(summaries)
+
+
+def _agent_evidence_details(run_dir: Path, evidence_ids: tuple[str, ...]) -> tuple[str, ...]:
+    details: list[str] = []
+    if "plan" in evidence_ids and (run_dir / "plan.json").exists():
+        plan = _read_json(run_dir / "plan.json")
+        details.extend(_plan_agent_details(plan))
+    if "preflight" in evidence_ids:
+        path = run_dir / "evidence/preflight.json"
+        if path.exists():
+            details.extend(_preflight_agent_details(_read_json(path)))
+    if "kubernetes-commands" in evidence_ids:
+        path = run_dir / "evidence/kubernetes-commands.json"
+        if path.exists():
+            details.extend(_kubernetes_command_agent_details(_read_json(path)))
+    if "k6-summary" in evidence_ids:
+        path = run_dir / "evidence/k6-summary.json"
+        if path.exists():
+            details.extend(_k6_agent_details(_read_json(path)))
+    if "prometheus-memory" in evidence_ids:
+        path = run_dir / "evidence/prometheus-memory.json"
+        if path.exists():
+            details.extend(_prometheus_memory_agent_details(_read_json(path)))
+    if "local-assessment" in evidence_ids:
+        path = run_dir / "evidence/local-assessment.json"
+        if path.exists():
+            details.append(_agent_detail("local-assessment", _read_json(path)))
+    return _bounded_agent_details(details)
+
+
+def _plan_agent_details(plan: dict[str, Any]) -> list[str]:
+    workloads = [
+        {
+            "name": item.get("name"),
+            "kind": item.get("kind"),
+            "role": item.get("role"),
+            "image": item.get("image"),
+            "ports": item.get("ports"),
+        }
+        for item in plan.get("workloads", [])
+        if isinstance(item, dict)
+    ]
+    readiness = [
+        {
+            "name": item.get("name"),
+            "target": item.get("target"),
+            "command": item.get("command"),
+        }
+        for item in plan.get("readiness_checks", [])
+        if isinstance(item, dict)
+    ]
+    external = [
+        {
+            "name": item.get("name"),
+            "provider": item.get("provider"),
+            "endpoint": item.get("endpoint"),
+        }
+        for item in plan.get("external_dependencies", [])
+        if isinstance(item, dict)
+    ]
+    payload = {
+        "service_name": plan.get("service_name"),
+        "namespace": plan.get("namespace"),
+        "workloads": workloads,
+        "readiness_checks": readiness,
+        "traffic_journey": plan.get("traffic_journey"),
+        "external_dependencies": external,
+        "runtime": plan.get("runtime"),
+        "limitations": plan.get("limitations"),
+    }
+    return [_agent_detail("plan", payload)]
+
+
+def _preflight_agent_details(preflight: dict[str, Any]) -> list[str]:
+    checks = preflight.get("checks")
+    if isinstance(checks, list):
+        compact_checks = [
+            {
+                "name": item.get("name"),
+                "passed": item.get("passed"),
+                "detail": item.get("detail"),
+            }
+            for item in checks[:20]
+            if isinstance(item, dict)
+        ]
+    else:
+        compact_checks = []
+    return [
+        _agent_detail(
+            "preflight",
+            {
+                "ready": preflight.get("ready"),
+                "namespace": preflight.get("namespace"),
+                "context": preflight.get("context"),
+                "blockers": preflight.get("blockers"),
+                "checks": compact_checks,
+            },
+        )
+    ]
+
+
+def _kubernetes_command_agent_details(payload: dict[str, Any]) -> list[str]:
+    commands = payload.get("commands")
+    if not isinstance(commands, list):
+        return []
+    compact = []
+    for item in commands:
+        if not isinstance(item, dict):
+            continue
+        command = item.get("command")
+        command_text = " ".join(str(part) for part in command) if isinstance(command, list) else ""
+        stdout = str(item.get("stdout", ""))
+        stderr = str(item.get("stderr", ""))
+        if any(
+            token in command_text for token in ("rollout", "get endpoints", "get events", "logs")
+        ):
+            compact.append(
+                {
+                    "command": command_text,
+                    "exit_status": item.get("exit_status"),
+                    "stdout_excerpt": stdout[:700],
+                    "stderr_excerpt": stderr[:300],
+                }
+            )
+    failed = [
+        item
+        for item in commands
+        if isinstance(item, dict) and item.get("exit_status") not in {0, None}
+    ]
+    return [
+        _agent_detail(
+            "kubernetes-commands",
+            {
+                "command_count": len(commands),
+                "failed_command_count": len(failed),
+                "selected_commands": compact[:10],
+            },
+        )
+    ]
+
+
+def _k6_agent_details(payload: dict[str, Any]) -> list[str]:
+    metrics = payload.get("metrics")
+    if not isinstance(metrics, dict):
+        return []
+    return [_agent_detail("k6-summary", {"metrics": _k6_summary_metrics(metrics)})]
+
+
+def _prometheus_memory_agent_details(payload: dict[str, Any]) -> list[str]:
+    queries = payload.get("queries")
+    if not isinstance(queries, dict):
+        return []
+    compact: dict[str, Any] = {}
+    for name, query_payload in queries.items():
+        if not isinstance(query_payload, dict):
+            continue
+        compact[name] = {
+            "ok": query_payload.get("ok"),
+            "series_count": query_payload.get("series_count", 0),
+            "series": query_payload.get("series", [])[:5],
+        }
+    return [_agent_detail("prometheus-memory", compact)]
+
+
+def _k6_summary_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
+    checks = metrics.get("checks")
+    http_reqs = metrics.get("http_reqs")
+    http_failed = metrics.get("http_req_failed")
+    duration = metrics.get("http_req_duration")
+    request_count = _metric_number(http_reqs, "count")
+    failure_rate = _metric_number(http_failed, "value")
+    failed_count = None
+    if request_count is not None and failure_rate is not None:
+        failed_count = round(request_count * failure_rate, 6)
+    summary: dict[str, Any] = {
+        "http_request_count": request_count,
+        "http_failure_rate": failure_rate,
+        "derived_failed_http_requests": failed_count,
+    }
+    if isinstance(checks, dict):
+        summary["checks"] = {
+            "passes": checks.get("passes", 0),
+            "fails": checks.get("fails", 0),
+            "value": checks.get("value"),
+        }
+    if isinstance(duration, dict):
+        summary["http_req_duration_ms"] = {
+            key: duration.get(key)
+            for key in ("avg", "min", "med", "max", "p(90)", "p(95)")
+            if key in duration
+        }
+    return summary
+
+
+def _metric_number(metrics: object, key: str) -> int | float | None:
+    if not isinstance(metrics, dict):
+        return None
+    value = metrics.get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return value
+
+
+def _agent_detail(source: str, payload: Any) -> str:
+    rendered = json.dumps(_jsonable(payload), sort_keys=True, ensure_ascii=True)
+    redacted = _redact_evidence_text(rendered)
+    if len(redacted) > AGENT_DETAIL_LIMIT:
+        redacted = redacted[: AGENT_DETAIL_LIMIT - 15] + "...<truncated>"
+    return f"{source}: {redacted}"
+
+
+def _bounded_agent_details(details: list[str]) -> tuple[str, ...]:
+    bounded: list[str] = []
+    total = 0
+    for detail in details:
+        if total + len(detail) > AGENT_DETAIL_TOTAL_LIMIT:
+            break
+        bounded.append(detail)
+        total += len(detail)
+    return tuple(bounded)
+
+
+def _agent_outputs(
+    context: ChamberAgentContext,
+    *,
+    mode: str,
+    excluded_agents: tuple[str, ...] = (),
+) -> dict[str, AGENT_OUTPUT_TYPES]:
     runner = OpenAIAgentsSdkRunner() if mode == "live" else None
     outputs: dict[str, AGENT_OUTPUT_TYPES] = {}
+    excluded = set(excluded_agents)
     for spec in _agent_specs():
+        if spec["name"] in excluded:
+            continue
         if runner is None:
             output = spec["offline"](context)
         else:
@@ -962,6 +1530,7 @@ def _agent_input(context: ChamberAgentContext, agent_name: str) -> str:
         "feature_request_constraints": {
             "evidence_bound": True,
             "available_evidence_ids": context.evidence_ids,
+            "evidence_summaries_are_authoritative": True,
             "must_not_invent_secrets": True,
             "must_not_mutate_target_repo": True,
             "must_not_bypass_safety_checks": True,
@@ -1134,6 +1703,17 @@ def _report_input(
                 str(summary_path),
             )
         )
+    if (run_dir / "evidence/prometheus-memory.json").exists():
+        evidence.append(
+            EvidenceReference(
+                "prometheus-memory",
+                "prometheus",
+                "memory_snapshot",
+                str(metadata.get("namespace", plan.get("namespace", ""))),
+                "from-file",
+                str(run_dir / "evidence/prometheus-memory.json"),
+            )
+        )
     return ReportInput(
         title="Ampule Chamber Reliability Report",
         service=ServiceMetadata(
@@ -1173,7 +1753,7 @@ def _report_input(
         ),
         retest_plan=("Rerun the same chamber config after remediation or config review.",),
         cleanup_notes=cleanup_notes,
-        limitations=tuple(
+        limitations=_unique_strings(
             plan.get("limitations")
             or ["Local guided workflow may not include live Kubernetes telemetry."]
         ),
@@ -1602,6 +2182,38 @@ def _agent_mode(config: dict[str, Any], override: str | None) -> str:
     return str(_mapping(config.get("agents", {}), "agents").get("mode", DEFAULT_AGENT_MODE))
 
 
+def _agent_exclusions(config: dict[str, Any], override: tuple[str, ...]) -> tuple[str, ...]:
+    configured = _optional_string_tuple(_mapping(config.get("agents", {}), "agents"), "exclude")
+    exclusions = _normalized_agent_names((*configured, *override))
+    _validate_agent_names(exclusions, source="agents.exclude")
+    return exclusions
+
+
+def _apply_agent_exclude_override(config: dict[str, Any], override: tuple[str, ...]) -> None:
+    if not override:
+        return
+    agents = config.setdefault("agents", {})
+    if not isinstance(agents, dict):
+        raise WorkflowError("agents must be a mapping")
+    agents["exclude"] = list(_agent_exclusions(config, override))
+
+
+def _validate_agent_names(values: tuple[str, ...], *, source: str) -> None:
+    unknown = tuple(value for value in values if value not in AGENT_NAMES)
+    if unknown:
+        allowed = ", ".join(AGENT_NAMES)
+        raise WorkflowError(
+            f"{source} contains unknown agent role(s): {', '.join(unknown)}; allowed: {allowed}"
+        )
+
+
+def _normalized_agent_names(values: tuple[str, ...]) -> tuple[str, ...]:
+    names: list[str] = []
+    for value in values:
+        names.extend(item.strip() for item in value.split(",") if item.strip())
+    return tuple(dict.fromkeys(names))
+
+
 def _agent_lines(output: object) -> tuple[str, ...]:
     payload = _jsonable(output)
     return _agent_payload_lines(payload)
@@ -1622,8 +2234,14 @@ def _agent_payload_lines(payload: dict[str, Any]) -> tuple[str, ...]:
         if isinstance(value, str):
             lines.append(f"{key}: {value}")
         elif isinstance(value, list):
-            lines.extend(f"{key}: {item}" for item in value)
+            lines.extend(f"{key}: {item}" for item in _unique_strings(value))
     return tuple(lines or ("No agent details recorded.",))
+
+
+def _unique_strings(values: object) -> tuple[str, ...]:
+    if not isinstance(values, (list, tuple)):
+        return ()
+    return tuple(dict.fromkeys(str(value) for value in values if str(value)))
 
 
 def _expected_run_files(run_dir: Path) -> tuple[Path, ...]:
@@ -1687,6 +2305,12 @@ def _list(value: Any, name: str) -> list[Any]:
 
 def _string_list(value: Any, name: str) -> list[str]:
     return [str(item) for item in _list(value, name)]
+
+
+def _optional_string_tuple(value: dict[str, Any], key: str) -> tuple[str, ...]:
+    if key not in value:
+        return ()
+    return tuple(_string_list(value[key], key))
 
 
 def _non_empty(value: Any, name: str) -> str:

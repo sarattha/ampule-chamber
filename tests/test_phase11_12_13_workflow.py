@@ -6,6 +6,7 @@ import subprocess
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Any, cast
 from unittest.mock import patch
 
 import chamber.workflow as workflow
@@ -125,6 +126,11 @@ class Phase11GuidedWorkflowTests(unittest.TestCase):
             invalid = dict(config)
             invalid["agents"] = {"mode": "robot"}
             with self.assertRaisesRegex(WorkflowError, "agents.mode"):
+                validate_config(invalid)
+
+            invalid = dict(config)
+            invalid["agents"] = {"mode": "offline", "exclude": ["unknown-agent"]}
+            with self.assertRaisesRegex(WorkflowError, "unknown agent role"):
                 validate_config(invalid)
 
             invalid = dict(config)
@@ -431,6 +437,27 @@ class Phase12AgentPipelineTests(unittest.TestCase):
             ],
         )
 
+    def test_agent_exclude_skips_selected_live_role(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = _fixture_repo(root)
+            config = infer_config(repo)
+            config["agents"] = {"mode": "live", "exclude": ["onboarding-agent"]}
+            config_path = root / "chamber.yaml"
+            save_config(config, config_path)
+            fake_runner = _FakeAgentsRunner()
+
+            with patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}, clear=True):
+                with patch("chamber.workflow.OpenAIAgentsSdkRunner", return_value=fake_runner):
+                    run_dir = plan_config(config_path, run_dir=root / ".chamber/runs/live-agents")
+
+            names = [call["name"] for call in fake_runner.calls]
+            self.assertNotIn("onboarding-agent", names)
+            self.assertFalse((run_dir / "agent/onboarding-agent.json").exists())
+            self.assertTrue((run_dir / "agent/run-supervisor-agent.json").exists())
+            metadata = json.loads((run_dir / "run-metadata.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["agent_exclude"], ["onboarding-agent"])
+
     def test_sdk_default_model_matches_phase12_live_target(self) -> None:
         self.assertEqual(OpenAIAgentsSdkRunner().model, "gpt-5.4-mini")
 
@@ -635,6 +662,187 @@ class Phase13OneCommandAssessmentTests(unittest.TestCase):
             any(command[0] == "kubectl" and "apply" in command for command in runner.commands)
         )
         self.assertTrue(any("delete" in command for command in runner.commands))
+        self.assertTrue(any("top" in command for command in runner.commands))
+
+    def test_kubernetes_k6_script_supports_multiple_memory_journeys(self) -> None:
+        script = workflow._k6_script_for_journeys(
+            (
+                {
+                    "name": "memory-health-ramp",
+                    "method": "GET",
+                    "path": "/health",
+                    "expectedStatus": 200,
+                    "stages": [{"duration": "5s", "targetVus": 1}],
+                },
+                {
+                    "name": "memory-large-text-admission",
+                    "method": "POST",
+                    "path": "/translations",
+                    "expectedStatus": 202,
+                    "iterations": 2,
+                    "body": {
+                        "task_id": "memory-large-text",
+                        "text": "Ampule memory payload. ",
+                        "language_target": "Thai",
+                    },
+                    "textBytes": 4096,
+                },
+                {
+                    "name": "memory-backpressure-read",
+                    "method": "GET",
+                    "path": "/relayna/runtime/backpressure",
+                    "expectedStatus": 200,
+                    "iterations": 1,
+                },
+            ),
+            base_url="http://127.0.0.1:18891",
+        )
+
+        self.assertIn("memory_health_ramp", script)
+        self.assertIn("memory_large_text_admission", script)
+        self.assertIn("memory_backpressure_read", script)
+        self.assertIn('"textBytes": 4096', script)
+        self.assertIn("body.task_id = `${body.task_id}-${__VU}-${__ITER}-${Date.now()}`", script)
+        self.assertIn('"startTime": "5s"', script)
+
+    def test_kubernetes_k6_script_uses_unique_function_names_for_collisions(self) -> None:
+        script = workflow._k6_script_for_journeys(
+            (
+                {
+                    "name": "health-check",
+                    "method": "GET",
+                    "path": "/health",
+                    "expectedStatus": 200,
+                    "iterations": 1,
+                },
+                {
+                    "name": "health_check",
+                    "method": "GET",
+                    "path": "/health",
+                    "expectedStatus": 200,
+                    "iterations": 1,
+                },
+            ),
+            base_url="http://127.0.0.1:18891",
+        )
+
+        self.assertIn("export function health_check_1()", script)
+        self.assertIn("export function health_check_2()", script)
+        self.assertIn('"health_check_1": {"body": null', script)
+        self.assertIn('"health_check_2": {"body": null', script)
+        self.assertIn("runJourney('health_check_1')", script)
+        self.assertIn("runJourney('health_check_2')", script)
+
+    def test_prometheus_query_url_rejects_non_http_urls(self) -> None:
+        result = workflow._prometheus_query(
+            "file:///etc/passwd",
+            'container_memory_working_set_bytes{namespace="chamber-test"}',
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertIn("HTTP(S) URL", result["error"])
+        self.assertEqual(result["series"], [])
+
+    def test_prometheus_query_url_builds_http_path(self) -> None:
+        url = workflow._prometheus_query_url(
+            "https://prometheus.example/base/",
+            'container_memory_working_set_bytes{namespace="chamber-test"}',
+        )
+
+        self.assertTrue(url.startswith("https://prometheus.example/base/api/v1/query?"))
+        self.assertIn("container_memory_working_set_bytes", url)
+        self.assertIn("namespace%3D%22chamber-test%22", url)
+
+    def test_local_assessment_keeps_live_execution_missing_signal(self) -> None:
+        self.assertEqual(
+            workflow._agent_missing_signals(
+                stage="assess",
+                evidence_ids=("plan", "local-assessment"),
+            ),
+            ("live Kubernetes execution",),
+        )
+
+    def test_runtime_assessment_clears_live_execution_missing_signal(self) -> None:
+        self.assertEqual(
+            workflow._agent_missing_signals(
+                stage="assess",
+                evidence_ids=("plan", "kubernetes-commands"),
+            ),
+            (),
+        )
+
+    def test_kubernetes_live_agents_receive_runtime_evidence(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = _fixture_repo(root)
+            config_path = root / "chamber.yaml"
+            config = _kubernetes_config(repo)
+            agents = cast(dict[str, Any], config["agents"])
+            agents["mode"] = "live"
+            save_config(config, config_path)
+            runner = _FakeKubernetesRunner()
+            fake_agents = _FakeAgentsRunner()
+
+            def fake_traffic(**kwargs: object) -> dict[str, object]:
+                run_dir_arg = cast(Path, kwargs["run_dir"])
+                (run_dir_arg / "evidence/k6-summary.json").write_text(
+                    json.dumps(
+                        {
+                            "metrics": {
+                                "checks": {"passes": 1, "fails": 0, "value": 1},
+                                "http_req_failed": {"fails": 1, "passes": 0, "value": 0},
+                                "http_reqs": {"count": 1, "rate": 42.0},
+                            }
+                        }
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                return {
+                    "success": True,
+                    "command": ["k6", "run", "traffic.js"],
+                    "exit_status": 0,
+                    "stdout": "ok",
+                    "stderr": "",
+                    "summary_path": "evidence/k6-summary.json",
+                }
+
+            with patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}, clear=True):
+                with patch("chamber.workflow.OpenAIAgentsSdkRunner", return_value=fake_agents):
+                    with patch("chamber.workflow.Path.cwd", return_value=root):
+                        with patch(
+                            "chamber.workflow._execute_kubernetes_traffic",
+                            side_effect=fake_traffic,
+                        ):
+                            run_dir = workflow._assess_kubernetes_config(
+                                config_path,
+                                agents_mode=None,
+                                context="dev-cluster",
+                                prometheus_url="http://prometheus.example",
+                                runner=runner,
+                            )
+
+        self.assertEqual(len(fake_agents.calls), 12)
+        assess_calls = fake_agents.calls[6:]
+        for call in assess_calls:
+            payload = json.loads(str(call["input_text"]))
+            context = payload["context"]
+            self.assertEqual(context["missing_signals"], [])
+            self.assertIn("k6-summary", context["evidence_ids"])
+            self.assertIn("kubernetes-commands", context["evidence_ids"])
+            self.assertIn("traffic success: True", context["evidence_summaries"])
+            self.assertIn("cleanup performed: True", context["evidence_summaries"])
+            self.assertTrue(any("plan:" in item for item in context["evidence_details"]))
+            self.assertTrue(
+                any("kubernetes-commands:" in item for item in context["evidence_details"])
+            )
+            self.assertTrue(any("k6-summary:" in item for item in context["evidence_details"]))
+            details = "\n".join(context["evidence_details"])
+            summaries = "\n".join(context["evidence_summaries"])
+            self.assertIn('"derived_failed_http_requests": 0', details)
+            self.assertIn("k6 derived failed http requests: 0", summaries)
+            self.assertNotIn('"http_req_failed"', details)
+        self.assertTrue((run_dir / "agent/run-supervisor-agent.json").exists())
 
     def test_kubernetes_assess_persists_failure_evidence_before_reraising(self) -> None:
         with TemporaryDirectory() as tmp:
