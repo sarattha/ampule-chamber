@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from chamber.contracts.lifecycle import RunState, is_allowed_transition
 from chamber.contracts.scenario import (
@@ -54,20 +55,20 @@ class ScenarioContractTests(unittest.TestCase):
             validate_scenario_document({"apiVersion": "chamber.ampule.dev/v1alpha1"})
 
     def test_invalid_yaml_reports_parse_error(self) -> None:
-        path = ROOT / "docs/internal/phases/phase-01-foundation/artifacts/invalid-scenario.tmp.yaml"
-        path.write_text("apiVersion: [", encoding="utf-8")
-        self.addCleanup(path.unlink, missing_ok=True)
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "invalid-scenario.yaml"
+            path.write_text("apiVersion: [", encoding="utf-8")
 
-        with self.assertRaisesRegex(ScenarioValidationError, "invalid YAML"):
-            load_scenario(path)
+            with self.assertRaisesRegex(ScenarioValidationError, "invalid YAML"):
+                load_scenario(path)
 
     def test_scalar_yaml_is_rejected(self) -> None:
-        path = ROOT / "docs/internal/phases/phase-01-foundation/artifacts/scalar-scenario.tmp.yaml"
-        path.write_text("not-a-mapping", encoding="utf-8")
-        self.addCleanup(path.unlink, missing_ok=True)
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "scalar-scenario.yaml"
+            path.write_text("not-a-mapping", encoding="utf-8")
 
-        with self.assertRaisesRegex(ScenarioValidationError, "must be a YAML mapping"):
-            load_scenario(path)
+            with self.assertRaisesRegex(ScenarioValidationError, "must be a YAML mapping"):
+                load_scenario(path)
 
     def test_optional_metadata_tags_must_be_strings(self) -> None:
         scenario = load_scenario(SCENARIO_DIR / "baseline-health.yaml").document

@@ -1,6 +1,6 @@
 # Ampule Chamber
 
-Version: 1.3.0
+Version: 1.4.0
 
 Ampule Chamber is a production-ready reliability testing chamber for Kubernetes
 services before production. It deploys services into isolated chamber
@@ -9,11 +9,9 @@ collects runtime evidence, and produces evidence-backed readiness reports.
 
 ## Production-Ready Release
 
-The `1.3.0` release adds Kubernetes attach mode for assessing already-live
-non-production deployments without redeploying or deleting externally owned
-resources while preserving the guided workflow, standard run directory, bounded
-agent pipeline, report generation, release metadata checks, and GitHub Actions
-automation needed for repeatable release operations.
+The `1.4.0` release adds a local control-plane UI for guided setup, live run
+control, evidence-backed results, exports, and comparison. CLI and UI use the
+same safety rules, application services, and reconstructable run store.
 
 ## Core Commands
 
@@ -23,6 +21,7 @@ uv run ampule-chamber onboard --repo ../target-service --output chamber.yaml
 uv run ampule-chamber plan --config chamber.yaml
 uv run ampule-chamber assess --config chamber.yaml --mode local
 uv run ampule-chamber report --run .chamber/runs/<run-id>
+uv run ampule-chamber ui
 ```
 
 For a supported local service repository, the shortcut is:
@@ -44,6 +43,8 @@ uv run ampule-chamber assess \
 
 See [Generic Kubernetes Assessment](kubernetes-assessment.md) for the safety
 model, minimal config, provider credential examples, and troubleshooting.
+See [Control Plane UI](control-plane.md) for local setup, screens, API boundary,
+and security behavior.
 
 ## Evidence Model
 

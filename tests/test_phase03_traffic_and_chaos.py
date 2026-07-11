@@ -16,7 +16,7 @@ from chamber.orchestrator import build_experiment_timeline
 
 ROOT = Path(__file__).resolve().parents[1]
 SCENARIO_DIR = ROOT / "scenarios"
-ARTIFACT_DIR = ROOT / "docs/internal/phases/phase-03-traffic-and-chaos/artifacts"
+ARTIFACT_DIR = ROOT / "tests/fixtures"
 
 
 class Phase03TrafficPlanningTests(unittest.TestCase):

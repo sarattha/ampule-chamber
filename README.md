@@ -1,6 +1,6 @@
 # Ampule Chamber
 
-Version: 1.3.0
+Version: 1.4.0
 
 Production-ready release for agent-driven reliability testing of Kubernetes
 services before production.
@@ -15,9 +15,9 @@ teams that need to answer:
 
 ## Release Status
 
-Ampule Chamber `1.3.0` adds Kubernetes attach mode for assessing already-live
-non-production deployments without redeploying or deleting externally owned
-resources, while preserving the deploy-oriented chamber namespace workflow.
+Ampule Chamber `1.4.0` adds a local control-plane UI for guided setup, live
+execution, evidence-backed results, exports, and run comparison. The CLI and UI
+share the same safety validation, application services, and durable run store.
 
 ## What It Tests
 
@@ -64,6 +64,20 @@ uv run ampule-chamber assess --config chamber.yaml --mode local
 uv run ampule-chamber report --run .chamber/runs/<run-id>
 ```
 
+For a modern local UI over the same workflow, install the `ui` extra (the dev
+group already includes it) and start the loopback-only control plane:
+
+```bash
+uv sync --extra ui
+uv run ampule-chamber ui
+```
+
+Open `http://127.0.0.1:8765` if browser launch is disabled. Use the wizard to
+inspect a repository, select local, isolated deploy, or attach mode, choose a
+traffic profile and optional attach fault template, review the generated plan,
+then explicitly start execution. Remote binding is rejected unless
+`--allow-remote` is supplied.
+
 For a reviewed config and a non-production Kubernetes context, generic
 Kubernetes deploy mode uses `kubectl` and chamber-owned namespaces:
 
@@ -80,7 +94,7 @@ Scenario-based live kind runs remain available:
 ```bash
 uv run ampule-chamber run \
   --scenario scenarios/baseline-health.yaml \
-  --output docs/internal/phases/phase-06-live-manual-chamber-mvp/artifacts/live-baseline-report.md \
+  --output .chamber/reports/live-baseline-report.md \
   --prometheus-url http://127.0.0.1:9090
 ```
 
@@ -116,6 +130,7 @@ Documentation entry points:
 - `docs/index.md`
 - `docs/getting-started.md`
 - `docs/guided-workflow.md`
+- `docs/control-plane.md`
 - `docs/kubernetes-assessment.md`
 - `docs/agent-pipeline.md`
 - `docs/release-process.md`
@@ -142,7 +157,10 @@ ampule-chamber/
 │   ├── analysis/
 │   ├── onboarding/
 │   ├── agents/
-│   └── report/
+│   ├── report/
+│   ├── application/
+│   ├── control_plane/
+│   └── runs/
 ├── docs/
 ├── agents/
 ├── scenarios/

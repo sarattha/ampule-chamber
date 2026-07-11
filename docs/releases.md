@@ -1,5 +1,22 @@
 # Releases
 
+## 1.4.0 - 2026-07-11
+
+Ampule Chamber `1.4.0` adds a local control plane without splitting the CLI and
+UI reliability engines.
+
+Highlights:
+
+- Guided setup for local, isolated Kubernetes deploy, and existing-deployment
+  attach cases.
+- Live run state, cancel-and-cleanup, timelines, findings, evidence, exports,
+  and compatible-run comparison.
+- Collision-safe durable run records, append-only events, evidence digests, and
+  a rebuildable local index.
+- Evidence-gated readiness: missing required signals produce an inconclusive
+  result instead of an invented score.
+- Docker Desktop kind acceptance coverage for deploy and attach workflows.
+
 ## 1.3.0 - 2026-06-26
 
 Ampule Chamber `1.3.0` adds Kubernetes attach mode for already-live

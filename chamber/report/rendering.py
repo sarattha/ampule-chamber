@@ -116,6 +116,13 @@ class ReportInput:
     adapted_workloads: tuple[str, ...] = ()
     redacted_config: tuple[str, ...] = ()
     external_dependencies: tuple[str, ...] = ()
+    assessment_status: str | None = None
+    readiness_score: int | None = None
+    conclusive: bool | None = None
+    evidence_coverage_percent: int | None = None
+    execution_coverage_percent: int | None = None
+    rollback_verified: bool | None = None
+    cleanup_verified: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -164,6 +171,9 @@ def render_markdown_report(report: ReportInput) -> str:
     """Render a deterministic markdown reliability report."""
 
     readiness = score_readiness(report.findings)
+    status = report.assessment_status or readiness.label
+    score = report.readiness_score if report.assessment_status else readiness.score
+    score_text = f"{score}/100" if score is not None else "N/A"
     lines = [
         f"# {report.title}",
         "",
@@ -189,8 +199,9 @@ def render_markdown_report(report: ReportInput) -> str:
         f"- Faults: {report.scenario.fault_summary}",
         "",
         "## Readiness Score",
-        f"- Score: {readiness.score}/100",
-        f"- Status: {readiness.label}",
+        f"- Score: {score_text}",
+        f"- Status: {status}",
+        *_result_detail_lines(report),
         "",
         "## Key Findings",
     ]
@@ -334,6 +345,13 @@ def _report_input(raw: dict[str, Any]) -> ReportInput:
         adapted_workloads=tuple(_optional_string_list(raw, "adapted_workloads")),
         redacted_config=tuple(_optional_string_list(raw, "redacted_config")),
         external_dependencies=tuple(_optional_string_list(raw, "external_dependencies")),
+        assessment_status=_optional_string(raw, "assessment_status"),
+        readiness_score=_optional_integer(raw, "readiness_score"),
+        conclusive=_optional_boolean(raw, "conclusive"),
+        evidence_coverage_percent=_optional_integer(raw, "evidence_coverage_percent"),
+        execution_coverage_percent=_optional_integer(raw, "execution_coverage_percent"),
+        rollback_verified=_optional_boolean(raw, "rollback_verified"),
+        cleanup_verified=_optional_boolean(raw, "cleanup_verified"),
     )
 
 
@@ -453,6 +471,42 @@ def _integer(raw: dict[str, Any], key: str) -> int:
     if not isinstance(value, int):
         raise ValueError(f"report fixture field {key!r} must be an integer")
     return value
+
+
+def _optional_string(raw: dict[str, Any], key: str) -> str | None:
+    if key not in raw or raw[key] is None:
+        return None
+    return _string(raw, key)
+
+
+def _optional_integer(raw: dict[str, Any], key: str) -> int | None:
+    if key not in raw or raw[key] is None:
+        return None
+    return _integer(raw, key)
+
+
+def _optional_boolean(raw: dict[str, Any], key: str) -> bool | None:
+    value = raw.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, bool):
+        raise ValueError(f"report fixture field {key!r} must be a boolean")
+    return value
+
+
+def _result_detail_lines(report: ReportInput) -> list[str]:
+    lines = []
+    if report.conclusive is not None:
+        lines.append(f"- Conclusive: {'yes' if report.conclusive else 'no'}")
+    if report.evidence_coverage_percent is not None:
+        lines.append(f"- Evidence coverage: {report.evidence_coverage_percent}%")
+    if report.execution_coverage_percent is not None:
+        lines.append(f"- Execution coverage: {report.execution_coverage_percent}%")
+    if report.rollback_verified is not None:
+        lines.append(f"- Rollback verified: {'yes' if report.rollback_verified else 'no'}")
+    if report.cleanup_verified is not None:
+        lines.append(f"- Cleanup verified: {'yes' if report.cleanup_verified else 'no'}")
+    return lines
 
 
 def _severity(value: str) -> str:

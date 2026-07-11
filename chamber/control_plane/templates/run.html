@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}{{ run_id }} · Ampule Chamber{% endblock %}
+{% block content %}
+{% set record = run_data.run %}{% set result = run_data.result %}{% set metadata = run_data.metadata %}
+<div class="run-context"><div><a href="/runs">Runs</a><span>/</span><strong>{{ metadata.service_name or run_id }}</strong></div><span class="pill {{ record.state or 'planned' }}">{{ record.state or 'planned' }}</span></div>
+<div class="page-heading split">
+  <div><div class="eyebrow">{{ run_id }}</div><h1>{{ (result.status or record.state or 'Planned') | replace('_', ' ') | title }}</h1><p>{{ result.summary or ('Review the generated configuration before starting execution.' if record.state == 'planned' else 'Evidence-backed reliability assessment') }}</p></div>
+  <div class="action-row">
+    {% if record.state == 'planned' %}<form method="post" action="/ui/runs/{{ run_id }}/start"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="button primary" type="submit">Start assessment</button></form>{% endif %}
+    {% if record.state in ['completed', 'failed', 'cancelled'] %}<a class="button" href="/api/v1/runs/{{ run_id }}/report?format=html">View report</a><a class="button primary" href="/compare?candidate={{ run_id }}">Compare</a>{% endif %}
+  </div>
+</div>
+<nav class="tabbar" aria-label="Run details">
+{% for tab in ['overview','timeline','findings','evidence','configuration','agents'] %}<a class="{{ 'active' if selected_tab == tab else '' }}" href="/runs/{{ run_id }}?tab={{ tab }}">{{ tab | title }}{% if tab == 'findings' and run_data.findings %} · {{ run_data.findings | length }}{% endif %}{% if tab == 'evidence' and run_data.evidence %} · {{ run_data.evidence | length }}{% endif %}</a>{% endfor %}
+</nav>
+
+{% if selected_tab == 'overview' %}
+<div class="result-grid">
+  <section class="panel"><div class="card-heading"><h2>Prioritized findings</h2><a href="?tab=findings">Open all</a></div>{% if run_data.findings %}<div class="finding-list">{% for item in run_data.findings[:4] %}<article class="finding"><span class="pill severity-{{ item.severity or 'info' }}">{{ item.severity or 'Info' }}</span><div><h3>{{ item.title or item.finding_id }}</h3><p>{{ item.summary or item.hypothesis or 'Inspect evidence and recommendation.' }}</p></div></article>{% endfor %}</div>{% else %}<div class="quiet-state">No findings recorded yet.</div>{% endif %}</section>
+  <aside class="panel score-panel"><h2>Readiness</h2><div class="score"><strong>{{ result.readiness_score if result.readiness_score is not none else 'N/A' }}</strong>{% if result.readiness_score is not none %}<span>/ 100</span>{% endif %}</div><div class="metric"><span>Evidence coverage</span><strong>{{ result.evidence_coverage_percent or 0 }}%</strong></div><div class="metric"><span>Execution coverage</span><strong>{{ result.execution_coverage_percent or 0 }}%</strong></div><div class="metric"><span>Rollback</span><strong>{{ 'Verified' if result.rollback_verified else 'Not verified' }}</strong></div><div class="metric"><span>Cleanup</span><strong>{{ 'Verified' if result.cleanup_verified else 'Not verified' }}</strong></div></aside>
+</div>
+{% elif selected_tab == 'timeline' %}
+<section class="panel"><div class="card-heading"><h2>Run timeline</h2><span class="muted">{{ run_data.events | length }} events</span></div><ol class="timeline">{% for event in run_data.events %}<li><time>{{ event.timestamp or event.created_at or '—' }}</time><div><strong>{{ (event.event_type or event.type or 'Event') | replace('_',' ') | title }}</strong><pre>{{ event | tojson(indent=2) }}</pre></div></li>{% else %}<li class="quiet-state">No lifecycle events yet.</li>{% endfor %}</ol></section>
+{% elif selected_tab == 'findings' %}
+<section class="panel"><div class="card-heading"><h2>Findings</h2><span class="muted">Facts and hypotheses remain distinct</span></div>{% for item in run_data.findings %}<article class="finding detail"><span class="pill severity-{{ item.severity or 'info' }}">{{ item.severity or 'Info' }}</span><div><h3>{{ item.title or item.finding_id }}</h3><p>{{ item.summary or item.hypothesis }}</p><dl><div><dt>Finding ID</dt><dd>{{ item.finding_id }}</dd></div><div><dt>Confidence</dt><dd>{{ item.confidence or 'Unspecified' }}</dd></div></dl></div></article>{% else %}<div class="quiet-state">No findings recorded.</div>{% endfor %}</section>
+{% elif selected_tab == 'evidence' %}
+<section class="table-card"><div class="card-heading"><h2>Registered evidence</h2><span class="muted">SHA-256 integrity checked</span></div><div class="table-scroll"><table><thead><tr><th>Evidence</th><th>Source</th><th>Signal</th><th>Digest</th></tr></thead><tbody>{% for item in run_data.evidence %}<tr><td><a href="/api/v1/runs/{{ run_id }}/evidence/{{ item.evidence_id }}">{{ item.relative_path }}</a></td><td>{{ item.source }}</td><td>{{ item.signal_type }}</td><td class="mono">{{ item.sha256[:12] }}…</td></tr>{% else %}<tr><td colspan="4">No registered evidence yet.</td></tr>{% endfor %}</tbody></table></div></section>
+{% elif selected_tab == 'configuration' %}<section class="panel code-panel"><div class="card-heading"><h2>Resolved configuration</h2><span class="pill safe">Plan-only until started</span></div><pre>{{ run_data.config | tojson(indent=2) }}</pre></section>
+{% elif selected_tab == 'agents' %}<section class="panel code-panel"><div class="card-heading"><h2>Agent outputs</h2><span class="muted">Evidence-bound and schema validated</span></div>{% if run_data.agents %}{% for name, value in run_data.agents.items() %}<details><summary>{{ name | replace('-', ' ') | title }}</summary><pre>{{ value | tojson(indent=2) }}</pre></details>{% endfor %}{% else %}<div class="quiet-state">No agent outputs recorded.</div>{% endif %}</section>{% endif %}
+{% endblock %}

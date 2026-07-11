@@ -1,0 +1,47 @@
+apiVersion: chamber.ampule.dev/v1alpha1
+kind: ChamberConfig
+service:
+  name: sample-service-attach
+  repo: examples/sample-service
+deployment:
+  manifests: []
+  images: {}
+  workloads:
+    - name: sample-service
+      role: target
+      kind: Deployment
+  services:
+    - name: sample-service
+      port: 8080
+traffic:
+  entrypoint: sample-service
+  journeys:
+    - name: attached-health-baseline
+      tool: k6
+      method: GET
+      path: /healthz
+      expectedStatus: 200
+      stages:
+        - duration: 5s
+          targetVus: 1
+        - duration: 3s
+          targetVus: 0
+dependencies:
+  internal: []
+  external: []
+runtime:
+  provider: kubernetes
+  mode: attach
+  kubernetesContext: kind-ampule-chamber
+  namespace: chamber-sample-attach
+  cleanup: false
+  trafficAccess:
+    mode: port-forward
+    service: sample-service
+    servicePort: 8080
+  faults: []
+  requiredEnv: []
+  secretEnv: []
+  config: {}
+agents:
+  mode: offline

@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Live assessment · Ampule Chamber{% endblock %}
+{% block content %}
+<div class="live-page" data-job-id="{{ job.job_id }}">
+  <div class="page-heading split"><div><div class="eyebrow">Live execution</div><h1 data-job-title>{{ job.state | replace('_',' ') | title }}</h1><p data-job-message>Preflight, environment, exercise, evidence, rollback, and cleanup run as one bounded workflow.</p></div><form method="post" action="/ui/jobs/{{ job.job_id }}/cancel" data-cancel-form><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="button danger" type="submit" {% if job.state in ['completed','failed','cancelled'] %}disabled{% endif %}>Cancel and clean up</button></form></div>
+  <div class="live-grid">
+    <section class="panel"><div class="card-heading"><h2>Live timeline</h2><span class="live-badge"><i></i><span data-job-state>{{ job.state }}</span></span></div><ol class="stage-list"><li class="active"><span>1</span><div><strong>Preflight and plan</strong><small>Context, tools, target, budget, and safety policy</small></div></li><li><span>2</span><div><strong>Environment ready</strong><small>Workloads, access path, and baseline collection</small></div></li><li><span>3</span><div><strong>Traffic and faults</strong><small>Bounded experiments with recovery windows</small></div></li><li><span>4</span><div><strong>Analysis and report</strong><small>Registered evidence, findings, rollback, and cleanup</small></div></li></ol><pre class="job-output" data-job-output>Waiting for assessment process…</pre></section>
+    <aside class="panel"><h2>Safety context</h2><div class="metric"><span>Mode</span><strong>{{ job.mode }}</strong></div><div class="metric"><span>Context</span><strong>{{ job.context or 'Local' }}</strong></div><div class="metric"><span>Run</span><strong data-run-id>{{ job.run_id or 'Allocating…' }}</strong></div><div class="metric"><span>Cancel policy</span><strong>Cleanup first</strong></div><div class="coverage-card"><span>Evidence coverage</span><strong data-coverage>Collecting</strong><p>Coverage is conclusive only after required signals are registered and verified.</p></div></aside>
+  </div>
+</div>
+{% endblock %}

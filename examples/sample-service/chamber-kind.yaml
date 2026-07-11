@@ -1,0 +1,48 @@
+apiVersion: chamber.ampule.dev/v1alpha1
+kind: ChamberConfig
+service:
+  name: sample-service
+  repo: examples/sample-service
+deployment:
+  manifests:
+    - kubernetes.yaml
+  images:
+    sample-service:
+      dockerfile: Dockerfile
+      context: .
+      image: ampule/sample-service:kind
+  workloads:
+    - name: sample-service
+      role: target
+      kind: Deployment
+traffic:
+  entrypoint: sample-service
+  journeys:
+    - name: health-baseline
+      tool: k6
+      method: GET
+      path: /healthz
+      expectedStatus: 200
+      stages:
+        - duration: 10s
+          targetVus: 2
+        - duration: 5s
+          targetVus: 0
+dependencies:
+  internal: []
+  external: []
+runtime:
+  provider: kubernetes
+  mode: deploy
+  kubernetesContext: kind-ampule-chamber
+  namespaceBase: chamber-sample-service
+  cleanup: true
+  trafficAccess:
+    mode: port-forward
+    service: sample-service
+    servicePort: 8080
+  requiredEnv: []
+  secretEnv: []
+  config: {}
+agents:
+  mode: offline

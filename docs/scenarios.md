@@ -27,6 +27,6 @@ The live runner remains available for scenario-based kind runs:
 ```bash
 uv run ampule-chamber run \
   --scenario scenarios/baseline-health.yaml \
-  --output docs/internal/phases/phase-06-live-manual-chamber-mvp/artifacts/live-baseline-report.md \
+  --output .chamber/reports/live-baseline-report.md \
   --prometheus-url http://127.0.0.1:9090
 ```

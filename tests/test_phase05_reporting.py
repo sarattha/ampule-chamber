@@ -27,7 +27,6 @@ from chamber.report import (
 from chamber.report.cli import main as report_cli_main
 
 ROOT = Path(__file__).resolve().parents[1]
-PHASE05_ARTIFACT_DIR = ROOT / "docs/internal/phases/phase-05-reporting-mvp-hardening/artifacts"
 
 
 class Phase05ReportingTests(unittest.TestCase):
@@ -150,17 +149,17 @@ class Phase05ReportingTests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             self.assertIn("# Ampule Chamber Reliability Report", stdout.getvalue())
 
-    def test_phase05_sample_fixture_renders_expected_sections(self) -> None:
-        fixture_path = PHASE05_ARTIFACT_DIR / "sample-report-input.json"
-        if not fixture_path.exists():
-            self.skipTest("phase 05 sample fixture is created during implementation")
+    def test_sample_fixture_renders_expected_sections(self) -> None:
+        with TemporaryDirectory() as tmp:
+            fixture_path = Path(tmp) / "sample-report-input.json"
+            fixture_path.write_text(json.dumps(_fixture_dict()), encoding="utf-8")
 
-        report = load_report_input(fixture_path)
-        markdown = render_markdown_report(report)
+            report = load_report_input(fixture_path)
+            markdown = render_markdown_report(report)
 
-        self.assertIn("dependency-failure-001", markdown)
-        self.assertIn("live-dependency-fault-k6-summary.json", markdown)
-        self.assertIn("## Known Limitations", markdown)
+            self.assertIn("dependency-failure-001", markdown)
+            self.assertIn("artifact.json", markdown)
+            self.assertIn("## Known Limitations", markdown)
 
     def test_report_deduplicates_limitations_and_agent_lines(self) -> None:
         report = _report_input()

@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}New assessment · Ampule Chamber{% endblock %}
+{% block content %}
+<form method="post" action="/ui/plan" class="wizard" data-wizard>
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <div class="wizard-steps" aria-label="Assessment steps">
+    <button type="button" class="wizard-step active" data-step-button="0"><span>1</span> Target</button>
+    <button type="button" class="wizard-step" data-step-button="1"><span>2</span> Environment</button>
+    <button type="button" class="wizard-step" data-step-button="2"><span>3</span> Exercise</button>
+    <button type="button" class="wizard-step" data-step-button="3"><span>4</span> Review</button>
+  </div>
+  {% if error %}<div class="alert danger" role="alert">{{ error }}</div>{% endif %}
+
+  <section class="wizard-panel" data-step="0">
+    <div class="page-heading split"><div><div class="eyebrow">Step 1 of 4</div><h1>Choose the service to assess</h1><p>Chamber inspects the repository and builds an editable plan. Planning never changes the target.</p></div><span class="pill safe">Read-only</span></div>
+    <div class="panel form-panel"><label for="repo">Repository path</label><input id="repo" name="repo" required value="{{ request.query_params.get('repo', '') }}" placeholder="/Users/you/code/payments"><p class="help">Use an absolute local path. Source files are inspected locally.</p><label for="service_name">Service name <span class="optional">optional override</span></label><input id="service_name" name="service_name" placeholder="payments"></div>
+  </section>
+
+  <section class="wizard-panel" data-step="1" hidden>
+    <div class="page-heading split"><div><div class="eyebrow">Step 2 of 4</div><h1>Choose the chamber environment</h1><p>Every Kubernetes run requires an explicit context and passes preflight before mutation.</p></div><span class="pill {{ 'safe' if capabilities.ready_for_kind else 'warning' }}">{{ 'Ready for kind' if capabilities.ready_for_kind else 'Tools need attention' }}</span></div>
+    <div class="mode-grid" role="radiogroup" aria-label="Execution environment">
+      <label class="mode-card selected"><input type="radio" name="execution_mode" value="local" checked><strong>Local artifact assessment</strong><span>Inspect configuration and create a non-conclusive report without touching Kubernetes.</span></label>
+      <label class="mode-card"><input type="radio" name="execution_mode" value="kubernetes"><strong>Kubernetes chamber</strong><span>Deploy into isolation or attach to an explicit non-production namespace.</span></label>
+    </div>
+    <div class="panel form-grid" data-kubernetes-fields hidden>
+      <label>Kubernetes context<input name="kubernetes_context" placeholder="kind-ampule-chamber"></label>
+      <label>Runtime mode<select name="runtime_mode"><option value="deploy">Deploy isolated</option><option value="attach">Attach existing</option></select></label>
+      <label>Namespace<input name="namespace" placeholder="Generated for deploy"></label>
+      <label>Prometheus URL <span class="optional">optional</span><input name="prometheus_url" type="url" placeholder="http://prometheus.monitoring:9090"></label>
+    </div>
+    <div class="capability-row">{% for tool, available in capabilities.tools.items() %}<span class="capability {{ 'ok' if available else 'missing' }}"><i></i>{{ tool }} {{ 'ready' if available else 'missing' }}</span>{% endfor %}</div>
+  </section>
+
+  <section class="wizard-panel" data-step="2" hidden>
+    <div class="page-heading"><div class="eyebrow">Step 3 of 4</div><h1>Define the exercise</h1><p>Start with a calm health journey. The generated YAML remains the complete source of truth.</p></div>
+    <div class="panel form-grid">
+      <label>Service port<input name="service_port" type="number" min="1" max="65535" value="8080"></label>
+      <label>Traffic path<input name="traffic_path" value="/health"></label>
+      <label>Traffic profile<select name="traffic_profile"><option value="smoke">Smoke · 1 VU</option><option value="baseline" selected>Baseline · 4 VUs</option><option value="stress">Stress · ramp to 25 VUs</option></select></label>
+      <label>Attach fault template<select name="fault_type"><option value="none">Observe only</option><option value="pod_kill">Kill one pod and verify recovery</option><option value="deployment_scale">Scale deployment to zero and restore</option></select><span class="help">Faults run only in attach mode and require an explicit allow-faults label.</span></label>
+      <label>Agent mode<select name="agents_mode"><option value="offline">Offline deterministic</option><option value="off">Disabled</option><option value="live">Live OpenAI agents</option></select></label>
+      <div class="field-note"><strong>Reusable templates</strong><span>Profiles are converted to explicit stages in the resolved ChamberConfig.</span></div>
+    </div>
+  </section>
+
+  <section class="wizard-panel" data-step="3" hidden>
+    <div class="page-heading"><div class="eyebrow">Step 4 of 4</div><h1>Review the safety receipt</h1><p>Chamber will create a durable plan first. You explicitly start execution from the plan page.</p></div>
+    <div class="review-grid">
+      <div class="panel"><h2>Target</h2><dl><div><dt>Repository</dt><dd data-review="repo">—</dd></div><div><dt>Service</dt><dd data-review="service_name">Inferred</dd></div></dl></div>
+      <div class="panel"><h2>Environment</h2><dl><div><dt>Mode</dt><dd data-review="execution_mode">Local</dd></div><div><dt>Context</dt><dd data-review="kubernetes_context">Not applicable</dd></div></dl></div>
+      <div class="panel"><h2>Exercise</h2><dl><div><dt>Journey</dt><dd data-review="traffic_path">/health</dd></div><div><dt>Profile</dt><dd data-review="traffic_profile">Baseline</dd></div><div><dt>Fault</dt><dd data-review="fault_type">Observe only</dd></div><div><dt>Agents</dt><dd data-review="agents_mode">Offline</dd></div></dl></div>
+      <div class="panel safety-card"><h2>Safety contract</h2><ul><li>Explicit context for live execution</li><li>Production-like context names rejected</li><li>Bounded traffic and fault windows</li><li>Cancel triggers rollback and cleanup</li><li>Reports cite registered evidence only</li></ul></div>
+    </div>
+  </section>
+
+  <div class="wizard-actions"><button class="button" type="button" data-back disabled>Back</button><div><button class="button subtle" type="button" data-advanced>Preview values</button><button class="button primary" type="button" data-next>Continue</button><button class="button primary" type="submit" data-submit hidden>Create plan</button></div></div>
+</form>
+{% endblock %}
