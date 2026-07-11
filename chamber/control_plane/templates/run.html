@@ -4,9 +4,9 @@
 {% set record = run_data.run %}{% set result = run_data.result %}{% set metadata = run_data.metadata %}
 <div class="run-context"><div><a href="/runs">Runs</a><span>/</span><strong>{{ metadata.service_name or run_id }}</strong></div><span class="pill {{ record.state or 'planned' }}">{{ record.state or 'planned' }}</span></div>
 <div class="page-heading split">
-  <div><div class="eyebrow">{{ run_id }}</div><h1>{{ (result.status or record.state or 'Planned') | replace('_', ' ') | title }}</h1><p>{{ result.summary or ('Review the generated configuration before starting execution.' if record.state == 'planned' else 'Evidence-backed reliability assessment') }}</p></div>
+  <div><div class="eyebrow">{{ run_id }}</div><h1>{{ (result.status or record.state or 'Planned') | replace('_', ' ') | title }}</h1><p>{{ result.summary or ('Review the generated configuration before starting execution.' if record.state in ['planned', 'intake_validated'] else 'Evidence-backed reliability assessment') }}</p></div>
   <div class="action-row">
-    {% if record.state == 'planned' %}<form method="post" action="/ui/runs/{{ run_id }}/start"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="button primary" type="submit">Start assessment</button></form>{% endif %}
+    {% if record.state in ['planned', 'intake_validated'] %}<form method="post" action="/ui/runs/{{ run_id }}/start"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="button primary" type="submit">Start assessment</button></form>{% endif %}
     {% if record.state in ['completed', 'failed', 'cancelled'] %}<a class="button" href="/api/v1/runs/{{ run_id }}/report?format=html">View report</a><a class="button primary" href="/compare?candidate={{ run_id }}">Compare</a>{% endif %}
   </div>
 </div>

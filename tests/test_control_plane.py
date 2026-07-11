@@ -39,8 +39,9 @@ class RunStoreTests(unittest.TestCase):
             self.assertNotEqual(first, second)
             self.assertTrue(first.name.startswith("chamber-payments-api-20260711000000000-"))
 
-            record = initialize_run_record(first, service_name="payments", mode="kubernetes")
+            record = initialize_run_record(first)
             self.assertEqual(record["state"], "created")
+            self.assertEqual(record["service_name"], "unknown")
             initialize_run_record(first)
             event = append_run_event(first, state="running", event_type="preflight_passed")
             self.assertEqual(event["sequence"], 2)
@@ -56,6 +57,7 @@ class RunStoreTests(unittest.TestCase):
                 },
             )
             self.assertEqual(synced["state"], "completed")
+            self.assertEqual(synced["service_name"], "payments")
 
             evidence = first / "evidence/k6-summary.json"
             evidence.parent.mkdir()
@@ -285,7 +287,10 @@ class ControlPlaneTests(unittest.TestCase):
                     "?tab=agents",
                     "?tab=invalid",
                 ):
-                    self.assertEqual(client.get(f"/runs/{run_id}{suffix}").status_code, 200)
+                    run_page = client.get(f"/runs/{run_id}{suffix}")
+                    self.assertEqual(run_page.status_code, 200)
+                    self.assertIn("Start assessment", run_page.text)
+                    self.assertIn("Review the generated configuration", run_page.text)
                 listed = client.get("/api/v1/runs").json()["runs"]
                 self.assertEqual(listed[0]["run_id"], run_id)
                 self.assertEqual(client.get(f"/api/v1/runs/{run_id}").status_code, 200)

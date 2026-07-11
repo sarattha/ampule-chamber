@@ -77,6 +77,9 @@ def sync_run_record(run_dir: Path, metadata: dict[str, Any]) -> dict[str, Any]:
     current.update(
         {
             "run_id": str(metadata.get("run_id", run_dir.name)),
+            "service_name": str(
+                metadata.get("service_name", current.get("service_name", "unknown"))
+            ),
             "mode": str(metadata.get("mode", current.get("mode", "planned"))),
             "runtime_mode": metadata.get("runtime_mode"),
             "state": next_state,
