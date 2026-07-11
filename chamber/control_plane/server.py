@@ -11,7 +11,7 @@ import uuid
 import webbrowser
 from dataclasses import asdict
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 import yaml
 from fastapi import FastAPI, Form, HTTPException, Request
@@ -116,7 +116,7 @@ def create_app(workspace: Path = Path(".chamber")) -> FastAPI:
     async def plan_from_form(
         request: Request,
         csrf: Annotated[str, Form(alias="_csrf")],
-        repo: Annotated[str, Form()],
+        repo: Annotated[str, Form()] = "",
         service_name: Annotated[str, Form()] = "",
         execution_mode: Annotated[str, Form()] = "local",
         runtime_mode: Annotated[str, Form()] = "deploy",
@@ -134,7 +134,7 @@ def create_app(workspace: Path = Path(".chamber")) -> FastAPI:
             run_dir = _plan_from_values(
                 application,
                 workspace=workspace,
-                repo=Path(repo),
+                repo=Path(repo) if repo.strip() else None,
                 service_name=service_name,
                 execution_mode=execution_mode,
                 runtime_mode=runtime_mode,
@@ -419,7 +419,7 @@ def _plan_from_values(
     application: ChamberApplication,
     *,
     workspace: Path,
-    repo: Path,
+    repo: Path | None,
     service_name: str,
     execution_mode: str,
     runtime_mode: str,
@@ -432,14 +432,43 @@ def _plan_from_values(
     prometheus_url: str,
     agents_mode: str,
 ) -> Path:
-    if not repo.is_dir():
+    config: dict[str, Any]
+    if repo is not None and not repo.is_dir():
         raise ValueError(f"repository path does not exist: {repo}")
-    config = application.inspect_repository(repo)
-    service = config["service"]
+    if repo is None:
+        if execution_mode != "kubernetes" or runtime_mode != "attach":
+            raise ValueError("repository path is required for local and deploy assessments")
+        if not service_name.strip():
+            raise ValueError("service name is required when attaching without a repository")
+        name = service_name.strip()
+        config = {
+            "apiVersion": "chamber.ampule.dev/v1alpha1",
+            "kind": "ChamberConfig",
+            "service": {
+                "name": name,
+                "repo": f"kubernetes://{kubernetes_context}/{namespace}/{name}",
+            },
+            "deployment": {
+                "manifests": [],
+                "images": {},
+                "workloads": [{"name": name, "role": "target", "kind": "Deployment"}],
+            },
+            "traffic": {"entrypoint": name, "journeys": []},
+            "dependencies": {"internal": [], "external": []},
+            "runtime": {"requiredEnv": [], "secretEnv": [], "config": {}},
+            "agents": {"mode": agents_mode},
+            "assumptions": (
+                "Attached directly to an existing Kubernetes workload without "
+                "repository inspection.",
+            ),
+        }
+    else:
+        config = application.inspect_repository(repo)
+    service = cast(dict[str, Any], config["service"])
     if service_name.strip():
         service["name"] = service_name.strip()
     name = str(service["name"])
-    traffic = config["traffic"]
+    traffic = cast(dict[str, Any], config["traffic"])
     traffic["entrypoint"] = name
     profiles = {
         "smoke": (("15s", 1), ("5s", 0)),
@@ -457,7 +486,7 @@ def _plan_from_values(
         }
     ]
     config["agents"] = {"mode": agents_mode}
-    runtime = config["runtime"]
+    runtime = cast(dict[str, Any], config["runtime"])
     if execution_mode == "kubernetes":
         runtime.update(
             {
@@ -474,7 +503,7 @@ def _plan_from_values(
         )
         if prometheus_url:
             runtime["prometheusUrl"] = prometheus_url
-        deployment = config["deployment"]
+        deployment = cast(dict[str, Any], config["deployment"])
         if runtime_mode == "attach":
             runtime["namespace"] = namespace
             deployment["manifests"] = []

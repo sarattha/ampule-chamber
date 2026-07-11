@@ -224,6 +224,7 @@ class ControlPlaneTests(unittest.TestCase):
                 self.assertEqual(home.status_code, 303)
                 new_page = client.get("/new")
                 self.assertIn("Choose the service to assess", new_page.text)
+                self.assertIn("Running Kubernetes service", new_page.text)
                 self.assertIn("Content-Security-Policy", new_page.headers)
                 self.assertEqual(client.get("/runs").status_code, 200)
                 self.assertEqual(client.get("/api/v1/capabilities").status_code, 200)
@@ -259,6 +260,12 @@ class ControlPlaneTests(unittest.TestCase):
                     data={"_csrf": csrf, "repo": str(root / "missing")},
                 )
                 self.assertEqual(invalid_form.status_code, 400)
+
+                missing_local_repo = client.post(
+                    "/ui/plan",
+                    data={"_csrf": csrf, "execution_mode": "local"},
+                )
+                self.assertEqual(missing_local_repo.status_code, 400)
 
                 planned = client.post(
                     "/ui/plan",
@@ -373,6 +380,34 @@ class ControlPlaneTests(unittest.TestCase):
                         follow_redirects=False,
                     )
                     self.assertEqual(kubernetes_plan.status_code, 303, kubernetes_plan.text)
+
+                attached_without_repo = client.post(
+                    "/ui/plan",
+                    data={
+                        "_csrf": csrf,
+                        "repo": "",
+                        "service_name": "payments-api",
+                        "execution_mode": "kubernetes",
+                        "runtime_mode": "attach",
+                        "kubernetes_context": "kind-ampule-chamber",
+                        "namespace": "payments-stage",
+                        "service_port": "8080",
+                        "traffic_path": "/health",
+                        "traffic_profile": "baseline",
+                        "fault_type": "none",
+                        "agents_mode": "offline",
+                    },
+                    follow_redirects=False,
+                )
+                self.assertEqual(attached_without_repo.status_code, 303)
+                attached_id = attached_without_repo.headers["location"].split("/")[2].split("?")[0]
+                attached_config = yaml.safe_load(
+                    (workspace / "runs" / attached_id / "chamber.yaml").read_text(encoding="utf-8")
+                )
+                self.assertEqual(attached_config["runtime"]["mode"], "attach")
+                self.assertEqual(attached_config["runtime"]["namespace"], "payments-stage")
+                self.assertEqual(attached_config["service"]["name"], "payments-api")
+                self.assertTrue(attached_config["service"]["repo"].startswith("kubernetes://"))
 
     def test_json_plan_start_job_cancel_and_event_endpoints(self) -> None:
         with TemporaryDirectory() as tmp:
