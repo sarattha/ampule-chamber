@@ -1,6 +1,6 @@
 # Ampule Chamber
 
-Version: 1.4.0
+Version: 1.4.1
 
 Ampule Chamber is a production-ready reliability testing chamber for Kubernetes
 services before production. It deploys services into isolated chamber
@@ -9,9 +9,10 @@ collects runtime evidence, and produces evidence-backed readiness reports.
 
 ## Production-Ready Release
 
-The `1.4.0` release adds a local control-plane UI for guided setup, live run
-control, evidence-backed results, exports, and comparison. CLI and UI use the
-same safety rules, application services, and reconstructable run store.
+The `1.4.1` release lets the control-plane UI attach directly to an existing
+Kubernetes Service and its backing Deployment or StatefulSet without requiring
+a local repository. CLI and UI use the same safety rules, application services,
+and reconstructable run store.
 
 ## Core Commands
 

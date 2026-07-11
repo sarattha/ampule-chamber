@@ -11,7 +11,35 @@
     const next = form.querySelector("[data-next]");
     const submit = form.querySelector("[data-submit]");
     const kubernetesFields = form.querySelector("[data-kubernetes-fields]");
+    const repositoryTarget = form.querySelector("[data-repository-target]");
+    const kubernetesTarget = form.querySelector("[data-kubernetes-target]");
+    const serviceOptional = form.querySelector("[data-service-optional]");
+    const repo = form.elements.repo;
+    const serviceName = form.elements.service_name;
+    const workloadName = form.elements.workload_name;
     let current = 0;
+
+    const selectModeCard = input => {
+      input.closest(".mode-grid").querySelectorAll(".mode-card").forEach(card =>
+        card.classList.toggle("selected", card.querySelector("input").checked));
+    };
+
+    const selectAttachedTarget = attached => {
+      repositoryTarget.hidden = attached;
+      kubernetesTarget.hidden = !attached;
+      serviceOptional.hidden = attached;
+      repo.required = !attached;
+      serviceName.required = attached;
+      workloadName.required = attached;
+      if (!attached) return;
+      const kubernetes = form.querySelector('input[name="execution_mode"][value="kubernetes"]');
+      kubernetes.checked = true;
+      selectModeCard(kubernetes);
+      kubernetesFields.hidden = false;
+      form.elements.kubernetes_context.required = true;
+      form.elements.namespace.required = true;
+      form.elements.runtime_mode.value = "attach";
+    };
 
     const render = () => {
       panels.forEach((panel, index) => panel.hidden = index !== current);
@@ -36,9 +64,13 @@
     form.querySelectorAll('input[name="execution_mode"]').forEach(input => input.addEventListener("change", () => {
       const kubernetes = input.checked && input.value === "kubernetes";
       kubernetesFields.hidden = !kubernetes;
-      form.querySelectorAll(".mode-card").forEach(card => card.classList.toggle("selected", card.querySelector("input").checked));
+      selectModeCard(input);
       const context = form.elements.kubernetes_context;
       context.required = kubernetes;
+    }));
+    form.querySelectorAll('input[name="target_source"]').forEach(input => input.addEventListener("change", () => {
+      selectModeCard(input);
+      selectAttachedTarget(input.checked && input.value === "kubernetes");
     }));
     form.querySelector("[data-advanced]").addEventListener("click", () => {
       updateReview(form);
@@ -53,7 +85,11 @@
     form.querySelectorAll("[data-review]").forEach(node => {
       const key = node.dataset.review;
       const value = data.get(key);
-      node.textContent = value || (key === "service_name" ? "Inferred" : key === "kubernetes_context" ? "Not applicable" : "—");
+      const fallback = key === "service_name" ? "Inferred"
+        : key === "kubernetes_context" ? "Not applicable"
+        : key === "repo" && data.get("target_source") === "kubernetes" ? "Not required"
+        : "—";
+      node.textContent = value || fallback;
     });
   }
 

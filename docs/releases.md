@@ -1,5 +1,17 @@
 # Releases
 
+## 1.4.1 - 2026-07-11
+
+Ampule Chamber `1.4.1` makes existing-cluster onboarding independent of local
+source availability.
+
+Highlights:
+
+- Start an attach plan from an existing Kubernetes Service without a repository.
+- Record the backing Deployment or StatefulSet separately from the Service so
+  differently named resources pass preflight and discovery.
+- Keep repository validation for local and isolated deploy workflows.
+
 ## 1.4.0 - 2026-07-11
 
 Ampule Chamber `1.4.0` adds a local control plane without splitting the CLI and

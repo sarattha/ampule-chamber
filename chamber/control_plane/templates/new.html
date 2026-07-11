@@ -12,8 +12,12 @@
   {% if error %}<div class="alert danger" role="alert">{{ error }}</div>{% endif %}
 
   <section class="wizard-panel" data-step="0">
-    <div class="page-heading split"><div><div class="eyebrow">Step 1 of 4</div><h1>Choose the service to assess</h1><p>Chamber inspects the repository and builds an editable plan. Planning never changes the target.</p></div><span class="pill safe">Read-only</span></div>
-    <div class="panel form-panel"><label for="repo">Repository path</label><input id="repo" name="repo" required value="{{ request.query_params.get('repo', '') }}" placeholder="/Users/you/code/payments"><p class="help">Use an absolute local path. Source files are inspected locally.</p><label for="service_name">Service name <span class="optional">optional override</span></label><input id="service_name" name="service_name" placeholder="payments"></div>
+    <div class="page-heading split"><div><div class="eyebrow">Step 1 of 4</div><h1>Choose the service to assess</h1><p>Start from source code, or attach directly to a service that is already running in Kubernetes.</p></div><span class="pill safe">Read-only planning</span></div>
+    <div class="mode-grid" role="radiogroup" aria-label="Target source">
+      <label class="mode-card selected"><input type="radio" name="target_source" value="repository" checked><strong>Local repository</strong><span>Inspect source, manifests, and container metadata to build the plan.</span></label>
+      <label class="mode-card"><input type="radio" name="target_source" value="kubernetes"><strong>Running Kubernetes service</strong><span>Attach using context, namespace, service name, and port. No repository is needed.</span></label>
+    </div>
+    <div class="panel form-panel"><div data-repository-target><label for="repo">Repository path</label><input id="repo" name="repo" required value="{{ request.query_params.get('repo', '') }}" placeholder="/Users/you/code/payments"><p class="help">Required for local assessment and isolated deploy. Source files are inspected locally.</p></div><label for="service_name">Service name <span class="optional" data-service-optional>optional override</span></label><input id="service_name" name="service_name" placeholder="payments-api"><p class="help" data-service-help>Required when attaching without a repository; use the Kubernetes Service name.</p><div class="form-grid" data-kubernetes-target hidden><label>Workload name<input name="workload_name" placeholder="payments-api-deployment"></label><label>Workload kind<select name="workload_kind"><option value="Deployment">Deployment</option><option value="StatefulSet">StatefulSet</option></select></label><p class="help">Identify the controller behind the Service. The Service and workload names may differ.</p></div></div>
   </section>
 
   <section class="wizard-panel" data-step="1" hidden>
@@ -46,7 +50,7 @@
   <section class="wizard-panel" data-step="3" hidden>
     <div class="page-heading"><div class="eyebrow">Step 4 of 4</div><h1>Review the safety receipt</h1><p>Chamber will create a durable plan first. You explicitly start execution from the plan page.</p></div>
     <div class="review-grid">
-      <div class="panel"><h2>Target</h2><dl><div><dt>Repository</dt><dd data-review="repo">—</dd></div><div><dt>Service</dt><dd data-review="service_name">Inferred</dd></div></dl></div>
+      <div class="panel"><h2>Target</h2><dl><div><dt>Source</dt><dd data-review="target_source">Repository</dd></div><div><dt>Repository</dt><dd data-review="repo">Not required</dd></div><div><dt>Service</dt><dd data-review="service_name">Inferred</dd></div><div><dt>Workload</dt><dd data-review="workload_name">Inferred</dd></div><div><dt>Kind</dt><dd data-review="workload_kind">Inferred</dd></div></dl></div>
       <div class="panel"><h2>Environment</h2><dl><div><dt>Mode</dt><dd data-review="execution_mode">Local</dd></div><div><dt>Context</dt><dd data-review="kubernetes_context">Not applicable</dd></div></dl></div>
       <div class="panel"><h2>Exercise</h2><dl><div><dt>Journey</dt><dd data-review="traffic_path">/health</dd></div><div><dt>Profile</dt><dd data-review="traffic_profile">Baseline</dd></div><div><dt>Fault</dt><dd data-review="fault_type">Observe only</dd></div><div><dt>Agents</dt><dd data-review="agents_mode">Offline</dd></div></dl></div>
       <div class="panel safety-card"><h2>Safety contract</h2><ul><li>Explicit context for live execution</li><li>Production-like context names rejected</li><li>Bounded traffic and fault windows</li><li>Cancel triggers rollback and cleanup</li><li>Reports cite registered evidence only</li></ul></div>

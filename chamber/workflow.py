@@ -317,10 +317,10 @@ def validate_config(
     service = _mapping(config.get("service"), f"{source}.service")
     _non_empty(service.get("name"), f"{source}.service.name")
     repo = _non_empty(service.get("repo"), f"{source}.service.repo")
-    if require_repo and not Path(repo).exists():
-        raise WorkflowError(f"{source}.service.repo does not exist: {repo}")
     runtime = _mapping(config.get("runtime", {}), f"{source}.runtime")
     runtime_mode = str(runtime.get("mode", "deploy"))
+    if require_repo and runtime_mode != "attach" and not Path(repo).exists():
+        raise WorkflowError(f"{source}.service.repo does not exist: {repo}")
     deployment = _mapping(config.get("deployment"), f"{source}.deployment")
     manifests = _string_list(deployment.get("manifests"), f"{source}.deployment.manifests")
     if runtime_mode != "attach" and not manifests:
