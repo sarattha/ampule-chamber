@@ -21,4 +21,21 @@ curl http://localhost:8080/readyz
 ```
 
 The service returns JSON responses and uses only the Python standard library.
-Future phases can replace or extend this contract with Kubernetes manifests.
+## Local kind acceptance
+
+The checked-in chamber configuration exercises the same deploy, traffic,
+evidence, report, and cleanup path used by the control plane:
+
+```bash
+docker build -t ampule/sample-service:kind examples/sample-service
+kind load docker-image ampule/sample-service:kind --name ampule-chamber
+uv run ampule-chamber assess \
+  --config examples/sample-service/chamber-kind.yaml \
+  --mode kubernetes \
+  --context kind-ampule-chamber
+```
+
+The run uses a chamber-owned namespace and removes it after evidence collection.
+For an existing non-production deployment, `chamber-attach.yaml` provides a
+read-focused attach example. Attach mode leaves the namespace and workload in
+place; the operator remains responsible for their lifecycle.

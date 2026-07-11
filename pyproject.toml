@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "ampule-chamber"
-version = "1.3.0"
+version = "1.4.0"
 description = "Production-ready agent-driven reliability testing chamber for Kubernetes services."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -52,17 +52,27 @@ ampule-chamber = "chamber.workflow:main"
 ampule-chamber-report = "chamber.report.cli:main"
 
 [project.optional-dependencies]
-dev = []
+ui = [
+  "fastapi>=0.115.0",
+  "jinja2>=3.1.4",
+  "python-multipart>=0.0.12",
+  "uvicorn>=0.30.0",
+]
 
 [dependency-groups]
 dev = [
   "coverage>=7.10.0",
+  "fastapi>=0.115.0",
+  "httpx>=0.27.0",
+  "jinja2>=3.1.4",
   "mkdocs>=1.6.1",
   "mkdocs-material>=9.6.0",
+  "python-multipart>=0.0.12",
   "ruff>=0.12.0",
   "twine>=6.1.0",
   "ty>=0.0.49",
   "types-PyYAML>=6.0.12.20250516",
+  "uvicorn>=0.30.0",
 ]
 
 [tool.uv.build-backend]

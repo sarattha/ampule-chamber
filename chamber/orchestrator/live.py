@@ -45,7 +45,7 @@ from chamber.report import (
 
 DEFAULT_CONTEXT = "kind-ampule-chamber"
 DEFAULT_IMAGE = "ampule/sample-service:local"
-PHASE06_ARTIFACT_DIR = Path("docs/internal/phases/phase-06-live-manual-chamber-mvp/artifacts")
+DEFAULT_ARTIFACT_DIR = Path(".chamber/runs")
 PROMETHEUS_URL_ENV = "PROMETHEUS_URL"
 PRODUCTION_CONTEXT_FRAGMENTS = (
     "prod",
@@ -185,7 +185,7 @@ def run_cli(argv: list[str] | None = None) -> int:  # pragma: no cover
             if args.output_dir
             else Path(args.output).parent
             if args.output
-            else PHASE06_ARTIFACT_DIR
+            else DEFAULT_ARTIFACT_DIR
         ),
         context=args.context,
         image=args.image,

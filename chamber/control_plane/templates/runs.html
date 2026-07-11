@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Runs · Ampule Chamber{% endblock %}
+{% block content %}
+<div class="page-heading split">
+  <div><div class="eyebrow">Reliability workspace</div><h1>Assessment runs</h1><p>Plan, observe, and compare production-like service exercises.</p></div>
+  <a class="button primary" href="/new">New assessment</a>
+</div>
+{% if runs %}
+<section class="table-card" aria-labelledby="runs-title">
+  <div class="card-heading"><h2 id="runs-title">Recent runs</h2><span class="muted">{{ runs | length }} indexed</span></div>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Run</th><th>Service</th><th>State</th><th>Outcome</th><th>Coverage</th><th>Started</th></tr></thead>
+    <tbody>{% for item in runs %}<tr>
+      <td><a class="run-link" href="/runs/{{ item.run_id }}">{{ item.run_id }}</a></td>
+      <td>{{ item.service_name or 'Unknown service' }}</td>
+      <td><span class="pill {{ item.state or 'planned' }}">{{ item.state or 'planned' }}</span></td>
+      <td>{{ item.status or item.result_status or 'Pending' }}</td>
+      <td>{{ item.evidence_coverage_percent or 0 }}%</td>
+      <td class="mono muted">{{ item.created_at or '—' }}</td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+{% else %}
+<section class="empty-state"><h2>No assessments yet</h2><p>Start with a repository, inspect the generated plan, then choose local or Kubernetes execution.</p><a class="button primary" href="/new">Create first assessment</a></section>
+{% endif %}
+{% endblock %}

@@ -2,6 +2,35 @@
 
 All notable changes to Ampule Chamber are documented in this file.
 
+## 1.4.0 - 2026-07-11
+
+### Added
+
+- Added a FastAPI and server-rendered local control-plane UI with a guided
+  repository, environment, exercise, safety-review, and explicit-run workflow.
+- Added live subprocess execution with SSE status updates and cancel-to-cleanup
+  behavior, plus run detail tabs for timeline, findings, evidence,
+  configuration, and agent outputs.
+- Added evidence-backed readiness results, HTML/Markdown/JSON report export,
+  compatible-run comparison, capability discovery, and a versioned local API.
+- Added collision-safe run directories, canonical `run.json`, append-only
+  `events.jsonl`, SHA-256 evidence manifests, and a rebuildable SQLite index.
+- Added checked-in deploy and attach examples validated on Docker Desktop kind.
+
+### Changed
+
+- CLI and UI now share an application facade and assessment-result builder.
+- Reports no longer invent readiness or findings when required evidence is
+  missing; incomplete and local-only runs are explicitly inconclusive.
+- Cancellation persists a cancelled result after Kubernetes rollback and
+  cleanup instead of bypassing final evidence and report generation.
+
+### Security
+
+- The UI binds to loopback by default, rejects remote binding without explicit
+  opt-in, uses strict CSRF validation, applies CSP and anti-framing headers, and
+  serves only digest-validated evidence registered to the requested run.
+
 ## 1.3.0 - 2026-06-26
 
 ### Added

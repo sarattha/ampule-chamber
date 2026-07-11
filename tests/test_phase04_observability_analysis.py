@@ -26,7 +26,7 @@ from chamber.orchestrator import build_experiment_timeline
 
 ROOT = Path(__file__).resolve().parents[1]
 SCENARIO_DIR = ROOT / "scenarios"
-PHASE03_ARTIFACT_DIR = ROOT / "docs/internal/phases/phase-03-traffic-and-chaos/artifacts"
+TEST_ARTIFACT_DIR = ROOT / "tests/fixtures"
 
 
 class Phase04CollectionTests(unittest.TestCase):
@@ -289,7 +289,7 @@ class Phase04AnalysisTests(unittest.TestCase):
         traffic_plan = plan_traffic(
             scenario,
             environment=environment,
-            artifact_dir=PHASE03_ARTIFACT_DIR,
+            artifact_dir=TEST_ARTIFACT_DIR,
         )
         with TemporaryDirectory() as artifact_dir:
             fault_plan = plan_faults(scenario, environment=environment, artifact_dir=artifact_dir)
@@ -315,9 +315,21 @@ class Phase04AnalysisTests(unittest.TestCase):
         evidence = (
             _evidence(environment, "fixture", "logs", "sample-service", {"text": "fixture"}),
         )
-        summary_path = PHASE03_ARTIFACT_DIR / "live-dependency-fault-k6-summary.json"
+        with TemporaryDirectory() as tmp:
+            summary_path = Path(tmp) / "dependency-fault-k6-summary.json"
+            summary_path.write_text(
+                json.dumps(
+                    {
+                        "metrics": {
+                            "http_req_failed": {"value": 0.479853},
+                            "http_req_duration": {"p(95)": 16.7564},
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
 
-        result = analyze_evidence(evidence, scenario=scenario, k6_summary_path=summary_path)
+            result = analyze_evidence(evidence, scenario=scenario, k6_summary_path=summary_path)
 
         error_findings = [
             finding for finding in result.findings if finding.signal_type == "error_rate"
@@ -472,7 +484,7 @@ class Phase04AnalysisTests(unittest.TestCase):
         traffic_plan = plan_traffic(
             scenario,
             environment=environment,
-            artifact_dir=PHASE03_ARTIFACT_DIR,
+            artifact_dir=TEST_ARTIFACT_DIR,
         )
         with TemporaryDirectory() as artifact_dir:
             fault_plan = plan_faults(scenario, environment=environment, artifact_dir=artifact_dir)

@@ -1,0 +1,956 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Ampule Chamber — Codebase &amp; Control UI Assessment</title>
+  <style>
+    :root {
+      --ink: #17231f;
+      --muted: #5e6b66;
+      --paper: #f5f3ec;
+      --surface: #fffdf8;
+      --surface-2: #e8eee8;
+      --line: #d5dbd3;
+      --green: #1d684f;
+      --green-2: #dcebe3;
+      --amber: #9a5b12;
+      --amber-2: #f6e7cb;
+      --red: #a23f32;
+      --red-2: #f4ddd8;
+      --blue: #2c587a;
+      --blue-2: #dce8f0;
+      --shadow: 0 16px 50px rgba(23, 35, 31, 0.08);
+      --radius: 18px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 88% 6%, rgba(29, 104, 79, 0.12), transparent 25rem),
+        var(--paper);
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 16px;
+      line-height: 1.55;
+    }
+
+    a { color: var(--green); text-underline-offset: 0.18em; }
+
+    code {
+      border-radius: 0.35rem;
+      background: rgba(23, 35, 31, 0.07);
+      padding: 0.1em 0.35em;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 0.9em;
+    }
+
+    .page {
+      width: min(1180px, calc(100% - 40px));
+      margin: 0 auto;
+      padding: 28px 0 80px;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 48px;
+      font-size: 0.82rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .brand { display: flex; align-items: center; gap: 10px; }
+    .mark { width: 12px; height: 12px; border-radius: 50%; background: var(--green); }
+    .meta { color: var(--muted); font-weight: 600; }
+
+    .hero {
+      display: grid;
+      grid-template-columns: 1.35fr 0.65fr;
+      gap: 36px;
+      align-items: end;
+      margin-bottom: 40px;
+    }
+
+    .eyebrow {
+      color: var(--green);
+      font-size: 0.78rem;
+      font-weight: 800;
+      letter-spacing: 0.11em;
+      text-transform: uppercase;
+    }
+
+    h1, h2, h3 { margin-top: 0; line-height: 1.12; letter-spacing: -0.035em; }
+    h1 { max-width: 820px; margin-bottom: 22px; font-size: clamp(2.7rem, 6vw, 5.65rem); }
+    h2 { margin-bottom: 18px; font-size: clamp(2rem, 3vw, 3rem); }
+    h3 { margin-bottom: 10px; font-size: 1.22rem; }
+
+    .lede {
+      max-width: 780px;
+      margin: 0;
+      color: #394640;
+      font-size: clamp(1.05rem, 1.8vw, 1.3rem);
+    }
+
+    .verdict {
+      border-left: 3px solid var(--green);
+      padding-left: 22px;
+    }
+
+    .verdict .label { color: var(--muted); font-size: 0.8rem; font-weight: 800; text-transform: uppercase; }
+    .verdict strong { display: block; margin: 6px 0 8px; font-size: 1.45rem; line-height: 1.2; }
+    .verdict p { margin: 0; color: var(--muted); }
+
+    .nav {
+      position: sticky;
+      top: 12px;
+      z-index: 5;
+      display: flex;
+      gap: 6px;
+      overflow-x: auto;
+      margin: 0 0 62px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(255, 253, 248, 0.93);
+      box-shadow: 0 8px 24px rgba(23, 35, 31, 0.06);
+      padding: 7px;
+      backdrop-filter: blur(12px);
+    }
+
+    .nav a {
+      flex: 0 0 auto;
+      border-radius: 999px;
+      padding: 9px 14px;
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 0.82rem;
+      font-weight: 700;
+    }
+
+    .nav a:hover { color: var(--ink); background: var(--surface-2); }
+
+    section { scroll-margin-top: 90px; margin-bottom: 86px; }
+    .section-intro { max-width: 760px; margin: -6px 0 28px; color: var(--muted); font-size: 1.06rem; }
+
+    .grid { display: grid; gap: 18px; }
+    .grid-4 { grid-template-columns: repeat(4, 1fr); }
+    .grid-3 { grid-template-columns: repeat(3, 1fr); }
+    .grid-2 { grid-template-columns: repeat(2, 1fr); }
+
+    .card {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      padding: 24px;
+      box-shadow: var(--shadow);
+    }
+
+    .card p:last-child, .card ul:last-child { margin-bottom: 0; }
+    .card p { color: var(--muted); }
+
+    .score-card { min-height: 185px; box-shadow: none; }
+    .score-card .score { margin: 20px 0 10px; font-size: 2.55rem; font-weight: 800; letter-spacing: -0.06em; }
+    .score-card .score span { color: var(--muted); font-size: 0.9rem; font-weight: 650; letter-spacing: 0; }
+    .score-card p { margin: 0; font-size: 0.92rem; }
+
+    .good { border-top: 5px solid var(--green); }
+    .warn { border-top: 5px solid var(--amber); }
+    .risk { border-top: 5px solid var(--red); }
+    .info { border-top: 5px solid var(--blue); }
+
+    .callout {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 16px;
+      align-items: start;
+      margin: 28px 0;
+      border-radius: 16px;
+      padding: 22px;
+      background: var(--red-2);
+    }
+
+    .callout .tag,
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      width: fit-content;
+      border-radius: 999px;
+      padding: 5px 9px;
+      font-size: 0.72rem;
+      font-weight: 850;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .callout .tag { color: #fff; background: var(--red); }
+    .callout h3 { margin-bottom: 5px; }
+    .callout p { margin: 0; color: #62352f; }
+
+    .pill-red { color: var(--red); background: var(--red-2); }
+    .pill-amber { color: var(--amber); background: var(--amber-2); }
+    .pill-green { color: var(--green); background: var(--green-2); }
+    .pill-blue { color: var(--blue); background: var(--blue-2); }
+
+    .finding {
+      display: grid;
+      grid-template-columns: 112px 1fr;
+      gap: 24px;
+      border-top: 1px solid var(--line);
+      padding: 28px 0;
+    }
+
+    .finding:last-child { border-bottom: 1px solid var(--line); }
+    .finding p { max-width: 820px; margin: 8px 0 12px; color: var(--muted); }
+    .finding .evidence { color: #45524d; font-size: 0.88rem; }
+
+    ul.clean { margin: 10px 0 0; padding-left: 1.1rem; }
+    ul.clean li { margin: 0.42rem 0; }
+
+    .architecture {
+      display: grid;
+      grid-template-columns: 1fr 40px 1.15fr 40px 1.15fr 40px 1fr;
+      align-items: stretch;
+      gap: 8px;
+      margin-top: 28px;
+    }
+
+    .architecture .node {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      min-height: 180px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      padding: 22px;
+    }
+
+    .architecture .node strong { font-size: 1.08rem; }
+    .architecture .node span { margin-top: 7px; color: var(--muted); font-size: 0.88rem; }
+    .architecture .arrow { display: grid; place-items: center; color: var(--green); font-size: 1.5rem; font-weight: 900; }
+
+    .principles { margin-top: 20px; }
+    .principles .card { box-shadow: none; }
+
+    .mock-shell {
+      overflow: hidden;
+      border: 1px solid #bfc9c2;
+      border-radius: 24px;
+      background: #f8faf7;
+      box-shadow: 0 28px 90px rgba(23, 35, 31, 0.18);
+    }
+
+    .mock-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      border-bottom: 1px solid var(--line);
+      background: #fff;
+      padding: 16px 22px;
+    }
+
+    .mock-title { font-weight: 830; letter-spacing: -0.02em; }
+    .mock-context { color: var(--muted); font-size: 0.82rem; }
+    .mock-body { display: grid; grid-template-columns: 190px 1fr; min-height: 610px; }
+
+    .mock-side {
+      border-right: 1px solid var(--line);
+      background: #edf2ed;
+      padding: 22px 14px;
+    }
+
+    .mock-side .side-item { margin-bottom: 5px; border-radius: 10px; padding: 10px 12px; color: var(--muted); font-size: 0.85rem; font-weight: 700; }
+    .mock-side .side-item.active { color: var(--green); background: #fff; }
+
+    .mock-main { padding: 28px; }
+    .mock-main h3 { font-size: 1.55rem; }
+    .mock-sub { margin: -2px 0 22px; color: var(--muted); font-size: 0.9rem; }
+    .progress { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-bottom: 28px; }
+    .progress .step { border-top: 3px solid var(--line); padding-top: 8px; color: var(--muted); font-size: 0.72rem; font-weight: 750; }
+    .progress .step.done, .progress .step.active { border-color: var(--green); color: var(--green); }
+
+    .run-summary { display: grid; grid-template-columns: 1.25fr 0.75fr; gap: 18px; }
+    .panel { border: 1px solid var(--line); border-radius: 14px; background: #fff; padding: 18px; }
+    .panel h4 { margin: 0 0 14px; font-size: 0.88rem; text-transform: uppercase; letter-spacing: 0.07em; }
+
+    .timeline-row { display: grid; grid-template-columns: 86px 14px 1fr; gap: 10px; margin: 0 0 16px; }
+    .timeline-row .time { color: var(--muted); font-family: "SFMono-Regular", Consolas, monospace; font-size: 0.76rem; }
+    .timeline-row .dot { width: 10px; height: 10px; margin-top: 6px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 4px var(--green-2); }
+    .timeline-row .event { font-size: 0.88rem; }
+    .timeline-row .event span { display: block; color: var(--muted); font-size: 0.78rem; }
+
+    .metric { display: flex; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--line); padding: 11px 0; font-size: 0.86rem; }
+    .metric:last-child { border-bottom: 0; }
+    .metric strong { font-variant-numeric: tabular-nums; }
+    .button-row { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+    .button { border: 1px solid var(--line); border-radius: 10px; background: #fff; padding: 9px 13px; font-size: 0.78rem; font-weight: 800; }
+    .button.primary { border-color: var(--green); color: #fff; background: var(--green); }
+
+    .caption { max-width: 820px; margin: 18px auto 0; color: var(--muted); text-align: center; font-size: 0.9rem; }
+
+    table { width: 100%; border-collapse: collapse; border-spacing: 0; }
+    th, td { border-bottom: 1px solid var(--line); padding: 15px 12px; text-align: left; vertical-align: top; }
+    th { color: var(--muted); font-size: 0.75rem; letter-spacing: 0.07em; text-transform: uppercase; }
+    td { font-size: 0.92rem; }
+    tr:last-child td { border-bottom: 0; }
+
+    .roadmap { counter-reset: phase; }
+    .roadmap-item {
+      counter-increment: phase;
+      display: grid;
+      grid-template-columns: 62px 1fr 0.7fr;
+      gap: 22px;
+      border-top: 1px solid var(--line);
+      padding: 28px 0;
+    }
+
+    .roadmap-item::before {
+      content: counter(phase, decimal-leading-zero);
+      color: var(--green);
+      font-size: 1.55rem;
+      font-weight: 850;
+      letter-spacing: -0.04em;
+    }
+
+    .roadmap-item p { margin: 6px 0 0; color: var(--muted); }
+    .roadmap-item .done-when { color: #44514c; font-size: 0.9rem; }
+
+    .evidence-table code { white-space: nowrap; }
+
+    .closing {
+      border-radius: 28px;
+      background: var(--ink);
+      padding: clamp(30px, 6vw, 64px);
+      color: #f8f6ef;
+    }
+
+    .closing h2 { max-width: 780px; }
+    .closing p { max-width: 760px; margin-bottom: 0; color: #bdc8c2; font-size: 1.1rem; }
+
+    @media (max-width: 980px) {
+      .hero, .grid-4, .grid-3 { grid-template-columns: repeat(2, 1fr); }
+      .architecture { grid-template-columns: 1fr; }
+      .architecture .arrow { transform: rotate(90deg); min-height: 24px; }
+      .run-summary { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 720px) {
+      .page { width: min(100% - 24px, 1180px); padding-top: 18px; }
+      .topbar, .hero { display: block; }
+      .meta { margin-top: 8px; }
+      .hero { margin-bottom: 28px; }
+      .verdict { margin-top: 28px; }
+      .nav { margin-bottom: 48px; border-radius: 16px; }
+      .grid-4, .grid-3, .grid-2 { grid-template-columns: 1fr; }
+      .finding { grid-template-columns: 1fr; gap: 10px; }
+      .mock-body { grid-template-columns: 1fr; }
+      .mock-side { display: none; }
+      .progress { grid-template-columns: repeat(3, 1fr); }
+      .roadmap-item { grid-template-columns: 48px 1fr; }
+      .roadmap-item .done-when { grid-column: 2; }
+      .table-wrap { overflow-x: auto; }
+      table { min-width: 720px; }
+    }
+
+    @media print {
+      body { background: #fff; }
+      .page { width: 100%; padding: 0; }
+      .nav { display: none; }
+      .card, .mock-shell { box-shadow: none; }
+      section { break-inside: avoid; margin-bottom: 44px; }
+      a { color: inherit; text-decoration: none; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <div class="topbar">
+      <div class="brand"><span class="mark"></span>Ampule Chamber</div>
+      <div class="meta">Codebase review · 10 July 2026</div>
+    </div>
+
+    <header class="hero">
+      <div>
+        <div class="eyebrow">Architecture &amp; product assessment</div>
+        <h1>A strong engine that needs a trustworthy control plane.</h1>
+        <p class="lede">
+          Ampule Chamber already has the hard beginnings of a reliability product: live Kubernetes
+          execution, attach mode, safety preflight, traffic, evidence collection, bounded agents,
+          deterministic reports, and disciplined tests. The next step should be a local-first control UI—
+          but only after closing the findings and run-integrity gaps that could make the UI communicate
+          false confidence.
+        </p>
+      </div>
+      <aside class="verdict">
+        <span class="label">Recommendation</span>
+        <strong>Proceed with UI after a short “trust core” phase.</strong>
+        <p>Do not build the first dashboard directly on today’s guided report output.</p>
+      </aside>
+    </header>
+
+    <nav class="nav" aria-label="Report sections">
+      <a href="#snapshot">Snapshot</a>
+      <a href="#strengths">Strengths</a>
+      <a href="#findings">Findings</a>
+      <a href="#architecture">Architecture</a>
+      <a href="#ui">Control UI</a>
+      <a href="#variety">Use cases</a>
+      <a href="#roadmap">Roadmap</a>
+      <a href="#evidence">Evidence</a>
+    </nav>
+
+    <section id="snapshot">
+      <div class="eyebrow">Executive snapshot</div>
+      <h2>Technically credible, product-incomplete.</h2>
+      <p class="section-intro">
+        The repository is unusually well tested for its size. Its weakest point is not Kubernetes
+        execution—it is the contract between execution, analysis, persisted findings, and the readiness
+        story presented to a user.
+      </p>
+
+      <div class="grid grid-4">
+        <article class="card score-card good">
+          <div class="eyebrow">Engineering quality</div>
+          <div class="score">90% <span>branch-aware coverage</span></div>
+          <p><code>make check</code> passes format, lint, types, 141 tests, scenarios, docs, and build.</p>
+        </article>
+        <article class="card score-card good">
+          <div class="eyebrow">Operational core</div>
+          <div class="score">Strong <span>for a local-first tool</span></div>
+          <p>Deploy, attach, preflight, traffic, evidence, rollback, cleanup, agents, and reports exist.</p>
+        </article>
+        <article class="card score-card risk">
+          <div class="eyebrow">Result trust</div>
+          <div class="score">At risk <span>guided workflow</span></div>
+          <p>Guided deploy and attach runs write empty findings and report no findings regardless of evidence.</p>
+        </article>
+        <article class="card score-card warn">
+          <div class="eyebrow">Product usability</div>
+          <div class="score">CLI only <span>review-heavy setup</span></div>
+          <p>Two overlapping configuration models and several execution paths raise the learning cost.</p>
+        </article>
+      </div>
+
+      <div class="callout">
+        <span class="tag">P0</span>
+        <div>
+          <h3>Readiness must represent evidence coverage, not merely absence of findings.</h3>
+          <p>
+            Today, an empty finding set begins at 100 and becomes “ready.” A plan-only or partially
+            instrumented run can therefore look safer than the evidence supports. Add an explicit
+            <strong>insufficient evidence</strong> outcome and gate scores on required signals and successful execution.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section id="strengths">
+      <div class="eyebrow">What is already working</div>
+      <h2>Keep these foundations.</h2>
+      <p class="section-intro">
+        The control UI should expose and clarify the existing strengths, not replace them with a second
+        execution system.
+      </p>
+      <div class="grid grid-3">
+        <article class="card">
+          <span class="pill pill-green">Safety</span>
+          <h3>Concrete Kubernetes guardrails</h3>
+          <p>Explicit contexts, production-like name refusal, chamber-owned namespaces, attach-mode scope checks, mutation gates, rollback evidence, and cleanup behavior are already modeled.</p>
+        </article>
+        <article class="card">
+          <span class="pill pill-green">Evidence</span>
+          <h3>Agents are bounded by artifacts</h3>
+          <p>Agent outputs use structured dataclasses, and evidence citations are rejected when they refer to unavailable evidence IDs. That is a sound basis for explainable UI results.</p>
+        </article>
+        <article class="card">
+          <span class="pill pill-green">Repeatability</span>
+          <h3>A useful run-directory contract</h3>
+          <p><code>chamber.yaml</code>, plan, metadata, evidence, findings, agent output, and report artifacts already provide a portable unit for archive, resume, and future import.</p>
+        </article>
+        <article class="card">
+          <span class="pill pill-blue">Modes</span>
+          <h3>Deploy and attach address real workflows</h3>
+          <p>The product can create an isolated chamber or safely observe an already-running non-production service. These should be first-class choices in the setup wizard.</p>
+        </article>
+        <article class="card">
+          <span class="pill pill-blue">Coverage</span>
+          <h3>Broader than a smoke tester</h3>
+          <p>Traffic journeys, controlled dependency faults, pod and scale faults, Kubernetes evidence, Prometheus snapshots, multi-service metadata, and recovery concepts are present.</p>
+        </article>
+        <article class="card">
+          <span class="pill pill-blue">Discipline</span>
+          <h3>Quality gates are meaningful</h3>
+          <p>The repository enforces formatting, linting, type checks, tests, 90% coverage, scenario validation, release metadata, strict docs, and package builds.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="findings">
+      <div class="eyebrow">Priority findings</div>
+      <h2>Fix trust and orchestration before polishing screens.</h2>
+
+      <div class="finding">
+        <div><span class="pill pill-red">P0 · Trust</span></div>
+        <div>
+          <h3>The guided workflow disconnects collection from analysis.</h3>
+          <p>
+            The scenario runner calls <code>analyze_evidence</code>, but local guided, Kubernetes deploy,
+            and Kubernetes attach paths all write an empty <code>findings.json</code>. The guided report
+            builder then sets <code>findings=()</code>. A successful k6 run is not the same as a reliability
+            pass, yet the renderer scores an empty finding set as 100/100 and “ready.”
+          </p>
+          <div class="evidence"><code>chamber/workflow.py:499, 631, 814, 2701</code> · <code>chamber/report/rendering.py:139–160</code></div>
+        </div>
+      </div>
+
+      <div class="finding">
+        <div><span class="pill pill-red">P0 · Integrity</span></div>
+        <div>
+          <h3>Run IDs and evidence membership are not collision-safe.</h3>
+          <p>
+            Run directories use service name plus a timestamp with one-second precision, while callers
+            create directories with <code>exist_ok=True</code>. Reports discover several evidence types by
+            checking whether files happen to exist, not through a run-owned evidence manifest. A repeated
+            run can reuse a directory and surface stale evidence. A sampled local run in this workspace
+            was rendered with attach discovery, rollback, and Prometheus references—exactly the category
+            mismatch an immutable manifest should prevent.
+          </p>
+          <div class="evidence"><code>chamber/workflow.py:2583–2672, 2806–2815</code></div>
+        </div>
+      </div>
+
+      <div class="finding">
+        <div><span class="pill pill-amber">P1 · Cohesion</span></div>
+        <div>
+          <h3>Two live paths have different capabilities and result semantics.</h3>
+          <p>
+            <code>ampule-chamber run --scenario</code> owns the mature evidence-analysis-report flow for
+            kind scenarios, while <code>assess --mode kubernetes</code> owns the newer deploy/attach flow.
+            A UI over both would need to explain inconsistent inputs, supported faults, artifacts, and
+            scoring. Consolidate them behind one application service before adding another adapter.
+          </p>
+          <div class="evidence"><code>chamber/orchestrator/live.py</code> and <code>chamber/workflow.py</code></div>
+        </div>
+      </div>
+
+      <div class="finding">
+        <div><span class="pill pill-amber">P1 · Contract</span></div>
+        <div>
+          <h3>Scenario and ChamberConfig models overlap without one canonical schema.</h3>
+          <p>
+            The repository supports <code>kind: Scenario</code> and <code>kind: ChamberConfig</code> with
+            different concepts and validators. Planning reads only the first traffic journey, even though
+            Kubernetes execution can run multiple journeys; the report also presents the first journey
+            and hard-codes max virtual users to 1. A form-based UI will expose these inconsistencies quickly.
+          </p>
+          <div class="evidence"><code>chamber/workflow.py:340–386, 2568–2701</code> · <code>chamber/contracts/scenario.py</code></div>
+        </div>
+      </div>
+
+      <div class="finding">
+        <div><span class="pill pill-amber">P1 · Runtime</span></div>
+        <div>
+          <h3>The lifecycle model is defined but not driving execution.</h3>
+          <p>
+            A thoughtful state machine exists—created, ready, baseline, experiment, fault, recovery,
+            analysis, reporting, terminal states—but the guided workflow persists ad hoc stage strings.
+            The UI needs validated transitions, progress events, cancellation, crash recovery, and cleanup
+            status. Make the existing lifecycle the executable contract and persist an append-only event log.
+          </p>
+          <div class="evidence"><code>chamber/contracts/lifecycle.py:8–124</code></div>
+        </div>
+      </div>
+
+      <div class="finding">
+        <div><span class="pill pill-blue">P2 · Maintainability</span></div>
+        <div>
+          <h3>The 3,342-line workflow module is becoming the product boundary.</h3>
+          <p>
+            CLI parsing, config inference, validation, planning, deploy/attach execution, k6 generation,
+            evidence collection, Prometheus access, faults, agents, persistence, and report assembly live
+            together. This is still testable, but a control UI would add HTTP, jobs, streaming, and user
+            state to the same module unless the application layer is extracted now.
+          </p>
+          <div class="evidence"><code>chamber/workflow.py</code> · 1,267 measured statements</div>
+        </div>
+      </div>
+
+      <div class="finding">
+        <div><span class="pill pill-blue">P2 · Positioning</span></div>
+        <div>
+          <h3>Capability maturity should be explicit.</h3>
+          <p>
+            Package metadata calls the project production/stable while current phase planning still has
+            an incomplete release workflow, and key guided paths do not yet create findings. Replace one
+            broad maturity claim with a capability matrix: planning, local kind run, deploy, attach,
+            faults, evidence types, analysis, and report confidence.
+          </p>
+          <div class="evidence"><code>pyproject.toml:8, 27</code> · <code>phase-14/ExecPlan.md</code></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="architecture">
+      <div class="eyebrow">Recommended architecture</div>
+      <h2>One core, three adapters.</h2>
+      <p class="section-intro">
+        Keep the system local-first and single-process for the first UI. The browser, CLI, and future CI
+        integration should call the same typed application services. Avoid a queue or microservice fleet
+        until concurrent multi-user operation is a proven requirement.
+      </p>
+
+      <div class="architecture" role="img" aria-label="Recommended control plane architecture from user interfaces through application services to adapters and a run store">
+        <div class="node">
+          <strong>Interfaces</strong>
+          <span>Web control UI<br>CLI<br>CI adapter</span>
+        </div>
+        <div class="arrow" aria-hidden="true">→</div>
+        <div class="node">
+          <strong>Control API</strong>
+          <span>REST commands<br>Server-sent run events<br>Schema and capability endpoints</span>
+        </div>
+        <div class="arrow" aria-hidden="true">→</div>
+        <div class="node">
+          <strong>Application services</strong>
+          <span>Onboard · Plan · Execute<br>Cancel · Analyze · Report<br>Validated lifecycle transitions</span>
+        </div>
+        <div class="arrow" aria-hidden="true">→</div>
+        <div class="node">
+          <strong>Core &amp; adapters</strong>
+          <span>Kubernetes · k6 · faults<br>Prometheus · agents<br>Immutable run store</span>
+        </div>
+      </div>
+
+      <div class="grid grid-3 principles">
+        <article class="card">
+          <h3>Run directories remain canonical</h3>
+          <p>Add <code>run.json</code>, <code>events.jsonl</code>, and <code>evidence/manifest.json</code> with hashes. A small SQLite database may index runs for fast UI lists, but it must be rebuildable from directories.</p>
+        </article>
+        <article class="card">
+          <h3>Use a shared service, not CLI subprocesses</h3>
+          <p>Extract typed use cases from <code>workflow.py</code>. Both CLI handlers and HTTP routes call them directly, preserving identical safety checks and result semantics.</p>
+        </article>
+        <article class="card">
+          <h3>Stream events with SSE first</h3>
+          <p>Run progress is predominantly server-to-client. Server-sent events are easier to operate and reconnect than WebSockets; commands such as cancel remain ordinary HTTP requests.</p>
+        </article>
+        <article class="card">
+          <h3>Single background worker for MVP</h3>
+          <p>Start with an in-process worker and a lock that makes concurrency explicit. Persist every transition so interrupted runs can be shown as interrupted and offered cleanup or resume.</p>
+        </article>
+        <article class="card">
+          <h3>Schema drives forms and validation</h3>
+          <p>Publish JSON Schema for one canonical assessment spec. Add UI metadata for labels and help text, but keep validation and safety rules server-side.</p>
+        </article>
+        <article class="card">
+          <h3>Capabilities drive portability</h3>
+          <p>Each environment, traffic, fault, and observability adapter declares supported operations and prerequisites. The UI disables unsupported combinations before a run is planned.</p>
+        </article>
+      </div>
+
+      <div class="card" style="margin-top: 18px; box-shadow: none;">
+        <h3>Minimal new module boundaries</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Area</th><th>Responsibility</th><th>Starts from</th></tr></thead>
+            <tbody>
+              <tr><td><code>chamber/application/</code></td><td>Onboard, plan, start, cancel, analyze, report use cases and lifecycle transitions.</td><td>Extract from <code>workflow.py</code> and <code>orchestrator/live.py</code>.</td></tr>
+              <tr><td><code>chamber/runs/</code></td><td>Unique IDs, atomic writes, event log, evidence manifest, import, archive, index rebuild.</td><td>Existing <code>.chamber/runs</code> contract.</td></tr>
+              <tr><td><code>chamber/capabilities/</code></td><td>Adapter descriptors, prerequisite checks, supported combinations, safety level.</td><td>Existing environment, traffic, chaos, and observability modules.</td></tr>
+              <tr><td><code>chamber/api/</code></td><td>Local HTTP/SSE surface with no Kubernetes business logic.</td><td>New adapter over application services.</td></tr>
+              <tr><td><code>chamber/ui/</code></td><td>Server-rendered screens and light progressive enhancement.</td><td>New product surface; no second domain model.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="ui">
+      <div class="eyebrow">Control UI proposal</div>
+      <h2>Make the safest path the easiest path.</h2>
+      <p class="section-intro">
+        Launch with <code>ampule-chamber ui</code>. The default screen is a run workspace, not a generic
+        dashboard: choose a target, review the generated plan, run it, and inspect evidence-backed results.
+      </p>
+
+      <div class="mock-shell" aria-label="HTML mockup of an Ampule Chamber live run screen">
+        <div class="mock-top">
+          <div class="mock-title">Ampule Chamber</div>
+          <div class="mock-context">kind-ampule-chamber · chamber-payments-7F4K</div>
+        </div>
+        <div class="mock-body">
+          <aside class="mock-side" aria-label="Product navigation">
+            <div class="side-item">Runs</div>
+            <div class="side-item active">New assessment</div>
+            <div class="side-item">Templates</div>
+            <div class="side-item">Connections</div>
+            <div class="side-item">Settings</div>
+          </aside>
+          <div class="mock-main">
+            <div class="progress" aria-label="Assessment progress">
+              <div class="step done">1 Target</div>
+              <div class="step done">2 Environment</div>
+              <div class="step done">3 Exercise</div>
+              <div class="step active">4 Run</div>
+              <div class="step">5 Results</div>
+            </div>
+            <h3>Baseline + dependency outage</h3>
+            <p class="mock-sub">Running against an isolated namespace · estimated 5 minutes remaining</p>
+            <div class="run-summary">
+              <div class="panel">
+                <h4>Live timeline</h4>
+                <div class="timeline-row">
+                  <div class="time">10:42:08</div><div class="dot"></div>
+                  <div class="event">Preflight passed<span>Context, RBAC, tools, target, and cleanup policy verified</span></div>
+                </div>
+                <div class="timeline-row">
+                  <div class="time">10:42:22</div><div class="dot"></div>
+                  <div class="event">Environment ready<span>2 workloads ready in chamber-payments-7F4K</span></div>
+                </div>
+                <div class="timeline-row">
+                  <div class="time">10:43:02</div><div class="dot"></div>
+                  <div class="event">Baseline stable<span>0.1% errors · p95 86 ms · no restarts</span></div>
+                </div>
+                <div class="timeline-row">
+                  <div class="time">10:44:01</div><div class="dot"></div>
+                  <div class="event">Dependency fault active<span>Downstream 500 response window · 60 seconds</span></div>
+                </div>
+                <div class="button-row">
+                  <span class="button">View raw evidence</span>
+                  <span class="button primary">Cancel &amp; clean up</span>
+                </div>
+              </div>
+              <div class="panel">
+                <h4>Current signals</h4>
+                <div class="metric"><span>HTTP error rate</span><strong>3.8%</strong></div>
+                <div class="metric"><span>p95 latency</span><strong>412 ms</strong></div>
+                <div class="metric"><span>Restarts</span><strong>0</strong></div>
+                <div class="metric"><span>Memory peak</span><strong>486 MiB</strong></div>
+                <div class="metric"><span>Evidence coverage</span><strong>6 / 7</strong></div>
+                <div style="margin-top: 18px;"><span class="pill pill-amber">Metrics partial</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="caption">
+        HTML-native concept mockup. The key design choice is to show stage, safety context, live facts,
+        and evidence completeness together—never a detached “health score” without its coverage.
+      </p>
+
+      <div class="grid grid-3" style="margin-top: 30px;">
+        <article class="card">
+          <h3>1. Target</h3>
+          <p>Choose local repository, reviewed config, or existing Kubernetes deployment. Auto-detect manifests and workloads with confidence labels and editable assumptions.</p>
+        </article>
+        <article class="card">
+          <h3>2. Environment</h3>
+          <p>Select deploy or attach, context and namespace, image strategy, secret references, and observability connections. Run read-only preflight immediately.</p>
+        </article>
+        <article class="card">
+          <h3>3. Exercise</h3>
+          <p>Start from a use-case template, then adjust traffic journeys, fault windows, recovery checks, maximum VUs, duration, and mutation policy.</p>
+        </article>
+        <article class="card">
+          <h3>4. Review &amp; run</h3>
+          <p>Show adapted manifest diff, commands/capabilities, estimated scope, safety limits, required approvals, cleanup plan, and unsupported evidence before execution.</p>
+        </article>
+        <article class="card">
+          <h3>5. Live timeline</h3>
+          <p>Stream validated lifecycle events, current signals, active faults, agent status, evidence arrival, and cleanup progress. Support cancel with cleanup, not a blind process kill.</p>
+        </article>
+        <article class="card">
+          <h3>6. Results</h3>
+          <p>Lead with readiness outcome and evidence coverage, then findings, observed facts versus hypotheses, timeline, resource graph, raw artifacts, reproduction, and retest.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="variety">
+      <div class="eyebrow">Ease of use across cases</div>
+      <h2>Templates outside, capabilities inside.</h2>
+      <p class="section-intro">
+        Users should think in outcomes—“test a dependency outage” or “investigate memory growth”—while
+        the engine resolves the required adapters, evidence, permissions, and safety limits.
+      </p>
+
+      <div class="table-wrap card" style="padding: 8px 18px; box-shadow: none;">
+        <table>
+          <thead><tr><th>Case</th><th>Current position</th><th>UI treatment</th><th>Next capability</th></tr></thead>
+          <tbody>
+            <tr><td>Repository review only</td><td><span class="pill pill-green">Supported</span></td><td>Generate and review a plan; label result “plan only,” never “ready.”</td><td>Confidence per inferred field and manifest preview.</td></tr>
+            <tr><td>Deploy raw Kubernetes YAML</td><td><span class="pill pill-green">Supported</span></td><td>Guided namespace, image, traffic, preflight, run, cleanup flow.</td><td>Unify analysis and result semantics.</td></tr>
+            <tr><td>Attach to existing non-prod service</td><td><span class="pill pill-green">Supported</span></td><td>Observe-only default; faults appear only after allow-label discovery.</td><td>Clear rollback receipt and before/after comparison.</td></tr>
+            <tr><td>HTTP API journeys</td><td><span class="pill pill-green">Supported</span></td><td>Form editor for GET/POST, stages, JSON body, expectations, follow-ups.</td><td>Import OpenAPI, k6, or Postman definitions.</td></tr>
+            <tr><td>Multi-service dependency failure</td><td><span class="pill pill-amber">Partial</span></td><td>Topology preview and per-service evidence attribution.</td><td>Canonical dependency graph and guided dependency fixtures.</td></tr>
+            <tr><td>Queue worker / asynchronous job</td><td><span class="pill pill-amber">Partial</span></td><td>Template that separates admission, processing, and completion evidence.</td><td>Queue traffic adapter and backlog/recovery collectors.</td></tr>
+            <tr><td>Helm or Kustomize deployment</td><td><span class="pill pill-red">Gap</span></td><td>Show unsupported during capability preflight; accept rendered YAML now.</td><td>Render adapters with deterministic input/output snapshots.</td></tr>
+            <tr><td>gRPC, WebSocket, or event streams</td><td><span class="pill pill-red">Gap</span></td><td>Keep hidden unless a compatible traffic adapter is installed.</td><td>Protocol-specific traffic adapter contract.</td></tr>
+            <tr><td>Incident reproduction</td><td><span class="pill pill-red">Gap</span></td><td>Import incident evidence, map symptoms to a reusable experiment draft.</td><td>Evidence-import and scenario-suggestion workflow.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="grid grid-2" style="margin-top: 20px;">
+        <article class="card">
+          <h3>Starter templates</h3>
+          <ul class="clean">
+            <li>HTTP baseline and saturation</li>
+            <li>Dependency slow, unavailable, 429, or 500</li>
+            <li>Pod restart and replica loss</li>
+            <li>Memory growth and OOM investigation</li>
+            <li>Retry amplification and recovery</li>
+            <li>Queue backlog and drain</li>
+          </ul>
+        </article>
+        <article class="card">
+          <h3>Every template declares</h3>
+          <ul class="clean">
+            <li>Compatible target and traffic types</li>
+            <li>Required tools, RBAC, and telemetry</li>
+            <li>Mutation level and cleanup contract</li>
+            <li>Maximum duration and load budget</li>
+            <li>Required evidence for a conclusive result</li>
+            <li>What “pass,” “risk,” and “insufficient evidence” mean</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section id="roadmap">
+      <div class="eyebrow">Implementation sequence</div>
+      <h2>Build confidence in six bounded slices.</h2>
+      <p class="section-intro">
+        Each slice leaves the CLI usable and adds a testable contract. Avoid expanding fault types until
+        the common execution-and-analysis path is trustworthy.
+      </p>
+
+      <div class="roadmap">
+        <article class="roadmap-item">
+          <div>
+            <h3>Trust core</h3>
+            <p>Run collected evidence through analysis in every live path, load persisted findings into reports, add evidence-completeness outcomes, and remove hard-coded traffic summaries.</p>
+          </div>
+          <div class="done-when"><strong>Done when:</strong> a guided run can produce real findings, and missing required telemetry cannot render “ready.”</div>
+        </article>
+        <article class="roadmap-item">
+          <div>
+            <h3>Immutable run record</h3>
+            <p>Use collision-proof IDs, atomic writes, append-only lifecycle events, and an evidence manifest containing type, producer, timestamps, run ID, size, and digest.</p>
+          </div>
+          <div class="done-when"><strong>Done when:</strong> reruns never reuse directories, and reports ignore stale or unregistered files.</div>
+        </article>
+        <article class="roadmap-item">
+          <div>
+            <h3>Application-service extraction</h3>
+            <p>Unify scenario and guided execution behind typed plan, start, cancel, analyze, and report services; make the lifecycle state machine executable.</p>
+          </div>
+          <div class="done-when"><strong>Done when:</strong> CLI tests call the same use cases the UI will call, with no CLI subprocess wrapper.</div>
+        </article>
+        <article class="roadmap-item">
+          <div>
+            <h3>Local control API and runs screen</h3>
+            <p>Add local HTTP endpoints, SSE events, a rebuildable run index, interrupted-run recovery, and read-only screens for run history and existing results.</p>
+          </div>
+          <div class="done-when"><strong>Done when:</strong> <code>ampule-chamber ui</code> opens a browser and can inspect imported/current run directories.</div>
+        </article>
+        <article class="roadmap-item">
+          <div>
+            <h3>Setup wizard and live run</h3>
+            <p>Add target selection, generated-config review, capability preflight, manifest diff, exercise builder, safety receipt, live timeline, and cancel-with-cleanup.</p>
+          </div>
+          <div class="done-when"><strong>Done when:</strong> the sample service and one attach target can be assessed end-to-end without editing YAML.</div>
+        </article>
+        <article class="roadmap-item">
+          <div>
+            <h3>Results, comparison, and extensibility</h3>
+            <p>Add evidence-backed findings, coverage, timeline, service graph, raw artifacts, baseline comparison, HTML export, templates, and adapter capability discovery.</p>
+          </div>
+          <div class="done-when"><strong>Done when:</strong> a user can explain what changed between two runs and add a new adapter without changing UI domain logic.</div>
+        </article>
+      </div>
+
+      <div class="grid grid-2">
+        <article class="card risk">
+          <h3>Do not build yet</h3>
+          <ul class="clean">
+            <li>A separate frontend/backend deployment topology</li>
+            <li>A distributed job queue before concurrency is needed</li>
+            <li>A new findings model exclusive to the UI</li>
+            <li>More fault primitives before analysis is unified</li>
+            <li>Automatic deployment gates based only on the current score</li>
+          </ul>
+        </article>
+        <article class="card good">
+          <h3>First release acceptance</h3>
+          <ul class="clean">
+            <li>One-command launch and prerequisite check</li>
+            <li>Deploy and observe-only attach workflows</li>
+            <li>Plan review and explicit safety confirmation</li>
+            <li>Validated live state, cancellation, and cleanup</li>
+            <li>Findings tied to immutable evidence IDs</li>
+            <li>“Insufficient evidence” instead of false readiness</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section id="evidence">
+      <div class="eyebrow">Review evidence</div>
+      <h2>What this assessment is based on.</h2>
+      <p class="section-intro">
+        This was a read-only architecture and product review plus local quality verification. No runtime
+        Kubernetes mutation was performed.
+      </p>
+
+      <div class="table-wrap card evidence-table" style="padding: 8px 18px; box-shadow: none;">
+        <table>
+          <thead><tr><th>Evidence</th><th>Observed</th><th>Why it matters</th></tr></thead>
+          <tbody>
+            <tr><td><a href="../../chamber/workflow.py"><code>chamber/workflow.py</code></a></td><td>3,342 lines; orchestration, persistence, agents, traffic, attach faults, evidence, report assembly, and CLI.</td><td>Natural extraction point before adding HTTP/UI responsibilities.</td></tr>
+            <tr><td><a href="../../chamber/orchestrator/live.py"><code>chamber/orchestrator/live.py</code></a></td><td>Scenario-based live path calls analysis and builds report findings.</td><td>Proves the analysis capability exists but is not shared by guided Kubernetes execution.</td></tr>
+            <tr><td><a href="../../chamber/analysis/findings.py"><code>chamber/analysis/findings.py</code></a></td><td>Evidence detectors for Kubernetes, Prometheus, k6, timeline, and cascades.</td><td>Should feed all run modes and the future result API.</td></tr>
+            <tr><td><a href="../../chamber/contracts/lifecycle.py"><code>chamber/contracts/lifecycle.py</code></a></td><td>Explicit run states and allowed transitions.</td><td>Good foundation for UI progress, cancellation, and crash recovery.</td></tr>
+            <tr><td><a href="../../chamber/agents/contracts.py"><code>chamber/agents/contracts.py</code></a></td><td>Structured outputs with evidence-ID validation.</td><td>Supports explainable, bounded agent content in result screens.</td></tr>
+            <tr><td><a href="../../chamber/environment/preflight.py"><code>chamber/environment/preflight.py</code></a></td><td>Deploy and attach safety checks with reportable results.</td><td>Can power the wizard’s prerequisite and safety receipt screens.</td></tr>
+            <tr><td><a href="../../chamber/report/rendering.py"><code>chamber/report/rendering.py</code></a></td><td>Deterministic Markdown report and severity-only readiness scoring.</td><td>Needs evidence coverage and execution validity before UI reuse.</td></tr>
+            <tr><td><a href="../../tests/test_phase11_12_13_workflow.py"><code>tests/</code></a></td><td>141 passing tests; total coverage 90%.</td><td>Strong regression base for the architectural extraction.</td></tr>
+            <tr><td><a href="../kubernetes-assessment.md"><code>docs/kubernetes-assessment.md</code></a></td><td>Detailed deploy/attach operator flow and safety model.</td><td>Provides most content required for guided form help and error recovery.</td></tr>
+            <tr><td><code>make check</code></td><td>Passed on 10 July 2026: format, lint, type checks, 141 tests, 90% coverage, 10 scenarios, release validation, strict docs, and package build.</td><td>Recommendations are architectural/product priorities, not a claim that the repository is generally unhealthy.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <details class="card" style="margin-top: 18px; box-shadow: none;">
+        <summary style="cursor: pointer; font-weight: 800;">Scope and limitations</summary>
+        <ul class="clean">
+          <li>Reviewed tracked source, tests, public documentation, all phase summaries, current phase plans, and sampled local run artifacts.</li>
+          <li>Did not run a live Kubernetes assessment or inspect an external service repository.</li>
+          <li>Did not perform a security audit; safety observations are architectural and based on existing guardrails.</li>
+          <li>The control-screen visual is a code-native concept embedded in this report, not an implemented product UI.</li>
+        </ul>
+      </details>
+    </section>
+
+    <section class="closing">
+      <div class="eyebrow" style="color: #87c4a8;">Bottom line</div>
+      <h2>The shortest path to “easy for many cases” is not more options—it is one trustworthy run model with guided templates.</h2>
+      <p>
+        First unify evidence, findings, readiness, lifecycle, and persistence. Then place a thin local web
+        control plane over the shared services. This preserves the repository’s strongest qualities—safety,
+        evidence, repeatability, and tests—while making the chamber approachable to users who should not
+        need to understand its YAML or internal phases.
+      </p>
+    </section>
+  </main>
+</body>
+</html>

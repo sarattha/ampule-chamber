@@ -25,6 +25,7 @@ nav:
   - Overview: index.md
   - Getting Started: getting-started.md
   - Guided Workflow: guided-workflow.md
+  - Control Plane UI: control-plane.md
   - Generic Kubernetes Assessment: kubernetes-assessment.md
   - Agent Pipeline: agent-pipeline.md
   - Scenario Contracts: scenarios.md

@@ -37,6 +37,7 @@ from chamber.agents import (
     validate_evidence_bound_output,
 )
 from chamber.agents.sdk import OpenAIAgentsSdkRunner
+from chamber.application import analyze_guided_run, build_assessment_result
 from chamber.environment import preflight_to_evidence, run_kubernetes_preflight
 from chamber.environment.preflight import (
     CommandRunner as KubernetesCommandRunner,
@@ -56,6 +57,7 @@ from chamber.onboarding import (
 )
 from chamber.report import (
     EvidenceReference,
+    ReportFinding,
     ReportInput,
     ReportSection,
     ReproductionDetails,
@@ -64,8 +66,18 @@ from chamber.report import (
     TestedScenario,
     render_markdown_report,
 )
+from chamber.runs import (
+    append_run_event,
+    initialize_run_record,
+    new_run_directory,
+    read_json_value,
+    refresh_evidence_manifest,
+    registered_evidence,
+    sync_run_record,
+    write_json_atomic,
+)
 
-WORKSPACE_DIR = ".chamber"
+WORKSPACE_DIR = os.environ.get("AMPULE_CHAMBER_WORKSPACE", ".chamber")
 RUNS_DIR = "runs"
 DEFAULT_AGENT_MODE = "offline"
 AGENT_MODES = {"off", "offline", "live"}
@@ -149,22 +161,30 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover
     args = parser.parse_args(raw_args)
     try:
         if args.command == "init":
-            workspace = init_workspace(Path(args.workspace))
+            from chamber.application.service import ChamberApplication
+
+            workspace = ChamberApplication(Path(args.workspace)).initialize()
             print(f"initialized {workspace}")
             return 0
         if args.command == "onboard":
-            config = onboard_repository(Path(args.repo), output=Path(args.output))
+            from chamber.application.service import ChamberApplication
+
+            config = ChamberApplication().onboard(Path(args.repo), output=Path(args.output))
             print(f"wrote {config}")
             return 0
         if args.command == "plan":
-            run_dir = plan_config(
+            from chamber.application.service import ChamberApplication
+
+            run_dir = ChamberApplication().plan(
                 Path(args.config),
                 run_dir=Path(args.run_dir) if args.run_dir else None,
             )
             print(f"planned {run_dir}")
             return 0
         if args.command == "assess":
-            run_dir = assess(
+            from chamber.application.service import ChamberApplication
+
+            run_dir = ChamberApplication().assess(
                 repo=Path(args.repo) if args.repo else None,
                 config=Path(args.config) if args.config else None,
                 resume=Path(args.resume) if args.resume else None,
@@ -177,9 +197,21 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover
             print(f"report {run_dir / 'report.md'}")
             return 0
         if args.command == "report":
-            report_path = render_report_from_run(Path(args.run))
+            from chamber.application.service import ChamberApplication
+
+            report_path = ChamberApplication().report(Path(args.run))
             print(f"report {report_path}")
             return 0
+        if args.command == "ui":
+            from chamber.control_plane.server import run_server
+
+            return run_server(
+                host=args.host,
+                port=args.port,
+                workspace=Path(args.workspace),
+                open_browser=not args.no_open,
+                allow_remote=args.allow_remote,
+            )
     except (WorkflowError, AgentValidationError, ValueError) as exc:
         parser.exit(1, f"error: {exc}\n")
     raise WorkflowError(f"unsupported command {args.command!r}")
@@ -496,21 +528,19 @@ def assess(
     config_data = load_config(config_path)
     _validate_assessment_safety()
     _write_local_evidence(run_dir)
-    _write_json(run_dir / "findings.json", [])
+    metadata = {
+        "run_id": run_dir.name,
+        "stage": "assessed",
+        "mode": mode,
+        "config": str(config_path),
+        "cleanup_performed": True,
+        "cleanup_notes": ["No live Kubernetes resources were created by local assessment."],
+        "agent_mode": _agent_mode(config_data, agents_mode),
+        "agent_exclude": _agent_exclusions(config_data, ()),
+    }
+    _write_metadata(run_dir, metadata)
+    _finalize_guided_result(run_dir, config=config_data, metadata=metadata)
     _write_agents(run_dir, config_data, evidence_ids=("plan", "local-assessment"), stage="assess")
-    _write_metadata(
-        run_dir,
-        {
-            "run_id": run_dir.name,
-            "stage": "assessed",
-            "mode": mode,
-            "config": str(config_path),
-            "cleanup_performed": True,
-            "cleanup_notes": ["No live Kubernetes resources were created by local assessment."],
-            "agent_mode": _agent_mode(config_data, agents_mode),
-            "agent_exclude": _agent_exclusions(config_data, ()),
-        },
-    )
     render_report_from_run(run_dir)
     return run_dir
 
@@ -566,21 +596,25 @@ def _assess_kubernetes_config(
     )
     _write_json(run_dir / "evidence/preflight.json", preflight_to_evidence(preflight))
     if not preflight.ready:
-        _write_metadata(
-            run_dir,
-            {
-                "run_id": run_dir.name,
-                "stage": "preflight_failed",
-                "mode": "kubernetes",
-                "config": str(config_copy),
-                "runtime": runtime_plan,
-                "cleanup_performed": False,
-                "cleanup_notes": ["No Kubernetes resources were applied after failed preflight."],
-                "preflight": preflight_to_evidence(preflight),
-                "agent_mode": _agent_mode(config, agents_mode),
-                "agent_exclude": _agent_exclusions(config, ()),
-            },
-        )
+        metadata = {
+            "run_id": run_dir.name,
+            "stage": "preflight_failed",
+            "mode": "kubernetes",
+            "config": str(config_copy),
+            "runtime": runtime_plan,
+            "provider": "kubernetes",
+            "context": selected_context,
+            "namespace": plan.namespace,
+            "cleanup_performed": False,
+            "cleanup_notes": ["No Kubernetes resources were applied after failed preflight."],
+            "preflight": preflight_to_evidence(preflight),
+            "success": False,
+            "agent_mode": _agent_mode(config, agents_mode),
+            "agent_exclude": _agent_exclusions(config, ()),
+        }
+        _write_metadata(run_dir, metadata)
+        _finalize_guided_result(run_dir, config=config, metadata=metadata)
+        render_report_from_run(run_dir)
         raise WorkflowError("Kubernetes preflight failed: " + "; ".join(preflight.blockers))
 
     commands: list[dict[str, object]] = []
@@ -594,7 +628,7 @@ def _assess_kubernetes_config(
     }
     cleanup_performed = False
     success = False
-    failure: Exception | None = None
+    failure: BaseException | None = None
     try:
         _apply_kubernetes_plan(
             plan.manifests, context=selected_context, runner=runner, commands=commands
@@ -620,7 +654,7 @@ def _assess_kubernetes_config(
                 namespace=plan.namespace,
             )
         success = bool(traffic_result.get("success"))
-    except Exception as exc:
+    except (Exception, KeyboardInterrupt) as exc:
         failure = exc
     finally:
         if bool(runtime.get("cleanup", True)):
@@ -628,10 +662,15 @@ def _assess_kubernetes_config(
             cleanup_performed = True
 
     _write_json(run_dir / "evidence/kubernetes-commands.json", {"commands": commands})
-    _write_json(run_dir / "findings.json", [])
     metadata = {
         "run_id": run_dir.name,
-        "stage": "assessed" if failure is None else "failed",
+        "stage": (
+            "assessed"
+            if failure is None
+            else "cancelled"
+            if isinstance(failure, KeyboardInterrupt)
+            else "failed"
+        ),
         "mode": "kubernetes",
         "config": str(config_copy),
         "runtime": runtime_plan,
@@ -653,6 +692,7 @@ def _assess_kubernetes_config(
     if failure is not None:
         metadata["error"] = str(failure)
     _write_metadata(run_dir, metadata)
+    _finalize_guided_result(run_dir, config=config, metadata=metadata)
     _write_agents(
         run_dir,
         config,
@@ -718,27 +758,28 @@ def _assess_kubernetes_attach_config(
     )
     _write_json(run_dir / "evidence/preflight.json", preflight_to_evidence(preflight))
     if not preflight.ready:
-        _write_metadata(
-            run_dir,
-            {
-                "run_id": run_dir.name,
-                "stage": "preflight_failed",
-                "mode": "kubernetes",
-                "runtime_mode": "attach",
-                "config": str(config_copy),
-                "runtime": runtime_plan,
-                "provider": "kubernetes",
-                "context": selected_context,
-                "namespace": namespace,
-                "cleanup_performed": False,
-                "cleanup_notes": [
-                    "Attach preflight failed before traffic, faults, or cleanup mutations."
-                ],
-                "preflight": preflight_to_evidence(preflight),
-                "agent_mode": _agent_mode(config, agents_mode),
-                "agent_exclude": _agent_exclusions(config, agents_exclude),
-            },
-        )
+        metadata = {
+            "run_id": run_dir.name,
+            "stage": "preflight_failed",
+            "mode": "kubernetes",
+            "runtime_mode": "attach",
+            "config": str(config_copy),
+            "runtime": runtime_plan,
+            "provider": "kubernetes",
+            "context": selected_context,
+            "namespace": namespace,
+            "cleanup_performed": False,
+            "cleanup_notes": [
+                "Attach preflight failed before traffic, faults, or cleanup mutations."
+            ],
+            "preflight": preflight_to_evidence(preflight),
+            "success": False,
+            "agent_mode": _agent_mode(config, agents_mode),
+            "agent_exclude": _agent_exclusions(config, agents_exclude),
+        }
+        _write_metadata(run_dir, metadata)
+        _finalize_guided_result(run_dir, config=config, metadata=metadata)
+        render_report_from_run(run_dir)
         raise WorkflowError("Kubernetes attach preflight failed: " + "; ".join(preflight.blockers))
 
     commands: list[dict[str, object]] = []
@@ -752,7 +793,7 @@ def _assess_kubernetes_attach_config(
     }
     rollback_evidence: dict[str, object] = {"faults_requested": False, "actions": []}
     success = False
-    failure: Exception | None = None
+    failure: BaseException | None = None
     discovery: dict[str, Any] = {}
     try:
         discovery = _discover_attach_target(
@@ -797,7 +838,7 @@ def _assess_kubernetes_attach_config(
                 pod_names=tuple(str(item["name"]) for item in discovery.get("pods", ())),
             )
         success = bool(traffic_result.get("success"))
-    except Exception as exc:
+    except (Exception, KeyboardInterrupt) as exc:
         failure = exc
     finally:
         if rollback_evidence.get("pending_restore"):
@@ -811,9 +852,14 @@ def _assess_kubernetes_attach_config(
 
     _write_json(run_dir / "evidence/rollback.json", rollback_evidence)
     _write_json(run_dir / "evidence/kubernetes-commands.json", {"commands": commands})
-    _write_json(run_dir / "findings.json", [])
     rollback_verified = bool(rollback_evidence.get("verified", True))
-    stage = "assessed" if failure is None and rollback_verified else "failed"
+    stage = (
+        "assessed"
+        if failure is None and rollback_verified
+        else "cancelled"
+        if isinstance(failure, KeyboardInterrupt)
+        else "failed"
+    )
     metadata = {
         "run_id": run_dir.name,
         "stage": stage,
@@ -841,6 +887,7 @@ def _assess_kubernetes_attach_config(
     if not rollback_verified:
         metadata["error"] = "attach fault rollback could not be verified"
     _write_metadata(run_dir, metadata)
+    _finalize_guided_result(run_dir, config=config, metadata=metadata)
     _write_agents(
         run_dir,
         config,
@@ -861,9 +908,18 @@ def render_report_from_run(run_dir: Path) -> Path:
     config = load_config(run_dir / "chamber.yaml", require_repo=False)
     plan = _read_json(run_dir / "plan.json")
     metadata = _read_json(run_dir / "run-metadata.json")
+    refresh_evidence_manifest(run_dir)
+    if not (run_dir / "result.json").exists() or not (run_dir / "findings.json").exists():
+        _finalize_guided_result(run_dir, config=config, metadata=metadata)
     report = _report_input(run_dir, config=config, plan=plan, metadata=metadata)
     report_path = run_dir / "report.md"
     report_path.write_text(render_markdown_report(report), encoding="utf-8")
+    append_run_event(
+        run_dir,
+        state=str(initialize_run_record(run_dir).get("state", "reporting")),
+        event_type="report_generated",
+        payload={"path": str(report_path)},
+    )
     return report_path
 
 
@@ -908,6 +964,19 @@ def _parser() -> argparse.ArgumentParser:
         description="Render a report from a run directory.",
     )
     report_parser.add_argument("--run", required=True)
+    ui_parser = subparsers.add_parser(
+        "ui",
+        description="Launch the local Ampule Chamber control plane.",
+    )
+    ui_parser.add_argument("--host", default="127.0.0.1")
+    ui_parser.add_argument("--port", type=int, default=8765)
+    ui_parser.add_argument("--workspace", default=WORKSPACE_DIR)
+    ui_parser.add_argument("--no-open", action="store_true")
+    ui_parser.add_argument(
+        "--allow-remote",
+        action="store_true",
+        help="Allow binding beyond loopback; secure the network boundary yourself.",
+    )
     run_parser = subparsers.add_parser("run", description="Run live local kind scenarios.")
     run_parser.add_argument("run_args", nargs=argparse.REMAINDER)
     return parser
@@ -2018,7 +2087,7 @@ def _write_agents(
         service_name=str(service["name"]),
         run_id=run_dir.name,
         evidence_ids=evidence_ids,
-        finding_ids=(),
+        finding_ids=_finding_ids(run_dir),
         artifact_paths=tuple(_string_list(deployment.get("manifests", []), "deployment.manifests")),
         missing_signals=_agent_missing_signals(stage=stage, evidence_ids=evidence_ids),
         evidence_summaries=_agent_evidence_summaries(run_dir, evidence_ids),
@@ -2038,6 +2107,20 @@ def _write_agents(
             )
         )
     return tuple(sections)
+
+
+def _finding_ids(run_dir: Path) -> tuple[str, ...]:
+    path = run_dir / "findings.json"
+    if not path.exists():
+        return ()
+    payload = read_json_value(path)
+    if not isinstance(payload, list):
+        return ()
+    return tuple(
+        str(item["finding_id"])
+        for item in payload
+        if isinstance(item, dict) and item.get("finding_id")
+    )
 
 
 def _kubernetes_assess_evidence_ids(
@@ -2567,7 +2650,10 @@ def _report_input(
 ) -> ReportInput:
     service = _mapping(config["service"], "service")
     traffic = _mapping(config["traffic"], "traffic")
-    journey = _mapping(_list(traffic["journeys"], "traffic.journeys")[0], "traffic.journeys[0]")
+    journeys = tuple(
+        _mapping(item, f"traffic.journeys[{index}]")
+        for index, item in enumerate(_list(traffic["journeys"], "traffic.journeys"))
+    )
     cleanup_notes = tuple(metadata.get("cleanup_notes") or ["Cleanup status was not recorded."])
     agent_sections = _agent_sections(run_dir)
     evidence = [
@@ -2580,96 +2666,18 @@ def _report_input(
             str(run_dir / "plan.json"),
         )
     ]
-    if (run_dir / "evidence/local-assessment.json").exists():
-        evidence.append(
-            EvidenceReference(
-                "local-assessment",
-                "ampule-chamber",
-                "local_assessment",
-                str(run_dir),
-                "from-file",
-                str(run_dir / "evidence/local-assessment.json"),
-            )
-        )
-    if (run_dir / "evidence/preflight.json").exists():
-        evidence.append(
-            EvidenceReference(
-                "preflight",
-                "kubectl",
-                "kubernetes_preflight",
-                str(metadata.get("namespace", plan.get("namespace", ""))),
-                "from-file",
-                str(run_dir / "evidence/preflight.json"),
-            )
-        )
-    if (run_dir / "evidence/kubernetes-commands.json").exists():
-        evidence.append(
-            EvidenceReference(
-                "kubernetes-commands",
-                "kubectl",
-                "kubernetes_runtime",
-                str(metadata.get("namespace", plan.get("namespace", ""))),
-                "from-file",
-                str(run_dir / "evidence/kubernetes-commands.json"),
-            )
-        )
-    if (run_dir / "evidence/attach-discovery.json").exists():
-        evidence.append(
-            EvidenceReference(
-                "attach-discovery",
-                "kubectl",
-                "attach_target_discovery",
-                str(metadata.get("namespace", plan.get("namespace", ""))),
-                "from-file",
-                str(run_dir / "evidence/attach-discovery.json"),
-            )
-        )
-    if (run_dir / "evidence/pre-test-state.json").exists():
-        evidence.append(
-            EvidenceReference(
-                "pre-test-state",
-                "kubectl",
-                "attach_pre_test_state",
-                str(metadata.get("namespace", plan.get("namespace", ""))),
-                "from-file",
-                str(run_dir / "evidence/pre-test-state.json"),
-            )
-        )
-    if (run_dir / "evidence/rollback.json").exists():
-        evidence.append(
-            EvidenceReference(
-                "rollback",
-                "kubectl",
-                "attach_fault_rollback",
-                str(metadata.get("namespace", plan.get("namespace", ""))),
-                "from-file",
-                str(run_dir / "evidence/rollback.json"),
-            )
-        )
-    traffic_result = _mapping(metadata.get("traffic_result", {}), "metadata.traffic_result")
-    summary_path = traffic_result.get("summary_path")
-    if summary_path:
-        evidence.append(
-            EvidenceReference(
-                "k6-summary",
-                "k6",
-                "traffic_summary",
-                str(metadata.get("namespace", plan.get("namespace", ""))),
-                "from-file",
-                str(summary_path),
-            )
-        )
-    if (run_dir / "evidence/prometheus-memory.json").exists():
-        evidence.append(
-            EvidenceReference(
-                "prometheus-memory",
-                "prometheus",
-                "memory_snapshot",
-                str(metadata.get("namespace", plan.get("namespace", ""))),
-                "from-file",
-                str(run_dir / "evidence/prometheus-memory.json"),
-            )
-        )
+    evidence.extend(_registered_evidence_references(run_dir, metadata=metadata, plan=plan))
+    findings = _persisted_report_findings(run_dir)
+    result = _read_json(run_dir / "result.json") if (run_dir / "result.json").exists() else {}
+    missing_evidence = result.get("missing_evidence_ids")
+    result_limitations = (
+        tuple(f"Missing required evidence: {item}" for item in missing_evidence)
+        if isinstance(missing_evidence, list)
+        else ()
+    )
+    journey_names = ", ".join(
+        str(item.get("name", f"journey-{index}")) for index, item in enumerate(journeys, start=1)
+    )
     return ReportInput(
         title="Ampule Chamber Reliability Report",
         service=ServiceMetadata(
@@ -2692,13 +2700,13 @@ def _report_input(
         ),
         scenario=TestedScenario(
             scenario_id=str(config.get("scenarioId", f"{service['name']}-assessment")),
-            name=str(journey.get("name", "guided assessment")),
+            name=journey_names or "guided assessment",
             path=str(run_dir / "chamber.yaml"),
-            traffic_tool=str(journey.get("tool", "k6")),
-            max_virtual_users=1,
+            traffic_tool=str(journeys[0].get("tool", "k6")),
+            max_virtual_users=_max_virtual_users(journeys),
             fault_summary=_fault_summary(config, metadata),
         ),
-        findings=(),
+        findings=findings,
         evidence=tuple(evidence),
         reproduction=ReproductionDetails(
             commands=(
@@ -2710,8 +2718,13 @@ def _report_input(
         retest_plan=("Rerun the same chamber config after remediation or config review.",),
         cleanup_notes=cleanup_notes,
         limitations=_unique_strings(
-            plan.get("limitations")
-            or ["Local guided workflow may not include live Kubernetes telemetry."]
+            tuple(plan.get("limitations") or ())
+            + result_limitations
+            + (
+                ("Local guided workflow may not include live Kubernetes telemetry.",)
+                if not plan.get("limitations") and not result_limitations
+                else ()
+            )
         ),
         onboarding_summary=tuple(str(item) for item in config.get("assumptions", ())),
         adapted_workloads=tuple(_workload_line(item) for item in plan.get("workloads", [])),
@@ -2720,7 +2733,103 @@ def _report_input(
             _external_line(item) for item in plan.get("external_dependencies", [])
         ),
         agent_sections=agent_sections,
+        assessment_status=str(result["status"]) if result.get("status") else None,
+        readiness_score=(
+            int(result["readiness_score"])
+            if isinstance(result.get("readiness_score"), int)
+            else None
+        ),
+        conclusive=result.get("conclusive") if isinstance(result.get("conclusive"), bool) else None,
+        evidence_coverage_percent=(
+            int(result["evidence_coverage_percent"])
+            if isinstance(result.get("evidence_coverage_percent"), int)
+            else None
+        ),
+        execution_coverage_percent=(
+            int(result["execution_coverage_percent"])
+            if isinstance(result.get("execution_coverage_percent"), int)
+            else None
+        ),
+        rollback_verified=(
+            result.get("rollback_verified")
+            if isinstance(result.get("rollback_verified"), bool)
+            else None
+        ),
+        cleanup_verified=(
+            result.get("cleanup_verified")
+            if isinstance(result.get("cleanup_verified"), bool)
+            else None
+        ),
     )
+
+
+def _registered_evidence_references(
+    run_dir: Path,
+    *,
+    metadata: dict[str, Any],
+    plan: dict[str, Any],
+) -> tuple[EvidenceReference, ...]:
+    resource = str(metadata.get("namespace", plan.get("namespace", run_dir.name)))
+    references = []
+    for item in registered_evidence(run_dir):
+        relative = str(item.get("relative_path", ""))
+        references.append(
+            EvidenceReference(
+                evidence_id=str(item.get("evidence_id", "unknown")),
+                source=str(item.get("source", "ampule-chamber")),
+                signal_type=str(item.get("signal_type", "unknown")),
+                resource=resource,
+                collected_at=str(item.get("collected_at", "from-file")),
+                artifact_path=str(run_dir / relative),
+            )
+        )
+    return tuple(references)
+
+
+def _persisted_report_findings(run_dir: Path) -> tuple[ReportFinding, ...]:
+    path = run_dir / "findings.json"
+    if not path.exists():
+        return ()
+    payload = read_json_value(path)
+    if not isinstance(payload, list):
+        raise WorkflowError(f"{path} must contain a JSON list")
+    findings = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        findings.append(
+            ReportFinding(
+                finding_id=str(item.get("finding_id", "unknown")),
+                signal_type=str(item.get("signal_type", "unknown")),
+                affected_resource=str(item.get("affected_resource", "unknown")),
+                observed_facts=tuple(str(value) for value in item.get("observed_facts", ())),
+                suspected_cause=str(item.get("suspected_cause", "Unknown cause.")),
+                severity=str(item.get("severity", "low")),
+                confidence=str(item.get("confidence", "low")),
+                evidence_ids=tuple(str(value) for value in item.get("evidence_ids", ())),
+                related_timeline_ids=tuple(
+                    str(value) for value in item.get("related_timeline_ids", ())
+                ),
+                recommendations=tuple(str(value) for value in item.get("recommendations", ())),
+            )
+        )
+    return tuple(findings)
+
+
+def _max_virtual_users(journeys: tuple[dict[str, Any], ...]) -> int:
+    values = [1]
+    for journey in journeys:
+        vus = journey.get("vus")
+        if isinstance(vus, int):
+            values.append(vus)
+        stages = journey.get("stages")
+        if isinstance(stages, list):
+            values.extend(
+                int(stage.get("targetVus", 0))
+                for stage in stages
+                if isinstance(stage, dict) and isinstance(stage.get("targetVus"), int)
+            )
+    return max(values)
 
 
 def _agent_sections(run_dir: Path) -> tuple[ReportSection, ...]:
@@ -2805,36 +2914,72 @@ def _current_kube_context() -> str | None:
 
 def _new_run_dir(name: str) -> Path:
     init_workspace()
-    safe = _dns_fragment(name or "assessment")
-    timestamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
-    return Path(WORKSPACE_DIR) / RUNS_DIR / f"chamber-{safe}-{timestamp}"
+    return new_run_directory(Path(WORKSPACE_DIR) / RUNS_DIR, name)
 
 
 def _ensure_run_subdirs(run_dir: Path) -> None:
     for child in ("adapted-manifests", "evidence", "agent"):
         (run_dir / child).mkdir(parents=True, exist_ok=True)
+    initialize_run_record(run_dir)
 
 
 def _write_metadata(run_dir: Path, payload: dict[str, Any]) -> None:
+    if "service_name" not in payload and (run_dir / "chamber.yaml").exists():
+        try:
+            config = yaml.safe_load((run_dir / "chamber.yaml").read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError):
+            config = None
+        if isinstance(config, dict) and isinstance(config.get("service"), dict):
+            payload = {**payload, "service_name": str(config["service"].get("name", "unknown"))}
     _write_json(run_dir / "run-metadata.json", payload)
+    sync_run_record(run_dir, payload)
 
 
 def _write_json(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(_jsonable(payload), indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    write_json_atomic(path, _jsonable(payload))
 
 
 def _read_json(path: Path) -> dict[str, Any]:
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = read_json_value(path)
     except OSError as exc:
         raise WorkflowError(f"cannot read {path}: {exc}") from exc
     if not isinstance(payload, dict):
         raise WorkflowError(f"{path} must contain a JSON object")
     return payload
+
+
+def _finalize_guided_result(
+    run_dir: Path,
+    *,
+    config: dict[str, Any],
+    metadata: dict[str, Any],
+) -> dict[str, Any]:
+    refresh_evidence_manifest(run_dir)
+    findings = analyze_guided_run(run_dir, config=config, metadata=metadata)
+    _write_json(run_dir / "findings.json", findings)
+    result = build_assessment_result(
+        run_dir,
+        config=config,
+        metadata=metadata,
+        findings=findings,
+    )
+    _write_json(run_dir / "result.json", result)
+    run_record = initialize_run_record(run_dir)
+    run_record["result_status"] = result["status"]
+    run_record["updated_at"] = datetime.now(UTC).isoformat()
+    write_json_atomic(run_dir / "run.json", run_record)
+    append_run_event(
+        run_dir,
+        state=str(run_record.get("state", metadata.get("stage", "analyzing"))),
+        event_type="analysis_completed",
+        payload={
+            "result_status": result["status"],
+            "finding_count": result["finding_count"],
+            "evidence_coverage_percent": result["evidence_coverage_percent"],
+        },
+    )
+    return result
 
 
 def _jsonable(value: Any) -> Any:
@@ -3264,10 +3409,14 @@ def _unique_strings(values: object) -> tuple[str, ...]:
 
 def _expected_run_files(run_dir: Path) -> tuple[Path, ...]:
     return (
+        run_dir / "run.json",
+        run_dir / "events.jsonl",
         run_dir / "chamber.yaml",
         run_dir / "plan.json",
         run_dir / "run-metadata.json",
         run_dir / "findings.json",
+        run_dir / "result.json",
+        run_dir / "evidence/manifest.json",
         run_dir / "report.md",
     )
 
