@@ -388,6 +388,7 @@ def _evidence_identity(path: Path) -> tuple[str, str]:
         "rollback.json": ("kubectl", "attach_fault_rollback"),
         "k6-summary.json": ("k6", "traffic_summary"),
         "k6.js": ("k6", "traffic_script"),
+        "relayna-summary.json": ("relayna", "task_lifecycle_summary"),
         "prometheus-memory.json": ("prometheus", "metrics_snapshot"),
         "local-assessment.json": ("ampule-chamber", "local_assessment"),
     }

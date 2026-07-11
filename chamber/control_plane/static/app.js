@@ -17,6 +17,7 @@
     const repo = form.elements.repo;
     const serviceName = form.elements.service_name;
     const workloadName = form.elements.workload_name;
+    const relaynaFields = [...form.querySelectorAll("[data-relayna-field]")];
     let current = 0;
 
     const selectModeCard = input => {
@@ -55,7 +56,7 @@
       panels[current].querySelector("h1")?.focus({preventScroll: true});
     };
     const valid = () => {
-      const fields = [...panels[current].querySelectorAll("input,select")].filter(field => !field.closest("[hidden]"));
+      const fields = [...panels[current].querySelectorAll("input,select,textarea")].filter(field => !field.closest("[hidden]"));
       return fields.every(field => field.reportValidity());
     };
     next.addEventListener("click", () => { if (valid() && current < panels.length - 1) { current += 1; render(); } });
@@ -72,6 +73,20 @@
       selectModeCard(input);
       selectAttachedTarget(input.checked && input.value === "kubernetes");
     }));
+    form.elements.journey_type.addEventListener("change", event => {
+      const relayna = event.target.value === "relayna";
+      relaynaFields.forEach(field => field.hidden = !relayna);
+      form.elements.request_body.required = relayna;
+      form.elements.events_path.required = relayna;
+      form.elements.task_id_path.required = relayna;
+      form.elements.relayna_timeout_seconds.required = relayna;
+      if (relayna) {
+        form.elements.traffic_path.value = "/translations";
+        form.elements.traffic_profile.value = "smoke";
+      } else if (form.elements.traffic_path.value === "/translations") {
+        form.elements.traffic_path.value = "/health";
+      }
+    });
     form.querySelector("[data-advanced]").addEventListener("click", () => {
       updateReview(form);
       const values = Object.fromEntries(new FormData(form).entries());

@@ -8,6 +8,12 @@ from chamber.load.planning import (
     TrafficStage,
     plan_traffic,
 )
+from chamber.load.relayna import (
+    RelaynaJourneyError,
+    RelaynaTaskResult,
+    execute_relayna_journeys,
+    validate_relayna_journey,
+)
 
 __all__ = [
     "K6TrafficAdapter",
@@ -15,5 +21,9 @@ __all__ = [
     "TrafficPlan",
     "TrafficPlanningError",
     "TrafficStage",
+    "RelaynaJourneyError",
+    "RelaynaTaskResult",
+    "execute_relayna_journeys",
     "plan_traffic",
+    "validate_relayna_journey",
 ]

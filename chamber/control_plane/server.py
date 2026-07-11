@@ -125,8 +125,13 @@ def create_app(workspace: Path = Path(".chamber")) -> FastAPI:
         kubernetes_context: Annotated[str, Form()] = "",
         namespace: Annotated[str, Form()] = "",
         service_port: Annotated[int, Form()] = 8080,
+        journey_type: Annotated[str, Form()] = "http",
         traffic_path: Annotated[str, Form()] = "/health",
         traffic_profile: Annotated[str, Form()] = "baseline",
+        request_body: Annotated[str, Form()] = "",
+        events_path: Annotated[str, Form()] = "/events/{task_id}",
+        task_id_path: Annotated[str, Form()] = "task_id",
+        relayna_timeout_seconds: Annotated[int, Form()] = 300,
         fault_type: Annotated[str, Form()] = "none",
         prometheus_url: Annotated[str, Form()] = "",
         agents_mode: Annotated[str, Form()] = "offline",
@@ -145,8 +150,13 @@ def create_app(workspace: Path = Path(".chamber")) -> FastAPI:
                 kubernetes_context=kubernetes_context,
                 namespace=namespace,
                 service_port=service_port,
+                journey_type=journey_type,
                 traffic_path=traffic_path,
                 traffic_profile=traffic_profile,
+                request_body=request_body,
+                events_path=events_path,
+                task_id_path=task_id_path,
+                relayna_timeout_seconds=relayna_timeout_seconds,
                 fault_type=fault_type,
                 prometheus_url=prometheus_url,
                 agents_mode=agents_mode,
@@ -432,8 +442,13 @@ def _plan_from_values(
     kubernetes_context: str,
     namespace: str,
     service_port: int,
+    journey_type: str,
     traffic_path: str,
     traffic_profile: str,
+    request_body: str,
+    events_path: str,
+    task_id_path: str,
+    relayna_timeout_seconds: int,
     fault_type: str,
     prometheus_url: str,
     agents_mode: str,
@@ -492,15 +507,56 @@ def _plan_from_values(
         "stress": (("30s", 10), ("60s", 25), ("30s", 0)),
     }
     stages = profiles.get(traffic_profile, profiles["baseline"])
-    traffic["journeys"] = [
-        {
-            "name": "baseline-health",
-            "method": "GET",
-            "path": traffic_path or "/health",
-            "expectedStatus": 200,
-            "stages": [{"duration": duration, "targetVus": target} for duration, target in stages],
+    if journey_type == "relayna":
+        try:
+            body = json.loads(request_body)
+        except json.JSONDecodeError as exc:
+            raise ValueError("Relayna request body must be valid JSON") from exc
+        if not isinstance(body, dict) or not body:
+            raise ValueError("Relayna request body must be a non-empty JSON object")
+        if "{task_id}" not in events_path:
+            raise ValueError("Relayna events path must contain {task_id}")
+        if relayna_timeout_seconds <= 0:
+            raise ValueError("Relayna timeout must be positive")
+        relayna_profiles = {
+            "smoke": (1, 1),
+            "baseline": (4, 2),
+            "stress": (10, 4),
         }
-    ]
+        iterations, vus = relayna_profiles.get(traffic_profile, relayna_profiles["smoke"])
+        traffic["journeys"] = [
+            {
+                "name": "relayna-task-lifecycle",
+                "adapter": "relayna",
+                "method": "POST",
+                "path": traffic_path or "/translations",
+                "expectedStatus": 202,
+                "body": body,
+                "iterations": iterations,
+                "vus": vus,
+                "relayna": {
+                    "taskIdPath": task_id_path or "task_id",
+                    "eventsPath": events_path,
+                    "terminalStatuses": ["completed", "failed"],
+                    "successStatuses": ["completed"],
+                    "timeoutSeconds": relayna_timeout_seconds,
+                },
+            }
+        ]
+    elif journey_type == "http":
+        traffic["journeys"] = [
+            {
+                "name": "baseline-health",
+                "method": "GET",
+                "path": traffic_path or "/health",
+                "expectedStatus": 200,
+                "stages": [
+                    {"duration": duration, "targetVus": target} for duration, target in stages
+                ],
+            }
+        ]
+    else:
+        raise ValueError("journey type must be http or relayna")
     config["agents"] = {"mode": agents_mode}
     runtime = cast(dict[str, Any], config["runtime"])
     if execution_mode == "kubernetes":

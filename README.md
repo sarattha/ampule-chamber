@@ -29,6 +29,8 @@ application services, and durable run store.
 - Retry storms and cascading failure amplification
 - Queue backlog growth and failure to recover
 - Readiness checks passing while real user journeys fail
+- Relayna task submissions that are accepted but never reach a successful
+  terminal SSE status
 - Production incident patterns reproduced in a controlled chamber
 
 ## Quick Start

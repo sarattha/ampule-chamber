@@ -2,6 +2,17 @@
 
 All notable changes to Ampule Chamber are documented in this file.
 
+## Unreleased
+
+### Added
+
+- Added a reusable Relayna task-lifecycle traffic adapter that submits JSON,
+  extracts the returned task ID, consumes the task SSE stream, waits for a
+  configured terminal status, and records end-to-end lifecycle evidence.
+- Added control-plane fields and Kubernetes configuration documentation for
+  Relayna submission paths, request bodies, task ID response paths, event
+  paths, concurrency, iterations, and completion timeouts.
+
 ## 1.4.1 - 2026-07-11
 
 ### Added

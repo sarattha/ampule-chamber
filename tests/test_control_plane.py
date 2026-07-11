@@ -394,8 +394,18 @@ class ControlPlaneTests(unittest.TestCase):
                         "kubernetes_context": "kind-ampule-chamber",
                         "namespace": "payments-stage",
                         "service_port": "8080",
-                        "traffic_path": "/health",
-                        "traffic_profile": "baseline",
+                        "journey_type": "relayna",
+                        "traffic_path": "/translations",
+                        "traffic_profile": "smoke",
+                        "request_body": json.dumps(
+                            {
+                                "text": "Hello from Ampule Chamber.",
+                                "language_target": "Thai",
+                            }
+                        ),
+                        "events_path": "/events/{task_id}",
+                        "task_id_path": "task_id",
+                        "relayna_timeout_seconds": "120",
                         "fault_type": "none",
                         "agents_mode": "offline",
                     },
@@ -409,6 +419,11 @@ class ControlPlaneTests(unittest.TestCase):
                 self.assertEqual(attached_config["runtime"]["mode"], "attach")
                 self.assertEqual(attached_config["runtime"]["namespace"], "payments-stage")
                 self.assertEqual(attached_config["service"]["name"], "payments-api")
+                relayna_journey = attached_config["traffic"]["journeys"][0]
+                self.assertEqual(relayna_journey["adapter"], "relayna")
+                self.assertEqual(relayna_journey["expectedStatus"], 202)
+                self.assertEqual(relayna_journey["relayna"]["eventsPath"], "/events/{task_id}")
+                self.assertEqual(relayna_journey["relayna"]["timeoutSeconds"], 120)
                 self.assertEqual(
                     attached_config["deployment"]["workloads"],
                     [{"name": "payments-worker", "role": "target", "kind": "StatefulSet"}],

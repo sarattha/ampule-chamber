@@ -39,8 +39,13 @@
     <div class="page-heading"><div class="eyebrow">Step 3 of 4</div><h1>Define the exercise</h1><p>Start with a calm health journey. The generated YAML remains the complete source of truth.</p></div>
     <div class="panel form-grid">
       <label>Service port<input name="service_port" type="number" min="1" max="65535" value="8080"></label>
+      <label>Journey type<select name="journey_type"><option value="http">HTTP health/load</option><option value="relayna">Relayna task lifecycle</option></select></label>
       <label>Traffic path<input name="traffic_path" value="/health"></label>
       <label>Traffic profile<select name="traffic_profile"><option value="smoke">Smoke · 1 VU</option><option value="baseline" selected>Baseline · 4 VUs</option><option value="stress">Stress · ramp to 25 VUs</option></select></label>
+      <label data-relayna-field hidden>Request JSON<textarea name="request_body" rows="5">{"text":"Hello from Ampule Chamber.","language_target":"Thai","priority":5}</textarea></label>
+      <label data-relayna-field hidden>Events path<input name="events_path" value="/events/{task_id}"></label>
+      <label data-relayna-field hidden>Task ID response path<input name="task_id_path" value="task_id"></label>
+      <label data-relayna-field hidden>Completion timeout (seconds)<input name="relayna_timeout_seconds" type="number" min="1" max="3600" value="300"></label>
       <label>Attach fault template<select name="fault_type"><option value="none">Observe only</option><option value="pod_kill">Kill one pod and verify recovery</option><option value="deployment_scale">Scale deployment to zero and restore</option></select><span class="help">Faults run only in attach mode and require an explicit allow-faults label.</span></label>
       <label>Agent mode<select name="agents_mode"><option value="offline">Offline deterministic</option><option value="off">Disabled</option><option value="live">Live OpenAI agents</option></select></label>
       <div class="field-note"><strong>Reusable templates</strong><span>Profiles are converted to explicit stages in the resolved ChamberConfig.</span></div>
@@ -52,7 +57,7 @@
     <div class="review-grid">
       <div class="panel"><h2>Target</h2><dl><div><dt>Source</dt><dd data-review="target_source">Repository</dd></div><div><dt>Repository</dt><dd data-review="repo">Not required</dd></div><div><dt>Service</dt><dd data-review="service_name">Inferred</dd></div><div><dt>Workload</dt><dd data-review="workload_name">Inferred</dd></div><div><dt>Kind</dt><dd data-review="workload_kind">Inferred</dd></div></dl></div>
       <div class="panel"><h2>Environment</h2><dl><div><dt>Mode</dt><dd data-review="execution_mode">Local</dd></div><div><dt>Context</dt><dd data-review="kubernetes_context">Not applicable</dd></div></dl></div>
-      <div class="panel"><h2>Exercise</h2><dl><div><dt>Journey</dt><dd data-review="traffic_path">/health</dd></div><div><dt>Profile</dt><dd data-review="traffic_profile">Baseline</dd></div><div><dt>Fault</dt><dd data-review="fault_type">Observe only</dd></div><div><dt>Agents</dt><dd data-review="agents_mode">Offline</dd></div></dl></div>
+      <div class="panel"><h2>Exercise</h2><dl><div><dt>Adapter</dt><dd data-review="journey_type">HTTP</dd></div><div><dt>Journey</dt><dd data-review="traffic_path">/health</dd></div><div><dt>Profile</dt><dd data-review="traffic_profile">Baseline</dd></div><div><dt>Fault</dt><dd data-review="fault_type">Observe only</dd></div><div><dt>Agents</dt><dd data-review="agents_mode">Offline</dd></div></dl></div>
       <div class="panel safety-card"><h2>Safety contract</h2><ul><li>Explicit context for live execution</li><li>Production-like context names rejected</li><li>Bounded traffic and fault windows</li><li>Cancel triggers rollback and cleanup</li><li>Reports cite registered evidence only</li></ul></div>
     </div>
   </section>

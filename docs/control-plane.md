@@ -26,7 +26,9 @@ an authenticated, TLS-enabled boundary in front of any remote binding.
    deploy, or attach to an existing non-production namespace. Live runs require
    an explicit context.
 3. **Exercise:** choose a smoke, baseline, or stress traffic template; set the
-   journey path; and optionally choose an attach-only, allow-listed fault.
+   journey path; optionally configure a Relayna task lifecycle (`202` response,
+   task ID extraction, SSE terminal-status wait); and optionally choose an
+   attach-only, allow-listed fault.
 4. **Review:** inspect the safety receipt and generated plan before any live
    action.
 5. **Run:** observe state and evidence updates. Cancellation sends an interrupt
@@ -42,6 +44,10 @@ Every new run has a canonical `run.json`, append-only `events.jsonl`,
 `result.json`, and `evidence/manifest.json`. Each evidence entry is bound to the
 run and SHA-256 digest. Evidence download rejects unknown, cross-run, missing,
 or modified entries.
+
+Relayna lifecycle runs additionally persist `relayna-summary.json` with one
+bounded record per task. The UI defaults Relayna journeys to a single smoke
+iteration because task execution may invoke costly downstream services.
 
 Readiness is scored only after required live Kubernetes, traffic, and
 mode-specific evidence is present. Local-only, partial, cancelled, and failed
