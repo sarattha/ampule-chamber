@@ -387,6 +387,8 @@ class ControlPlaneTests(unittest.TestCase):
                         "_csrf": csrf,
                         "repo": "",
                         "service_name": "payments-api",
+                        "workload_name": "payments-worker",
+                        "workload_kind": "StatefulSet",
                         "execution_mode": "kubernetes",
                         "runtime_mode": "attach",
                         "kubernetes_context": "kind-ampule-chamber",
@@ -407,7 +409,22 @@ class ControlPlaneTests(unittest.TestCase):
                 self.assertEqual(attached_config["runtime"]["mode"], "attach")
                 self.assertEqual(attached_config["runtime"]["namespace"], "payments-stage")
                 self.assertEqual(attached_config["service"]["name"], "payments-api")
+                self.assertEqual(
+                    attached_config["deployment"]["workloads"],
+                    [{"name": "payments-worker", "role": "target", "kind": "StatefulSet"}],
+                )
                 self.assertTrue(attached_config["service"]["repo"].startswith("kubernetes://"))
+
+                missing_workload = client.post(
+                    "/ui/plan",
+                    data={
+                        "_csrf": csrf,
+                        "service_name": "payments-api",
+                        "execution_mode": "kubernetes",
+                        "runtime_mode": "attach",
+                    },
+                )
+                self.assertEqual(missing_workload.status_code, 400)
 
     def test_json_plan_start_job_cancel_and_event_endpoints(self) -> None:
         with TemporaryDirectory() as tmp:

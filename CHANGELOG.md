@@ -2,6 +2,22 @@
 
 All notable changes to Ampule Chamber are documented in this file.
 
+## 1.4.1 - 2026-07-11
+
+### Added
+
+- Added a repository-free control-plane target path for attaching to an
+  existing Kubernetes Service.
+- Added explicit backing workload name and kind fields so Services backed by a
+  differently named Deployment or StatefulSet are discovered correctly.
+
+### Changed
+
+- Attach configs now use a stable `kubernetes://` target reference when no
+  source repository is available.
+- Repository validation remains required for local and isolated deploy modes
+  but is no longer required for Kubernetes attach mode.
+
 ## 1.4.0 - 2026-07-11
 
 ### Added

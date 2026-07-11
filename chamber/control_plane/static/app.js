@@ -12,9 +12,11 @@
     const submit = form.querySelector("[data-submit]");
     const kubernetesFields = form.querySelector("[data-kubernetes-fields]");
     const repositoryTarget = form.querySelector("[data-repository-target]");
+    const kubernetesTarget = form.querySelector("[data-kubernetes-target]");
     const serviceOptional = form.querySelector("[data-service-optional]");
     const repo = form.elements.repo;
     const serviceName = form.elements.service_name;
+    const workloadName = form.elements.workload_name;
     let current = 0;
 
     const selectModeCard = input => {
@@ -24,9 +26,11 @@
 
     const selectAttachedTarget = attached => {
       repositoryTarget.hidden = attached;
+      kubernetesTarget.hidden = !attached;
       serviceOptional.hidden = attached;
       repo.required = !attached;
       serviceName.required = attached;
+      workloadName.required = attached;
       if (!attached) return;
       const kubernetes = form.querySelector('input[name="execution_mode"][value="kubernetes"]');
       kubernetes.checked = true;

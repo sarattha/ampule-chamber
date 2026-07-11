@@ -118,6 +118,8 @@ def create_app(workspace: Path = Path(".chamber")) -> FastAPI:
         csrf: Annotated[str, Form(alias="_csrf")],
         repo: Annotated[str, Form()] = "",
         service_name: Annotated[str, Form()] = "",
+        workload_name: Annotated[str, Form()] = "",
+        workload_kind: Annotated[str, Form()] = "Deployment",
         execution_mode: Annotated[str, Form()] = "local",
         runtime_mode: Annotated[str, Form()] = "deploy",
         kubernetes_context: Annotated[str, Form()] = "",
@@ -136,6 +138,8 @@ def create_app(workspace: Path = Path(".chamber")) -> FastAPI:
                 workspace=workspace,
                 repo=Path(repo) if repo.strip() else None,
                 service_name=service_name,
+                workload_name=workload_name,
+                workload_kind=workload_kind,
                 execution_mode=execution_mode,
                 runtime_mode=runtime_mode,
                 kubernetes_context=kubernetes_context,
@@ -421,6 +425,8 @@ def _plan_from_values(
     workspace: Path,
     repo: Path | None,
     service_name: str,
+    workload_name: str,
+    workload_kind: str,
     execution_mode: str,
     runtime_mode: str,
     kubernetes_context: str,
@@ -440,6 +446,10 @@ def _plan_from_values(
             raise ValueError("repository path is required for local and deploy assessments")
         if not service_name.strip():
             raise ValueError("service name is required when attaching without a repository")
+        if not workload_name.strip():
+            raise ValueError("workload name is required when attaching without a repository")
+        if workload_kind not in {"Deployment", "StatefulSet"}:
+            raise ValueError("workload kind must be Deployment or StatefulSet")
         name = service_name.strip()
         config = {
             "apiVersion": "chamber.ampule.dev/v1alpha1",
@@ -451,7 +461,13 @@ def _plan_from_values(
             "deployment": {
                 "manifests": [],
                 "images": {},
-                "workloads": [{"name": name, "role": "target", "kind": "Deployment"}],
+                "workloads": [
+                    {
+                        "name": workload_name.strip(),
+                        "role": "target",
+                        "kind": workload_kind,
+                    }
+                ],
             },
             "traffic": {"entrypoint": name, "journeys": []},
             "dependencies": {"internal": [], "external": []},

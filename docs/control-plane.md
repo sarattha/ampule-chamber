@@ -20,7 +20,8 @@ an authenticated, TLS-enabled boundary in front of any remote binding.
 ## Core journey
 
 1. **Target:** choose a local repository, or select a running Kubernetes
-   service and provide its service name without a repository.
+   service and provide the Service plus its backing Deployment or StatefulSet
+   without a repository. Service and workload names are kept separate.
 2. **Environment:** choose a local artifact assessment, isolated Kubernetes
    deploy, or attach to an existing non-production namespace. Live runs require
    an explicit context.

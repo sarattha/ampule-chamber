@@ -1,6 +1,6 @@
 # Ampule Chamber
 
-Version: 1.4.0
+Version: 1.4.1
 
 Production-ready release for agent-driven reliability testing of Kubernetes
 services before production.
@@ -15,9 +15,10 @@ teams that need to answer:
 
 ## Release Status
 
-Ampule Chamber `1.4.0` adds a local control-plane UI for guided setup, live
-execution, evidence-backed results, exports, and run comparison. The CLI and UI
-share the same safety validation, application services, and durable run store.
+Ampule Chamber `1.4.1` lets the control-plane UI attach directly to an existing
+Kubernetes Service and its backing Deployment or StatefulSet without requiring
+a local repository. The CLI and UI share the same safety validation,
+application services, and durable run store.
 
 ## What It Tests
 
