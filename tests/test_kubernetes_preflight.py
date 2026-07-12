@@ -116,6 +116,10 @@ class KubernetesPreflightTests(unittest.TestCase):
 
         self.assertTrue(result.ready)
         self.assertIn(
+            ("kubectl", "--context", "dev-cluster", "get", "--raw=/readyz"),
+            runner.commands,
+        )
+        self.assertIn(
             (
                 "kubectl",
                 "--context",

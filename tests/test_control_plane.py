@@ -537,9 +537,22 @@ class ControlPlaneTests(unittest.TestCase):
                 open_browser=False,
             )
 
+        with self.assertRaisesRegex(ValueError, "AMPULE_CHAMBER_ADMIN_TOKEN"):
+            run_server(
+                host="0.0.0.0",
+                port=8765,
+                workspace=Path(".chamber"),
+                open_browser=False,
+                allow_remote=True,
+            )
+
         with (
             patch("uvicorn.run") as uvicorn_run,
             patch("chamber.control_plane.server.threading.Timer") as timer,
+            patch.dict(
+                "os.environ",
+                {"AMPULE_CHAMBER_ADMIN_TOKEN": "op_live_ampule_test_token_123456789"},
+            ),
         ):
             self.assertEqual(
                 run_server(

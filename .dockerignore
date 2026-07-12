@@ -1,0 +1,14 @@
+.git
+.github
+.chamber
+.venv
+__pycache__
+*.pyc
+.coverage
+htmlcov
+dist
+build
+site
+artifacts
+dataset
+experiments

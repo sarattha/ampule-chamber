@@ -18,6 +18,13 @@
     const serviceName = form.elements.service_name;
     const workloadName = form.elements.workload_name;
     const relaynaFields = [...form.querySelectorAll("[data-relayna-field]")];
+    const discoveryPanel = form.querySelector("[data-discovery-panel]");
+    const discoveryButton = form.querySelector("[data-discover-targets]");
+    const discoveryStatus = form.querySelector("[data-discovery-status]");
+    const discoveryResults = form.querySelector("[data-discovery-results]");
+    const discoveredService = form.querySelector("[data-discovered-service]");
+    const discoveredWorkload = form.querySelector("[data-discovered-workload]");
+    let discoveryData = null;
     let current = 0;
 
     const selectModeCard = input => {
@@ -30,8 +37,8 @@
       kubernetesTarget.hidden = !attached;
       serviceOptional.hidden = attached;
       repo.required = !attached;
-      serviceName.required = attached;
-      workloadName.required = attached;
+      serviceName.required = false;
+      workloadName.required = false;
       if (!attached) return;
       const kubernetes = form.querySelector('input[name="execution_mode"][value="kubernetes"]');
       kubernetes.checked = true;
@@ -40,6 +47,31 @@
       form.elements.kubernetes_context.required = true;
       form.elements.namespace.required = true;
       form.elements.runtime_mode.value = "attach";
+      updateDiscoveryVisibility();
+    };
+
+    const updateDiscoveryVisibility = () => {
+      const attachedTarget = form.querySelector('input[name="target_source"][value="kubernetes"]').checked;
+      const kubernetesMode = form.querySelector('input[name="execution_mode"][value="kubernetes"]').checked;
+      discoveryPanel.hidden = !(attachedTarget && kubernetesMode && form.elements.runtime_mode.value === "attach");
+    };
+
+    const applyWorkload = () => {
+      const workload = (discoveryData?.workloads || []).find(item => `${item.kind}/${item.name}` === discoveredWorkload.value);
+      if (!workload) return;
+      workloadName.value = workload.name;
+      form.elements.workload_kind.value = workload.kind;
+    };
+
+    const applyService = () => {
+      const service = (discoveryData?.services || []).find(item => item.name === discoveredService.value);
+      if (!service) return;
+      serviceName.value = service.name;
+      if (service.ports.length) form.elements.service_port.value = service.ports[0].port;
+      const candidates = service.workloads.length ? service.workloads : discoveryData.workloads;
+      discoveredWorkload.replaceChildren(...candidates.map(item =>
+        new Option(`${item.name} · ${item.kind}`, `${item.kind}/${item.name}`)));
+      applyWorkload();
     };
 
     const render = () => {
@@ -68,11 +100,49 @@
       selectModeCard(input);
       const context = form.elements.kubernetes_context;
       context.required = kubernetes;
+      updateDiscoveryVisibility();
     }));
     form.querySelectorAll('input[name="target_source"]').forEach(input => input.addEventListener("change", () => {
       selectModeCard(input);
       selectAttachedTarget(input.checked && input.value === "kubernetes");
     }));
+    form.elements.runtime_mode.addEventListener("change", updateDiscoveryVisibility);
+    discoveredService.addEventListener("change", applyService);
+    discoveredWorkload.addEventListener("change", applyWorkload);
+    discoveryButton.addEventListener("click", async () => {
+      const context = form.elements.kubernetes_context.value.trim();
+      const namespace = form.elements.namespace.value.trim();
+      if (!context || !namespace) {
+        discoveryStatus.textContent = "Enter the Kubernetes context and namespace first.";
+        discoveryStatus.classList.add("error");
+        return;
+      }
+      discoveryButton.disabled = true;
+      discoveryStatus.classList.remove("error");
+      discoveryStatus.textContent = "Reading namespace inventory…";
+      try {
+        const query = new URLSearchParams({context, namespace});
+        const response = await fetch(`/api/v1/kubernetes/discovery?${query}`);
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.detail || "Discovery failed");
+        discoveryData = payload;
+        discoveredService.replaceChildren(...payload.services.map(service => {
+          const ports = service.ports.map(port => port.port).join(", ") || "no ports";
+          return new Option(`${service.name} · ${ports}`, service.name);
+        }));
+        discoveryResults.hidden = !payload.services.length;
+        if (!payload.services.length) throw new Error("No Services were found in this namespace");
+        applyService();
+        discoveryStatus.textContent = `Found ${payload.services.length} Services and ${payload.workloads.length} workloads.`;
+      } catch (error) {
+        discoveryData = null;
+        discoveryResults.hidden = true;
+        discoveryStatus.textContent = error.message;
+        discoveryStatus.classList.add("error");
+      } finally {
+        discoveryButton.disabled = false;
+      }
+    });
     form.elements.journey_type.addEventListener("change", event => {
       const relayna = event.target.value === "relayna";
       relaynaFields.forEach(field => field.hidden = !relayna);

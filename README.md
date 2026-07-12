@@ -1,6 +1,6 @@
 # Ampule Chamber
 
-Version: 1.4.1
+Version: 1.5.0
 
 Production-ready release for agent-driven reliability testing of Kubernetes
 services before production.
@@ -15,10 +15,11 @@ teams that need to answer:
 
 ## Release Status
 
-Ampule Chamber `1.4.1` lets the control-plane UI attach directly to an existing
-Kubernetes Service and its backing Deployment or StatefulSet without requiring
-a local repository. The CLI and UI share the same safety validation,
-application services, and durable run store.
+Ampule Chamber `1.5.0` packages the authenticated control-plane UI for
+in-cluster operation. Helm and raw manifests provide a ServiceAccount,
+namespace-scoped discovery RBAC, Service, and PVC-backed run store. The UI can
+attach to an existing Kubernetes Service and backing Deployment or StatefulSet
+without a local repository.
 
 ## What It Tests
 
@@ -79,7 +80,24 @@ Open `http://127.0.0.1:8765` if browser launch is disabled. Use the wizard to
 inspect a repository, select local, isolated deploy, or attach mode, choose a
 traffic profile and optional attach fault template, review the generated plan,
 then explicitly start execution. Remote binding is rejected unless
-`--allow-remote` is supplied.
+`--allow-remote` is supplied and `AMPULE_CHAMBER_ADMIN_TOKEN` contains a valid
+`op_live_` operator token.
+
+To run the UI inside Kubernetes with discovery limited to an existing
+non-production namespace:
+
+```bash
+export AMPULE_ADMIN_TOKEN="op_live_$(openssl rand -hex 24)"
+helm upgrade --install ampule deploy/helm/ampule-chamber \
+  --namespace ampule-system --create-namespace \
+  --set-string auth.adminToken="$AMPULE_ADMIN_TOKEN" \
+  --set 'discovery.namespaces[0]=chamber-target'
+kubectl -n ampule-system port-forward service/ampule-ampule-chamber 8765:8765
+```
+
+Open `http://127.0.0.1:8765`, sign in with the token, and select a discovered
+Service. See [docs/control-plane.md](docs/control-plane.md) for existing Secret,
+Ingress/TLS, PVC, RBAC, raw-manifest, and tested Kind instructions.
 
 For a reviewed config and a non-production Kubernetes context, generic
 Kubernetes deploy mode uses `kubectl` and chamber-owned namespaces:
@@ -145,7 +163,8 @@ make check
 ```
 
 `make check` runs formatting, linting, static type checks, tests, coverage,
-scenario validation, release metadata validation, docs build, and package build.
+scenario and deployment validation, release metadata validation, docs build,
+and package build.
 
 ## Repository Layout
 

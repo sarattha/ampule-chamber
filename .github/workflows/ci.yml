@@ -72,6 +72,60 @@ jobs:
       - name: Validate release metadata
         run: python scripts/validate_release_metadata.py
 
+  kubernetes-deployment:
+    name: kubernetes deployment
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.2.0
+
+      - name: Sync dependencies
+        run: uv sync --group dev
+
+      - name: Validate deployment metadata
+        run: make validate-deployment
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Lint and render Helm chart
+        run: |
+          helm lint deploy/helm/ampule-chamber \
+            --set auth.adminToken=op_live_ci_validation_token_123456 \
+            --set 'discovery.namespaces[0]=default'
+          helm template ampule deploy/helm/ampule-chamber \
+            --namespace ampule-system \
+            --set auth.adminToken=op_live_ci_validation_token_123456 \
+            --set 'discovery.namespaces[0]=default' \
+            | kubectl apply --dry-run=client --validate=false -f -
+
+      - name: Build control-plane image
+        run: docker build --tag ampule-chamber:ci .
+
+      - name: Smoke test control-plane image
+        run: |
+          docker run --detach --rm --name ampule-chamber-ci \
+            --publish 8765:8765 \
+            --env AMPULE_CHAMBER_ADMIN_TOKEN=op_live_ci_validation_token_123456 \
+            ampule-chamber:ci
+          curl --fail --retry 20 --retry-all-errors --retry-delay 1 \
+            http://127.0.0.1:8765/readyz
+
+      - name: Stop smoke-test container
+        if: always()
+        run: docker stop ampule-chamber-ci || true
+
   security:
     name: security
     runs-on: ubuntu-latest

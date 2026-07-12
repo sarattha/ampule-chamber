@@ -33,8 +33,7 @@ jobs:
       - name: Verify documentation anchors
         run: |
           grep -q "Ampule Chamber" README.md
-          grep -q "Version: 1.0.0" README.md
-          grep -q "Version: 1.0.0" docs/index.md
+          python3 scripts/validate_release_metadata.py
           grep -q "Release Process" docs/release-process.md
 
       - name: Set up Python

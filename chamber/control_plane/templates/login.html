@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in · Ampule Chamber</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='/app.css') }}?v=1.5.0">
+</head>
+<body class="login-page">
+  <main class="login-shell">
+    <div class="login-brand"><span class="status-dot"></span>Ampule Chamber</div>
+    <section class="panel login-card" aria-labelledby="login-title">
+      <div class="eyebrow">Operator access</div>
+      <h1 id="login-title">Sign in to the chamber</h1>
+      <p>Enter the admin token configured for this control-plane deployment.</p>
+      {% if error %}<div class="alert danger" role="alert">{{ error }}</div>{% endif %}
+      <form method="post" action="/login">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <input type="hidden" name="next" value="{{ next_path }}">
+        <label for="admin_token">Admin token</label>
+        <input id="admin_token" name="admin_token" type="password" required autocomplete="current-password" autofocus placeholder="op_live_…">
+        <button class="button primary login-submit" type="submit">Sign in</button>
+      </form>
+      <p class="login-note">The token is verified by the control plane and is never written to the workspace.</p>
+    </section>
+  </main>
+</body>
+</html>

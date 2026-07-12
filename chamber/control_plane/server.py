@@ -12,6 +12,7 @@ import webbrowser
 from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated, Any, cast
+from urllib.parse import urlencode
 
 import yaml
 from fastapi import FastAPI, Form, HTTPException, Request
@@ -22,7 +23,17 @@ from pydantic import BaseModel, Field
 from starlette.responses import StreamingResponse
 
 from chamber.application.service import ChamberApplication
+from chamber.control_plane.discovery import (
+    DiscoveryError,
+    DiscoverySettings,
+    KubernetesDiscovery,
+)
 from chamber.control_plane.jobs import TERMINAL_JOB_STATES, AssessmentJobManager
+from chamber.control_plane.security import (
+    SESSION_COOKIE,
+    load_admin_auth,
+    safe_next_path,
+)
 from chamber.runs import registered_evidence
 
 PACKAGE_DIR = Path(__file__).resolve().parent
@@ -51,9 +62,16 @@ class CompareRequest(BaseModel):
     candidate_run_id: str
 
 
-def create_app(workspace: Path = Path(".chamber")) -> FastAPI:
+def create_app(
+    workspace: Path = Path(".chamber"),
+    *,
+    admin_token: str | None = None,
+    discovery: KubernetesDiscovery | None = None,
+) -> FastAPI:
     """Create the local control-plane application."""
 
+    auth = load_admin_auth(admin_token)
+    kubernetes_discovery = discovery or KubernetesDiscovery(DiscoverySettings.from_environment())
     application = ChamberApplication(workspace)
     application.initialize()
     jobs = AssessmentJobManager(workspace)
@@ -63,28 +81,102 @@ def create_app(workspace: Path = Path(".chamber")) -> FastAPI:
     app.state.jobs = jobs
     app.state.templates = templates
     app.state.workspace = workspace
+    app.state.auth = auth
+    app.state.discovery = kubernetes_discovery
+    cast(dict[str, Any], templates.env.globals)["auth_enabled"] = auth.enabled
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next: Any) -> Response:
         token = request.cookies.get(CSRF_COOKIE) or secrets.token_urlsafe(32)
         request.state.csrf_token = token
-        response = await call_next(request)
+        request.state.authenticated = auth.authenticates_request(request)
+        if not request.state.authenticated and not _public_path(request.url.path):
+            if request.url.path.startswith("/api/"):
+                response = JSONResponse(
+                    {"detail": "authentication required"},
+                    status_code=401,
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            else:
+                next_path = request.url.path
+                if request.url.query:
+                    next_path += f"?{request.url.query}"
+                response = RedirectResponse(
+                    f"/login?{urlencode({'next': next_path})}", status_code=303
+                )
+        else:
+            response = await call_next(request)
         if request.cookies.get(CSRF_COOKIE) is None:
             response.set_cookie(
                 CSRF_COOKIE,
                 token,
                 httponly=False,
                 samesite="strict",
-                secure=False,
+                secure=auth.secure_cookies,
             )
-        response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; style-src 'self'; script-src 'self'; "
-            "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'"
+        return _apply_security_headers(response)
+
+    @app.get("/healthz", include_in_schema=False)
+    async def health() -> dict[str, str]:
+        return {"status": "ok"}
+
+    @app.get("/readyz", include_in_schema=False)
+    async def ready() -> dict[str, str]:
+        return {"status": "ready"}
+
+    @app.get("/login", response_class=HTMLResponse, include_in_schema=False)
+    async def login_page(request: Request, next: str = "/runs") -> Response:
+        if not auth.enabled or request.state.authenticated:
+            return RedirectResponse(safe_next_path(next), status_code=303)
+        return templates.TemplateResponse(
+            request=request,
+            name="login.html",
+            context={
+                "csrf_token": request.state.csrf_token,
+                "next_path": safe_next_path(next),
+                "error": None,
+            },
         )
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["Referrer-Policy"] = "no-referrer"
-        response.headers["X-Frame-Options"] = "DENY"
+
+    @app.post("/login", response_class=HTMLResponse, include_in_schema=False)
+    async def login(
+        request: Request,
+        csrf: Annotated[str, Form(alias="_csrf")],
+        admin_token_value: Annotated[str, Form(alias="admin_token")],
+        next: Annotated[str, Form()] = "/runs",
+    ) -> Response:
+        _check_csrf(request, csrf)
+        next_path = safe_next_path(next)
+        if not auth.authenticates_token(admin_token_value):
+            return templates.TemplateResponse(
+                request=request,
+                name="login.html",
+                status_code=401,
+                context={
+                    "csrf_token": request.state.csrf_token,
+                    "next_path": next_path,
+                    "error": "The admin token is not valid.",
+                },
+            )
+        response = RedirectResponse(next_path, status_code=303)
+        response.set_cookie(
+            SESSION_COOKIE,
+            auth.session_value or "",
+            httponly=True,
+            samesite="strict",
+            secure=auth.secure_cookies,
+        )
+        return response
+
+    @app.post("/logout", include_in_schema=False)
+    async def logout(
+        request: Request,
+        csrf: Annotated[str, Form(alias="_csrf")],
+    ) -> Response:
+        _check_csrf(request, csrf)
+        response = RedirectResponse("/login", status_code=303)
+        response.delete_cookie(SESSION_COOKIE)
         return response
 
     @app.get("/", include_in_schema=False)
@@ -108,7 +200,7 @@ def create_app(workspace: Path = Path(".chamber")) -> FastAPI:
             context={
                 "active_nav": "new",
                 "csrf_token": request.state.csrf_token,
-                "capabilities": _capabilities(),
+                "capabilities": _capabilities(kubernetes_discovery.settings),
             },
         )
 
@@ -169,7 +261,7 @@ def create_app(workspace: Path = Path(".chamber")) -> FastAPI:
                 context={
                     "active_nav": "new",
                     "csrf_token": request.state.csrf_token,
-                    "capabilities": _capabilities(),
+                    "capabilities": _capabilities(kubernetes_discovery.settings),
                     "error": str(exc),
                 },
             )
@@ -280,7 +372,14 @@ def create_app(workspace: Path = Path(".chamber")) -> FastAPI:
 
     @app.get("/api/v1/capabilities")
     async def capabilities_api() -> dict[str, Any]:
-        return _capabilities()
+        return _capabilities(kubernetes_discovery.settings)
+
+    @app.get("/api/v1/kubernetes/discovery")
+    async def kubernetes_discovery_api(context: str, namespace: str) -> dict[str, Any]:
+        try:
+            return kubernetes_discovery.discover(context=context, namespace=namespace)
+        except (DiscoveryError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/api/v1/inspect")
     async def inspect_api(request: Request, payload: InspectRequest) -> dict[str, Any]:
@@ -420,6 +519,9 @@ def run_server(
 
     if host not in {"127.0.0.1", "localhost", "::1"} and not allow_remote:
         raise ValueError("remote binding requires --allow-remote")
+    auth = load_admin_auth()
+    if host not in {"127.0.0.1", "localhost", "::1"} and not auth.enabled:
+        raise ValueError("remote binding requires AMPULE_CHAMBER_ADMIN_TOKEN")
     import uvicorn
 
     url = f"http://{host}:{port}/"
@@ -628,17 +730,36 @@ def _check_csrf(request: Request, supplied: str | None) -> None:
         raise HTTPException(status_code=403, detail="invalid CSRF token")
 
 
-def _capabilities() -> dict[str, Any]:
+def _capabilities(settings: DiscoverySettings | None = None) -> dict[str, Any]:
+    selected_settings = settings or DiscoverySettings.from_environment()
     tools = {name: bool(shutil.which(name)) for name in ("kubectl", "kind", "k6", "docker")}
     return {
         "schema_version": "chamber.ampule.dev/capabilities/v1",
         "tools": tools,
         "runtime_modes": ["local", "kubernetes-deploy", "kubernetes-attach"],
-        "traffic_adapters": ["k6"],
+        "traffic_adapters": ["k6", "relayna"],
         "fault_adapters": ["pod_kill", "deployment_scale"],
-        "evidence_adapters": ["kubernetes", "prometheus", "k6"],
+        "evidence_adapters": ["kubernetes", "prometheus", "k6", "relayna"],
         "ready_for_kind": all(tools.values()),
+        "ready_for_kubernetes_attach": tools["kubectl"],
+        "kubernetes_context": selected_settings.context,
+        "discovery_namespaces": list(selected_settings.namespaces),
     }
+
+
+def _public_path(path: str) -> bool:
+    return path in {"/healthz", "/readyz", "/login"} or path.startswith("/static/")
+
+
+def _apply_security_headers(response: Response) -> Response:
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; style-src 'self'; script-src 'self'; "
+        "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'"
+    )
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["X-Frame-Options"] = "DENY"
+    return response
 
 
 async def _job_event_stream(jobs: AssessmentJobManager, job_id: str) -> Any:

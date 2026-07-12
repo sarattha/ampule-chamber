@@ -197,7 +197,7 @@ def _attach_commands(
     base = ("kubectl", "--context", context)
     commands: list[tuple[str, tuple[str, ...]]] = [
         ("current-context", ("kubectl", "config", "current-context")),
-        ("cluster-info", (*base, "cluster-info")),
+        ("api-ready", (*base, "get", "--raw=/readyz")),
         ("namespace-exists", (*base, "get", "namespace", namespace, "-o", "json")),
         ("can-get-pods", (*base, "auth", "can-i", "get", "pods", "-n", namespace)),
         ("can-get-events", (*base, "auth", "can-i", "get", "events", "-n", namespace)),

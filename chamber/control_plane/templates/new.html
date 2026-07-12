@@ -17,20 +17,29 @@
       <label class="mode-card selected"><input type="radio" name="target_source" value="repository" checked><strong>Local repository</strong><span>Inspect source, manifests, and container metadata to build the plan.</span></label>
       <label class="mode-card"><input type="radio" name="target_source" value="kubernetes"><strong>Running Kubernetes service</strong><span>Attach using context, namespace, service name, and port. No repository is needed.</span></label>
     </div>
-    <div class="panel form-panel"><div data-repository-target><label for="repo">Repository path</label><input id="repo" name="repo" required value="{{ request.query_params.get('repo', '') }}" placeholder="/Users/you/code/payments"><p class="help">Required for local assessment and isolated deploy. Source files are inspected locally.</p></div><label for="service_name">Service name <span class="optional" data-service-optional>optional override</span></label><input id="service_name" name="service_name" placeholder="payments-api"><p class="help" data-service-help>Required when attaching without a repository; use the Kubernetes Service name.</p><div class="form-grid" data-kubernetes-target hidden><label>Workload name<input name="workload_name" placeholder="payments-api-deployment"></label><label>Workload kind<select name="workload_kind"><option value="Deployment">Deployment</option><option value="StatefulSet">StatefulSet</option></select></label><p class="help">Identify the controller behind the Service. The Service and workload names may differ.</p></div></div>
+    <div class="panel form-panel"><div data-repository-target><label for="repo">Repository path</label><input id="repo" name="repo" required value="{{ request.query_params.get('repo', '') }}" placeholder="/Users/you/code/payments"><p class="help">Required for local assessment and isolated deploy. Source files are inspected locally.</p></div><label for="service_name">Service name <span class="optional" data-service-optional>optional override</span></label><input id="service_name" name="service_name" placeholder="payments-api"><p class="help" data-service-help>Enter the Kubernetes Service name now, or discover it from the namespace in the next step.</p><div class="form-grid" data-kubernetes-target hidden><label>Workload name<input name="workload_name" placeholder="payments-api-deployment"></label><label>Workload kind<select name="workload_kind"><option value="Deployment">Deployment</option><option value="StatefulSet">StatefulSet</option></select></label><p class="help">Enter the controller now, or let namespace discovery match it to the Service.</p></div></div>
   </section>
 
   <section class="wizard-panel" data-step="1" hidden>
-    <div class="page-heading split"><div><div class="eyebrow">Step 2 of 4</div><h1>Choose the chamber environment</h1><p>Every Kubernetes run requires an explicit context and passes preflight before mutation.</p></div><span class="pill {{ 'safe' if capabilities.ready_for_kind else 'warning' }}">{{ 'Ready for kind' if capabilities.ready_for_kind else 'Tools need attention' }}</span></div>
+    <div class="page-heading split"><div><div class="eyebrow">Step 2 of 4</div><h1>Choose the chamber environment</h1><p>Every Kubernetes run requires an explicit context and passes preflight before mutation.</p></div><span class="pill {{ 'safe' if capabilities.ready_for_kubernetes_attach else 'warning' }}">{{ 'Ready for Kubernetes' if capabilities.ready_for_kubernetes_attach else 'kubectl required' }}</span></div>
     <div class="mode-grid" role="radiogroup" aria-label="Execution environment">
       <label class="mode-card selected"><input type="radio" name="execution_mode" value="local" checked><strong>Local artifact assessment</strong><span>Inspect configuration and create a non-conclusive report without touching Kubernetes.</span></label>
       <label class="mode-card"><input type="radio" name="execution_mode" value="kubernetes"><strong>Kubernetes chamber</strong><span>Deploy into isolation or attach to an explicit non-production namespace.</span></label>
     </div>
     <div class="panel form-grid" data-kubernetes-fields hidden>
-      <label>Kubernetes context<input name="kubernetes_context" placeholder="kind-ampule-chamber"></label>
+      <label>Kubernetes context<input name="kubernetes_context" value="{{ capabilities.kubernetes_context }}" placeholder="kind-ampule-chamber"></label>
       <label>Runtime mode<select name="runtime_mode"><option value="deploy">Deploy isolated</option><option value="attach">Attach existing</option></select></label>
-      <label>Namespace<input name="namespace" placeholder="Generated for deploy"></label>
+      <label>Namespace<input name="namespace" list="discovery-namespaces" placeholder="Generated for deploy"><datalist id="discovery-namespaces">{% for namespace in capabilities.discovery_namespaces %}<option value="{{ namespace }}">{% endfor %}</datalist></label>
       <label>Prometheus URL <span class="optional">optional</span><input name="prometheus_url" type="url" placeholder="http://prometheus.monitoring:9090"></label>
+      <section class="discovery-card" data-discovery-panel hidden>
+        <div><div class="eyebrow">Cluster inventory</div><h2>Discover deployed targets</h2><p>Read Services, Deployments, and StatefulSets from the selected declared namespace.</p></div>
+        <button class="button" type="button" data-discover-targets>Discover targets</button>
+        <p class="discovery-status" data-discovery-status aria-live="polite">Choose a namespace, then discover its targets.</p>
+        <div class="form-grid" data-discovery-results hidden>
+          <label>Discovered Service<select data-discovered-service></select></label>
+          <label>Backing workload<select data-discovered-workload></select></label>
+        </div>
+      </section>
     </div>
     <div class="capability-row">{% for tool, available in capabilities.tools.items() %}<span class="capability {{ 'ok' if available else 'missing' }}"><i></i>{{ tool }} {{ 'ready' if available else 'missing' }}</span>{% endfor %}</div>
   </section>

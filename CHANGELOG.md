@@ -2,16 +2,39 @@
 
 All notable changes to Ampule Chamber are documented in this file.
 
-## Unreleased
+## 1.5.0 - 2026-07-12
 
 ### Added
 
+- Added a non-root control-plane image with pinned kubectl and k6 binaries plus
+  a GHCR release workflow with image SBOM, vulnerability scan, and provenance.
+- Added a Helm chart and raw Kubernetes resources for the Deployment, Service,
+  ServiceAccount, authentication Secret, in-cluster kubeconfig, target RBAC,
+  probes, security contexts, and PVC-backed workspace.
+- Added Relayna Gateway-style operator-token sign-in with an HttpOnly browser
+  session and Bearer-token API authentication.
+- Added declared-namespace discovery for existing Services, Deployments, and
+  StatefulSets, including selector-based Service-to-workload matching.
 - Added a reusable Relayna task-lifecycle traffic adapter that submits JSON,
   extracts the returned task ID, consumes the task SSE stream, waits for a
   configured terminal status, and records end-to-end lifecycle evidence.
 - Added control-plane fields and Kubernetes configuration documentation for
   Relayna submission paths, request bodies, task ID response paths, event
   paths, concurrency, iterations, and completion timeouts.
+
+### Changed
+
+- Attach preflight now checks the Kubernetes API `/readyz` endpoint without
+  requiring broad access to Services in `kube-system`.
+- Remote UI binding now requires both explicit `--allow-remote` opt-in and a
+  valid bootstrapped admin token.
+- Control-plane runs, evidence, logs, reports, and the SQLite index persist on
+  the configured Kubernetes PVC across pod replacement.
+
+### Documentation
+
+- Added tested Helm, raw-manifest, port-forward, Ingress/TLS, RBAC, discovery,
+  authentication, and persistence instructions with screenshots from Kind.
 
 ## 1.4.1 - 2026-07-11
 
