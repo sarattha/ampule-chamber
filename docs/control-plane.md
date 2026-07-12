@@ -130,6 +130,200 @@ custom security/resource settings are needed.
    evidence, resolved configuration, and agent output. Compare compatible runs
    or export HTML, Markdown, or JSON.
 
+## Exercise editor reference
+
+The Exercise step writes directly to the generated `ChamberConfig`. Settings
+above the journey list apply to the whole assessment; each Traffic journey card
+becomes one entry in `traffic.journeys`. Use **Add traffic** to add another
+journey. Journeys execute sequentially and retain separate k6 tags, request
+configuration, expected response, and load schedule.
+
+### Assessment settings
+
+**Service port** is the Kubernetes Service port used by `runtime.trafficAccess`
+for port-forwarding. Enter the Service's exposed port, which may differ from
+the container port:
+
+```yaml
+runtime:
+  trafficAccess:
+    mode: port-forward
+    service: translation-service
+    servicePort: 8887
+```
+
+**Attach fault template** controls the optional fault applied after baseline
+traffic:
+
+- **Observe only** performs no fault injection and is the recommended starting
+  point for a new target.
+- **Kill one pod** terminates one selected pod and observes recovery.
+- **Scale deployment to zero** removes availability temporarily and then
+  restores the previous replica count.
+
+Attach faults require the target's explicit allow-faults label or annotation.
+
+**Agent mode** controls analysis behavior:
+
+- **Offline deterministic** uses reproducible local logic without OpenAI calls.
+- **Disabled** skips agent analysis.
+- **Live OpenAI agents** enables configured live analysis agents and requires
+  valid OpenAI configuration.
+
+The generated value is stored under `agents.mode`.
+
+One assessment may contain multiple HTTP journeys or multiple Relayna
+journeys, but it cannot mix the two adapter types. HTTP journeys run through
+k6; Relayna journeys use the stateful task-lifecycle executor.
+
+### Common journey fields
+
+| UI field | ChamberConfig field | Meaning |
+| --- | --- | --- |
+| Name | `name` | Stable journey identifier used in execution tags and evidence. |
+| Adapter | `adapter` | Plain HTTP/k6 or Relayna task lifecycle. HTTP omits the field because it is the default. |
+| Method | `method` | HTTP method such as `GET`, `POST`, `PUT`, `PATCH`, or `DELETE`. Relayna requires `POST`. |
+| Path | `path` | Absolute endpoint path beginning with `/`, relative to the selected Service. |
+| Expected status | `expectedStatus` | Exact HTTP status required for the request check to pass. |
+| Tool | `tool` | Traffic tool identifier. Keep `k6` for ordinary HTTP journeys. |
+| Generated text bytes | `textBytes` | Optional size to which the request body's `text` value is repeated and truncated. `0` disables expansion. |
+| Request body JSON | `body` | Optional JSON request payload; Relayna requires a non-empty object. |
+| Follow-up checks JSON | `followUps` | Optional post-request checks included in onboarding and readiness planning. |
+
+The effective URL is built from the port-forwarded Service address and the
+configured path. For example, `/health` is requested through an address such
+as `http://127.0.0.1:18080/health`.
+
+`expectedStatus` is an exact comparison. Common values are `200` for a normal
+GET, `201` for synchronous resource creation, `202` for accepted asynchronous
+work, and `204` for success without a response body. Any other returned status
+fails the journey check.
+
+When an HTTP request body contains `task_id`, Chamber adds the VU, iteration,
+and timestamp to keep generated task IDs unique. When `textBytes` is greater
+than zero and `body.text` exists, Chamber repeats and truncates that text to the
+requested size. This is useful for bounded large-request and memory tests.
+
+### HTTP load models
+
+**Reusable profile** converts the selected profile into explicit k6 stages in
+the generated YAML:
+
+| Profile | Generated stages |
+| --- | --- |
+| Smoke · 1 VU | 15 seconds at 1 VU, then 5 seconds at 0 VUs |
+| Baseline · 4 VUs | 30 seconds at 4 VUs, then 30 seconds at 0 VUs |
+| Stress · ramp to 25 VUs | 30 seconds at 10 VUs, 60 seconds at 25 VUs, then 30 seconds at 0 VUs |
+
+**Custom stages** accepts a JSON array equivalent to the YAML `stages` field:
+
+```json
+[
+  {"duration": "15s", "targetVus": 1},
+  {"duration": "45s", "targetVus": 3},
+  {"duration": "15s", "targetVus": 0}
+]
+```
+
+Each stage requires a non-empty `duration` and a non-negative integer
+`targetVus`. The server rejects malformed stages before creating a plan.
+
+**Fixed iterations** creates a bounded shared-iterations execution:
+
+- **Virtual users** (`vus`) sets maximum concurrency.
+- **Iterations** (`iterations`) sets the total request count.
+- **Duration seconds** (`durationSeconds`) supplies the scheduling duration
+  used when sequencing this journey before the next journey.
+
+These fields must be positive integers. Fixed iterations are useful for costly
+requests where a time-based load profile would be unsafe or unpredictable.
+
+### Relayna task-lifecycle fields
+
+Relayna execution performs a stateful sequence: submit a task, extract its task
+ID, connect to its SSE events endpoint, wait for a terminal status, and decide
+whether the lifecycle succeeded. Selecting the Relayna adapter exposes:
+
+- **Events path** (`relayna.eventsPath`), which must be absolute and contain
+  `{task_id}`, for example `/events/{task_id}`.
+- **Task ID response path** (`relayna.taskIdPath`), such as `task_id` or
+  `data.task_id` for nested JSON responses.
+- **Terminal statuses** (`relayna.terminalStatuses`), the statuses that stop
+  event consumption, commonly `completed, failed`.
+- **Success statuses** (`relayna.successStatuses`), the terminal statuses
+  considered successful, commonly `completed`. Every success status must also
+  be terminal.
+- **Completion timeout** (`relayna.timeoutSeconds`), the positive time bound for
+  submission and event-stream completion.
+- **Virtual users** and **Iterations**, which bound task concurrency and total
+  task submissions.
+
+Relayna submission requires `POST`, an absolute path, an integer expected
+status, and a non-empty JSON body. `202` is the usual expected status for an
+accepted asynchronous task, but the field remains editable for services with a
+different contract.
+
+### Follow-up checks
+
+Follow-up checks use this schema:
+
+```json
+[
+  {
+    "name": "translation-status",
+    "type": "http_status",
+    "target": "/translations/{task_id}",
+    "expected": "completed",
+    "serviceName": "translation-service"
+  }
+]
+```
+
+`name`, `type`, `target`, and `expected` are required; `serviceName` is
+optional. These checks feed onboarding, readiness planning, and report
+metadata. They do not create another k6 traffic journey. Use **Add traffic** if
+another endpoint must receive active test traffic.
+
+### Translation-service starting point
+
+For an already-deployed translation API, begin with observe-only traffic and
+offline deterministic analysis. A safe two-journey configuration is:
+
+```yaml
+traffic:
+  entrypoint: translation-service
+  journeys:
+    - name: health
+      method: GET
+      path: /health
+      expectedStatus: 200
+      tool: k6
+      stages:
+        - duration: 15s
+          targetVus: 1
+        - duration: 5s
+          targetVus: 0
+    - name: runtime-backpressure
+      method: GET
+      path: /relayna/runtime/backpressure
+      expectedStatus: 200
+      tool: k6
+      stages:
+        - duration: 15s
+          targetVus: 1
+        - duration: 30s
+          targetVus: 3
+        - duration: 5s
+          targetVus: 0
+runtime:
+  faults: []
+agents:
+  mode: offline
+```
+
+Confirm each endpoint's real response contract before increasing load or
+enabling attach faults.
+
 ## Evidence and readiness
 
 Every new run has a canonical `run.json`, append-only `events.jsonl`,
