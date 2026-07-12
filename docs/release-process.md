@@ -30,3 +30,28 @@ The release workflow validates:
 - `make check` passes
 - Built distributions pass `twine check`
 - Release notes can be extracted from `CHANGELOG.md`
+- The locally built release candidate has no fixed HIGH or CRITICAL
+  vulnerabilities before any GHCR tag is published
+
+Only after the vulnerability gate passes does the workflow publish the SemVer,
+minor, and `latest` image tags. It then generates package and image SBOMs,
+attests provenance, and creates the GitHub Release.
+
+If a tagged release fails before publication, fix the cause on a new patch
+version; do not move or reuse the failed tag. If an older workflow published an
+image before its scan failed, publish the corrected patch promptly and avoid
+deploying the affected tag.
+
+## GitHub Pages
+
+The Docs workflow builds every documentation pull request and deploys the
+strict MkDocs build after a push to `main`. GitHub Pages requires this one-time
+repository configuration:
+
+1. Open **Settings → Pages** in the GitHub repository.
+2. Under **Build and deployment**, select **GitHub Actions** as the source.
+3. Merge a documentation change or run the Docs workflow after it reaches
+   `main`.
+
+The deployment URL is `https://sarattha.github.io/ampule-chamber/`. The workflow
+uses the `github-pages` environment and reports the deployed URL in its summary.

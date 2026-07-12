@@ -1,5 +1,18 @@
 # Releases
 
+## 1.5.1 - 2026-07-12
+
+Ampule Chamber `1.5.1` repairs and hardens the container release pipeline.
+
+Highlights:
+
+- Build kubectl and k6 from source with a patched Go toolchain and dependencies.
+- Pass the strict Trivy HIGH/CRITICAL image gate without suppressions.
+- Scan the release candidate before publishing any GHCR tags.
+- Run the container vulnerability gate in pull-request CI.
+- Deploy the MkDocs site through GitHub Pages after its one-time repository
+  configuration.
+
 ## 1.5.0 - 2026-07-12
 
 Ampule Chamber `1.5.0` makes the control-plane UI deployable and operable from

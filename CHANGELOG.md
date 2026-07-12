@@ -2,6 +2,27 @@
 
 All notable changes to Ampule Chamber are documented in this file.
 
+## 1.5.1 - 2026-07-12
+
+### Fixed
+
+- Rebuilt the embedded kubectl and k6 executables from source with Go 1.26.5
+  and patched dependencies, eliminating the fixed HIGH and CRITICAL findings
+  that blocked the 1.5.0 release pipeline.
+- Moved the release image vulnerability gate before registry publication so a
+  failed scan cannot update the version, minor, or `latest` GHCR tags.
+
+### Changed
+
+- Added the same strict image vulnerability scan to pull-request CI so release
+  image regressions are caught before a version tag is created.
+- Added GitHub Pages configuration to the documentation deployment workflow.
+
+### Documentation
+
+- Documented the image security gate, failed-release recovery, and one-time
+  GitHub Pages repository setup.
+
 ## 1.5.0 - 2026-07-12
 
 ### Added

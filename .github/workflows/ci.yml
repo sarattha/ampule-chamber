@@ -111,6 +111,14 @@ jobs:
       - name: Build control-plane image
         run: docker build --tag ampule-chamber:ci .
 
+      - name: Scan control-plane image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ampule-chamber:ci
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+
       - name: Smoke test control-plane image
         run: |
           docker run --detach --rm --name ampule-chamber-ci \
