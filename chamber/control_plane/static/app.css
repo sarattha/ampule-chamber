@@ -97,6 +97,8 @@ tbody tr:hover { background: #fbfdfb; }
 label { display: block; color: #33463a; font-size: .78rem; font-weight: 760; }
 input, select, textarea { width: 100%; margin-top: 7px; padding: 0 12px; border: 1px solid #ccd8cf; border-radius: 8px; color: var(--ink); background: white; }
 input, select { height: 44px; }
+input[type="file"] { padding: 6px 8px; line-height: 30px; }
+input[type="file"]::file-selector-button { height: 30px; margin: 0 10px 0 0; padding: 0 10px; border: 1px solid #c4d0c7; border-radius: 6px; background: var(--surface); color: var(--ink); cursor: pointer; }
 textarea { min-height: 104px; padding-top: 10px; padding-bottom: 10px; resize: vertical; }
 input::placeholder { color: #99a49d; }
 .form-panel > label:not(:first-of-type) { margin-top: 22px; }
