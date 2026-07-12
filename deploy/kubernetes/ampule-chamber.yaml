@@ -1,0 +1,219 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ampule-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ampule-chamber
+  namespace: ampule-system
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ampule-chamber-auth
+  namespace: ampule-system
+type: Opaque
+stringData:
+  admin-token: op_live_replace_with_a_long_random_value
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ampule-chamber-config
+  namespace: ampule-system
+data:
+  kubernetes-context: in-cluster
+  discovery-namespaces: chamber-target
+  kubeconfig: |
+    apiVersion: v1
+    kind: Config
+    clusters:
+      - name: in-cluster
+        cluster:
+          server: https://kubernetes.default.svc
+          certificate-authority: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    users:
+      - name: ampule-chamber
+        user:
+          tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+    contexts:
+      - name: in-cluster
+        context:
+          cluster: in-cluster
+          user: ampule-chamber
+    current-context: in-cluster
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ampule-chamber-workspace
+  namespace: ampule-system
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ampule-chamber-namespace-reader
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ampule-chamber-namespace-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ampule-chamber-namespace-reader
+subjects:
+  - kind: ServiceAccount
+    name: ampule-chamber
+    namespace: ampule-system
+---
+# Copy this Role and RoleBinding into every non-production namespace declared
+# in discovery-namespaces. Replace chamber-target below before applying.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ampule-chamber-target-reader
+  namespace: chamber-target
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "services", "endpoints", "events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["pods/portforward"]
+    verbs: ["create"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "replicasets"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ampule-chamber-target-reader
+  namespace: chamber-target
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ampule-chamber-target-reader
+subjects:
+  - kind: ServiceAccount
+    name: ampule-chamber
+    namespace: ampule-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ampule-chamber
+  namespace: ampule-system
+  labels:
+    app.kubernetes.io/name: ampule-chamber
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ampule-chamber
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ampule-chamber
+    spec:
+      serviceAccountName: ampule-chamber
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: control-plane
+          image: ghcr.io/sarattha/ampule-chamber:1.5.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8765
+          env:
+            - name: AMPULE_CHAMBER_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: ampule-chamber-auth
+                  key: admin-token
+            - name: AMPULE_CHAMBER_KUBERNETES_CONTEXT
+              valueFrom:
+                configMapKeyRef:
+                  name: ampule-chamber-config
+                  key: kubernetes-context
+            - name: AMPULE_CHAMBER_DISCOVERY_NAMESPACES
+              valueFrom:
+                configMapKeyRef:
+                  name: ampule-chamber-config
+                  key: discovery-namespaces
+            - name: KUBECONFIG
+              value: /etc/ampule/kubeconfig
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          resources:
+            requests:
+              cpu: 100m
+              memory: 192Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: workspace
+              mountPath: /data
+            - name: kubeconfig
+              mountPath: /etc/ampule/kubeconfig
+              subPath: kubeconfig
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: workspace
+          persistentVolumeClaim:
+            claimName: ampule-chamber-workspace
+        - name: kubeconfig
+          configMap:
+            name: ampule-chamber-config
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ampule-chamber
+  namespace: ampule-system
+spec:
+  selector:
+    app.kubernetes.io/name: ampule-chamber
+  ports:
+    - name: http
+      port: 8765
+      targetPort: http

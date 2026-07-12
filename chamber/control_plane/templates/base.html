@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="csrf-token" content="{{ csrf_token | default('') }}">
   <title>{% block title %}Ampule Chamber{% endblock %}</title>
-  <link rel="stylesheet" href="{{ url_for('static', path='/app.css') }}">
-  <script src="{{ url_for('static', path='/app.js') }}" defer></script>
+  <link rel="stylesheet" href="{{ url_for('static', path='/app.css') }}?v=1.5.0">
+  <script src="{{ url_for('static', path='/app.js') }}?v=1.5.0" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
@@ -14,7 +14,10 @@
     <a class="brand" href="/runs" aria-label="Ampule Chamber runs">
       <span>Ampule Chamber</span>
     </a>
-    <div class="topbar-status"><span class="status-dot"></span>Local control plane</div>
+    <div class="topbar-actions">
+      <div class="topbar-status"><span class="status-dot"></span>Control plane ready</div>
+      {% if auth_enabled %}<form method="post" action="/logout"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="button subtle compact" type="submit">Sign out</button></form>{% endif %}
+    </div>
   </header>
   <div class="app-shell">
     <nav class="sidebar" aria-label="Product navigation">
@@ -23,7 +26,7 @@
       <a class="nav-item" href="/compare">Compare</a>
       <div class="nav-divider"></div>
       <div class="nav-label">Workspace</div>
-      <div class="nav-muted">Files remain local</div>
+      <div class="nav-muted">Runs persist in workspace storage</div>
     </nav>
     <main class="main" id="main">{% block content %}{% endblock %}</main>
   </div>

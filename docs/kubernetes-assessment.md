@@ -119,6 +119,48 @@ agents:
     - onboarding-agent
 ```
 
+### Relayna task lifecycle journey
+
+Services built on the Relayna SDK can use a stateful journey that submits a
+task, extracts the response task ID, subscribes to its SSE stream, and waits for
+a successful terminal status:
+
+```yaml
+traffic:
+  entrypoint: translation-service
+  journeys:
+    - name: translation-lifecycle
+      adapter: relayna
+      method: POST
+      path: /translations
+      expectedStatus: 202
+      vus: 1
+      iterations: 1
+      body:
+        text: Hello from Ampule Chamber.
+        language_target: Thai
+        priority: 5
+      relayna:
+        taskIdPath: task_id
+        eventsPath: /events/{task_id}
+        terminalStatuses: [completed, failed]
+        successStatuses: [completed]
+        timeoutSeconds: 300
+```
+
+Relayna journeys are stateful and run separately from plain k6 journeys. One
+traffic execution cannot mix the two adapter types. For every iteration,
+Chamber records the submission status and latency, extracted task ID, observed
+status sequence, terminal status, stream duration, and total end-to-end task
+duration in `evidence/relayna-summary.json`. A `failed` terminal status, missing
+task ID, malformed response, stream error, or timeout fails the traffic stage.
+
+`taskIdPath` is a dot-separated JSON response path such as `task_id` or
+`data.task_id`. `eventsPath` must be an absolute path containing `{task_id}`.
+The task ID is URL-encoded before the SSE request is sent. Request bodies are
+kept in the resolved configuration but are not copied into Relayna execution
+evidence.
+
 Store secrets as environment requirements, not plaintext runtime values:
 
 ```yaml

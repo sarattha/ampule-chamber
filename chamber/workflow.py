@@ -45,6 +45,7 @@ from chamber.environment.preflight import (
 from chamber.environment.preflight import (
     run_kubernetes_attach_preflight,
 )
+from chamber.load import execute_relayna_journeys, validate_relayna_journey
 from chamber.onboarding import (
     ExternalDependencyPolicy,
     FollowUpCheck,
@@ -351,6 +352,13 @@ def validate_config(
     journeys = _list(traffic.get("journeys", []), f"{source}.traffic.journeys")
     if not journeys:
         raise WorkflowError(f"{source}.traffic.journeys must not be empty")
+    for index, journey_item in enumerate(journeys):
+        journey = _mapping(journey_item, f"{source}.traffic.journeys[{index}]")
+        if journey.get("adapter") == "relayna":
+            try:
+                validate_relayna_journey(journey)
+            except ValueError as exc:
+                raise WorkflowError(f"{source}.traffic.journeys[{index}]: {exc}") from exc
     agents = _mapping(config.get("agents", {}), f"{source}.agents")
     mode = str(
         agents.get(
@@ -1330,8 +1338,16 @@ def _execute_kubernetes_traffic(
     access = _mapping(runtime["trafficAccess"], "runtime.trafficAccess")
     traffic = _mapping(config["traffic"], "traffic")
     journeys = _traffic_journeys(traffic)
-    summary_path = run_dir / "evidence/k6-summary.json"
-    script_path = run_dir / "evidence/k6.js"
+    relayna_journeys = tuple(
+        journey for journey in journeys if str(journey.get("adapter", "http")) == "relayna"
+    )
+    if relayna_journeys and len(relayna_journeys) != len(journeys):
+        raise WorkflowError("one traffic execution cannot mix Relayna and plain HTTP journeys")
+    summary_path = run_dir / "evidence/relayna-summary.json"
+    script_path: Path | None = None
+    if not relayna_journeys:
+        summary_path = run_dir / "evidence/k6-summary.json"
+        script_path = run_dir / "evidence/k6.js"
     if access["mode"] == "endpoint":
         base_url = str(access["url"]).rstrip("/")
         port_forward = None
@@ -1353,8 +1369,27 @@ def _execute_kubernetes_traffic(
             )
         )
         time.sleep(2)
-    script_path.write_text(_k6_script_for_journeys(journeys, base_url=base_url), encoding="utf-8")
     try:
+        if relayna_journeys:
+            summary = execute_relayna_journeys(relayna_journeys, base_url=base_url)
+            _write_json(summary_path, summary)
+            return {
+                "success": bool(summary["success"]),
+                "command": ["ampule-chamber", "relayna-journey"],
+                "exit_status": 0 if summary["success"] else 1,
+                "stdout": (
+                    f"Relayna tasks: {summary['successful_count']}/{summary['task_count']} "
+                    "completed successfully"
+                ),
+                "stderr": "",
+                "summary_path": str(summary_path),
+                "evidence_id": "relayna-summary",
+                "journeys": list(summary["journeys"]),
+            }
+        assert script_path is not None
+        script_path.write_text(
+            _k6_script_for_journeys(journeys, base_url=base_url), encoding="utf-8"
+        )
         completed = runner.run(
             ("k6", "run", "--summary-export", str(summary_path), str(script_path))
         )
@@ -1368,6 +1403,7 @@ def _execute_kubernetes_traffic(
         "stdout": completed.stdout,
         "stderr": completed.stderr,
         "summary_path": str(summary_path),
+        "evidence_id": "k6-summary",
         "journeys": [_journey_name(journey) for journey in journeys],
     }
 
@@ -2135,7 +2171,10 @@ def _kubernetes_assess_evidence_ids(
         evidence_ids.append("pre-test-state")
     if run_dir is not None and (run_dir / "evidence/rollback.json").exists():
         evidence_ids.append("rollback")
-    if traffic_result.get("summary_path"):
+    traffic_evidence_id = traffic_result.get("evidence_id")
+    if isinstance(traffic_evidence_id, str) and traffic_evidence_id:
+        evidence_ids.append(traffic_evidence_id)
+    elif traffic_result.get("summary_path"):
         evidence_ids.append("k6-summary")
     if run_dir is not None and (run_dir / "evidence/prometheus-memory.json").exists():
         evidence_ids.append("prometheus-memory")
@@ -2146,7 +2185,9 @@ def _agent_missing_signals(*, stage: str, evidence_ids: tuple[str, ...]) -> tupl
     if stage == "plan":
         return ("live Kubernetes execution",)
     if stage == "assess" and not (
-        "kubernetes-commands" in evidence_ids or "k6-summary" in evidence_ids
+        "kubernetes-commands" in evidence_ids
+        or "k6-summary" in evidence_ids
+        or "relayna-summary" in evidence_ids
     ):
         return ("live Kubernetes execution",)
     return ()
@@ -2217,6 +2258,16 @@ def _agent_evidence_summaries(run_dir: Path, evidence_ids: tuple[str, ...]) -> t
                     "k6 derived failed http requests: "
                     f"{k6_summary.get('derived_failed_http_requests', 'unknown')}"
                 )
+    if "relayna-summary" in evidence_ids:
+        relayna_path = run_dir / "evidence/relayna-summary.json"
+        if relayna_path.exists():
+            relayna = _read_json(relayna_path)
+            summaries.append(
+                "Relayna tasks: "
+                f"successful={relayna.get('successful_count', 0)} "
+                f"total={relayna.get('task_count', 0)}"
+            )
+            summaries.append(f"Relayna task failures: {relayna.get('failed_count', 0)}")
     if "prometheus-memory" in evidence_ids:
         path = run_dir / "evidence/prometheus-memory.json"
         if path.exists():
@@ -2261,6 +2312,10 @@ def _agent_evidence_details(run_dir: Path, evidence_ids: tuple[str, ...]) -> tup
         path = run_dir / "evidence/k6-summary.json"
         if path.exists():
             details.extend(_k6_agent_details(_read_json(path)))
+    if "relayna-summary" in evidence_ids:
+        path = run_dir / "evidence/relayna-summary.json"
+        if path.exists():
+            details.append(_agent_detail("relayna-summary", _read_json(path)))
     if "prometheus-memory" in evidence_ids:
         path = run_dir / "evidence/prometheus-memory.json"
         if path.exists():

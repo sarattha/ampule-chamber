@@ -1,0 +1,112 @@
+{{- if ne (int .Values.replicaCount) 1 }}
+{{- fail "replicaCount must remain 1 while the control plane uses an in-memory job manager and PVC-backed SQLite index" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ampule-chamber.fullname" . }}
+  labels:
+    {{- include "ampule-chamber.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "ampule-chamber.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ampule-chamber.selectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- if not .Values.auth.existingSecret }}
+        checksum/auth: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "ampule-chamber.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: control-plane
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["ui", "--host", "0.0.0.0", "--port", "8765", "--workspace", "/data/.chamber", "--no-open", "--allow-remote"]
+          ports:
+            - name: http
+              containerPort: 8765
+          env:
+            - name: AMPULE_CHAMBER_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "ampule-chamber.authSecretName" . }}
+                  key: {{ .Values.auth.secretKey }}
+            - name: AMPULE_CHAMBER_SECURE_COOKIES
+              value: {{ .Values.auth.secureCookies | quote }}
+            - name: AMPULE_CHAMBER_KUBERNETES_CONTEXT
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "ampule-chamber.fullname" . }}
+                  key: kubernetes-context
+            - name: AMPULE_CHAMBER_DISCOVERY_NAMESPACES
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "ampule-chamber.fullname" . }}
+                  key: discovery-namespaces
+            - name: KUBECONFIG
+              value: /etc/ampule/kubeconfig
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: workspace
+              mountPath: /data
+            - name: kubeconfig
+              mountPath: /etc/ampule/kubeconfig
+              subPath: kubeconfig
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: workspace
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "ampule-chamber.workspaceClaimName" . }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: kubeconfig
+          configMap:
+            name: {{ include "ampule-chamber.fullname" . }}
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

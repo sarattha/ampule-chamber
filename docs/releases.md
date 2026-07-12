@@ -1,5 +1,22 @@
 # Releases
 
+## 1.5.0 - 2026-07-12
+
+Ampule Chamber `1.5.0` makes the control-plane UI deployable and operable from
+inside an existing Kubernetes cluster.
+
+Highlights:
+
+- Publish a non-root control-plane image with pinned kubectl and k6 binaries.
+- Install with Helm or raw Kubernetes resources, including ServiceAccount,
+  read-focused namespace RBAC, Service, and PVC-backed workspace.
+- Sign in with a bootstrapped `op_live_` admin token and an HttpOnly session.
+- Discover Services and backing Deployments or StatefulSets in explicitly
+  declared target namespaces.
+- Submit Relayna tasks, extract task IDs from HTTP 202 responses, follow their
+  SSE event streams, and record terminal lifecycle evidence.
+- Exercise the full in-cluster attach flow against a real Kind environment.
+
 ## 1.4.1 - 2026-07-11
 
 Ampule Chamber `1.4.1` makes existing-cluster onboarding independent of local

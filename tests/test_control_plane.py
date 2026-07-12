@@ -394,8 +394,18 @@ class ControlPlaneTests(unittest.TestCase):
                         "kubernetes_context": "kind-ampule-chamber",
                         "namespace": "payments-stage",
                         "service_port": "8080",
-                        "traffic_path": "/health",
-                        "traffic_profile": "baseline",
+                        "journey_type": "relayna",
+                        "traffic_path": "/translations",
+                        "traffic_profile": "smoke",
+                        "request_body": json.dumps(
+                            {
+                                "text": "Hello from Ampule Chamber.",
+                                "language_target": "Thai",
+                            }
+                        ),
+                        "events_path": "/events/{task_id}",
+                        "task_id_path": "task_id",
+                        "relayna_timeout_seconds": "120",
                         "fault_type": "none",
                         "agents_mode": "offline",
                     },
@@ -409,6 +419,11 @@ class ControlPlaneTests(unittest.TestCase):
                 self.assertEqual(attached_config["runtime"]["mode"], "attach")
                 self.assertEqual(attached_config["runtime"]["namespace"], "payments-stage")
                 self.assertEqual(attached_config["service"]["name"], "payments-api")
+                relayna_journey = attached_config["traffic"]["journeys"][0]
+                self.assertEqual(relayna_journey["adapter"], "relayna")
+                self.assertEqual(relayna_journey["expectedStatus"], 202)
+                self.assertEqual(relayna_journey["relayna"]["eventsPath"], "/events/{task_id}")
+                self.assertEqual(relayna_journey["relayna"]["timeoutSeconds"], 120)
                 self.assertEqual(
                     attached_config["deployment"]["workloads"],
                     [{"name": "payments-worker", "role": "target", "kind": "StatefulSet"}],
@@ -522,9 +537,22 @@ class ControlPlaneTests(unittest.TestCase):
                 open_browser=False,
             )
 
+        with self.assertRaisesRegex(ValueError, "AMPULE_CHAMBER_ADMIN_TOKEN"):
+            run_server(
+                host="0.0.0.0",
+                port=8765,
+                workspace=Path(".chamber"),
+                open_browser=False,
+                allow_remote=True,
+            )
+
         with (
             patch("uvicorn.run") as uvicorn_run,
             patch("chamber.control_plane.server.threading.Timer") as timer,
+            patch.dict(
+                "os.environ",
+                {"AMPULE_CHAMBER_ADMIN_TOKEN": "op_live_ampule_test_token_123456789"},
+            ),
         ):
             self.assertEqual(
                 run_server(

@@ -7,8 +7,13 @@ on:
 
 permissions:
   contents: write
+  packages: write
   id-token: write
   attestations: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   release:
@@ -39,6 +44,36 @@ jobs:
       - name: Validate built distributions
         run: uv run twine check dist/*
 
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract image metadata
+        id: image-meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push control-plane image
+        id: image-build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.image-meta.outputs.tags }}
+          labels: ${{ steps.image-meta.outputs.labels }}
+          provenance: true
+
       - name: Install Syft
         uses: anchore/sbom-action/download-syft@v0
 
@@ -46,6 +81,29 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: syft dist --output "spdx-json=ampule-chamber-${RELEASE_TAG}.spdx.json"
+
+      - name: Generate image SBOM
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          syft "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.image-build.outputs.digest }}" \
+            --output "spdx-json=ampule-chamber-image-${RELEASE_TAG}.spdx.json"
+
+      - name: Scan release image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.image-build.outputs.digest }}
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+
+      - name: Attest image provenance
+        if: ${{ !github.event.repository.private }}
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.image-build.outputs.digest }}
+          push-to-registry: true
 
       - name: Attest package provenance
         if: ${{ !github.event.repository.private }}
@@ -96,3 +154,4 @@ jobs:
             dist/*.whl
             CHANGELOG.md
             ampule-chamber-${{ github.ref_name }}.spdx.json
+            ampule-chamber-image-${{ github.ref_name }}.spdx.json

@@ -74,7 +74,7 @@ def build_assessment_result(
     runtime_value = config.get("runtime")
     runtime: dict[str, Any] = runtime_value if isinstance(runtime_value, dict) else {}
     runtime_mode = str(runtime.get("mode", metadata.get("runtime_mode", "deploy")))
-    required = ["preflight", "kubernetes-commands", "k6-summary"]
+    required = ["preflight", "kubernetes-commands", _traffic_evidence_id(config)]
     if runtime.get("prometheusUrl"):
         required.append("prometheus-memory")
     if runtime_mode == "attach":
@@ -204,6 +204,18 @@ def _k6_summary_path(run_dir: Path, metadata: dict[str, Any]) -> Path | None:
         candidates.insert(0, supplied if supplied.is_absolute() else run_dir / supplied)
         candidates.append(run_dir / "evidence" / supplied.name)
     return next((item for item in candidates if item.exists()), None)
+
+
+def _traffic_evidence_id(config: dict[str, Any]) -> str:
+    traffic = config.get("traffic")
+    journeys = traffic.get("journeys") if isinstance(traffic, dict) else None
+    if (
+        isinstance(journeys, list)
+        and journeys
+        and all(isinstance(item, dict) and item.get("adapter") == "relayna" for item in journeys)
+    ):
+        return "relayna-summary"
+    return "k6-summary"
 
 
 def _json_object(value: str) -> dict[str, Any] | None:

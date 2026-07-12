@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ampule-chamber.fullname" . }}
+  labels:
+    {{- include "ampule-chamber.labels" . | nindent 4 }}
+data:
+  kubernetes-context: {{ .Values.kubernetes.context | quote }}
+  discovery-namespaces: {{ join "," .Values.discovery.namespaces | quote }}
+  kubeconfig: |
+    apiVersion: v1
+    kind: Config
+    clusters:
+      - name: {{ .Values.kubernetes.context }}
+        cluster:
+          server: https://kubernetes.default.svc
+          certificate-authority: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    users:
+      - name: ampule-chamber
+        user:
+          tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+    contexts:
+      - name: {{ .Values.kubernetes.context }}
+        context:
+          cluster: {{ .Values.kubernetes.context }}
+          user: ampule-chamber
+    current-context: {{ .Values.kubernetes.context }}

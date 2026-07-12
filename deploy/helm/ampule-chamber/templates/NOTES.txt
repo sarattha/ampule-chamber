@@ -1,0 +1,11 @@
+1. Port-forward the authenticated control plane:
+   kubectl -n {{ .Release.Namespace }} port-forward service/{{ include "ampule-chamber.fullname" . }} 8765:{{ .Values.service.port }}
+
+2. Open http://127.0.0.1:8765 and sign in with the configured admin token.
+
+Declared discovery namespaces:
+{{- range .Values.discovery.namespaces }}
+  - {{ . }}
+{{- else }}
+  none; set discovery.namespaces before using cluster discovery
+{{- end }}

@@ -50,6 +50,10 @@ coverage: ## Run tests with coverage threshold
 validate-scenarios: ## Validate scenario YAML files
 	$(UV) run $(PYTHON) scripts/validate_scenarios.py
 
+.PHONY: validate-deployment
+validate-deployment: ## Validate Kubernetes and Helm deployment contracts
+	$(UV) run $(PYTHON) scripts/validate_deployment.py
+
 .PHONY: docs
 docs: ## Build public documentation with MkDocs
 	$(UV) run mkdocs build --strict
@@ -70,6 +74,7 @@ check: ## Run format, lint, typecheck, tests, coverage, scenario validation, and
 	$(MAKE) test
 	$(MAKE) coverage
 	$(MAKE) validate-scenarios
+	$(MAKE) validate-deployment
 	$(MAKE) validate-release
 	$(MAKE) docs
 	$(MAKE) build
