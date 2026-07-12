@@ -44,18 +44,12 @@ jobs:
       - name: Validate built distributions
         run: uv run twine check dist/*
 
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Extract image metadata
         id: image-meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          flavor: latest=false
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -64,7 +58,33 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and push control-plane image
+      - name: Build release candidate image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          push: false
+          tags: ampule-chamber:release-candidate
+          labels: ${{ steps.image-meta.outputs.labels }}
+          provenance: false
+          cache-to: type=gha,mode=max
+
+      - name: Scan release candidate image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ampule-chamber:release-candidate
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish verified control-plane image
         id: image-build
         uses: docker/build-push-action@v6
         with:
@@ -73,6 +93,7 @@ jobs:
           tags: ${{ steps.image-meta.outputs.tags }}
           labels: ${{ steps.image-meta.outputs.labels }}
           provenance: true
+          cache-from: type=gha
 
       - name: Install Syft
         uses: anchore/sbom-action/download-syft@v0
@@ -88,14 +109,6 @@ jobs:
         run: |
           syft "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.image-build.outputs.digest }}" \
             --output "spdx-json=ampule-chamber-image-${RELEASE_TAG}.spdx.json"
-
-      - name: Scan release image
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.image-build.outputs.digest }}
-          severity: HIGH,CRITICAL
-          exit-code: "1"
-          ignore-unfixed: true
 
       - name: Attest image provenance
         if: ${{ !github.event.repository.private }}

@@ -1,6 +1,6 @@
 # Ampule Chamber
 
-Version: 1.5.0
+Version: 1.5.1
 
 Production-ready release for agent-driven reliability testing of Kubernetes
 services before production.
@@ -15,11 +15,12 @@ teams that need to answer:
 
 ## Release Status
 
-Ampule Chamber `1.5.0` packages the authenticated control-plane UI for
+Ampule Chamber `1.5.1` packages the authenticated control-plane UI for
 in-cluster operation. Helm and raw manifests provide a ServiceAccount,
 namespace-scoped discovery RBAC, Service, and PVC-backed run store. The UI can
 attach to an existing Kubernetes Service and backing Deployment or StatefulSet
-without a local repository.
+without a local repository. Release images are vulnerability-scanned before
+publication, and the documentation is deployed through GitHub Pages.
 
 ## What It Tests
 

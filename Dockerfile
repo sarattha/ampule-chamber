@@ -1,5 +1,19 @@
-ARG KUBECTL_VERSION=v1.32.2
-ARG K6_VERSION=v1.2.0
+ARG GO_VERSION=1.26.5
+ARG KUBECTL_VERSION=v1.36.2
+ARG KUBECTL_MODULE_VERSION=v0.36.2
+ARG K6_VERSION=v2.1.0
+
+FROM golang:${GO_VERSION}-bookworm AS tool-builder
+ARG KUBECTL_VERSION
+ARG KUBECTL_MODULE_VERSION
+ARG K6_VERSION
+WORKDIR /src/kubectl
+COPY tools/kubectl ./
+RUN test "$(go list -m -f '{{.Version}}' k8s.io/kubectl)" = "${KUBECTL_MODULE_VERSION}" \
+    && CGO_ENABLED=0 go build -trimpath \
+      -ldflags="-s -w -X k8s.io/component-base/version.gitVersion=${KUBECTL_VERSION} -X k8s.io/component-base/version.gitTreeState=clean" \
+      -o /out/kubectl . \
+    && GOBIN=/out CGO_ENABLED=0 go install -trimpath "go.k6.io/k6/v2@${K6_VERSION}"
 
 FROM python:3.13-slim AS builder
 WORKDIR /app
@@ -13,23 +27,12 @@ RUN python -m pip install --no-cache-dir uv==0.11.26 \
       --no-editable
 
 FROM python:3.13-slim AS runtime
-ARG TARGETARCH
-ARG KUBECTL_VERSION
-ARG K6_VERSION
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends ca-certificates curl \
-    && curl --fail --location --retry 3 \
-      "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${TARGETARCH}/kubectl" \
-      --output /usr/local/bin/kubectl \
-    && chmod 0755 /usr/local/bin/kubectl \
-    && curl --fail --location --retry 3 \
-      "https://github.com/grafana/k6/releases/download/${K6_VERSION}/k6-${K6_VERSION}-linux-${TARGETARCH}.tar.gz" \
-      --output /tmp/k6.tar.gz \
-    && tar -xzf /tmp/k6.tar.gz --strip-components=1 -C /usr/local/bin \
-      "k6-${K6_VERSION}-linux-${TARGETARCH}/k6" \
-    && rm -rf /var/lib/apt/lists/* /tmp/k6.tar.gz \
-    && kubectl version --client \
-    && k6 version
+    && apt-get upgrade --yes \
+    && apt-get install --yes --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=tool-builder /out/kubectl /out/k6 /usr/local/bin/
+RUN kubectl version --client && k6 version
 RUN groupadd --gid 10001 ampule \
     && useradd --uid 10001 --gid 10001 --create-home --home-dir /home/ampule ampule \
     && mkdir -p /data/.chamber /workspace \
