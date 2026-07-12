@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -14,7 +15,8 @@ CHART = ROOT / "deploy/helm/ampule-chamber/Chart.yaml"
 VALUES = ROOT / "deploy/helm/ampule-chamber/values.yaml"
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    args = sys.argv[1:] if argv is None else argv
     version = _project_version()
     chart = _load_mapping(CHART)
     values = _load_mapping(VALUES)
@@ -33,25 +35,13 @@ def main() -> int:
     if not persistence.get("retain"):
         raise SystemExit("Helm persistence must be retained by default")
 
-    resources = {
-        (item.get("apiVersion"), item.get("kind")) for item in manifests if isinstance(item, dict)
-    }
-    required = {
-        ("v1", "Namespace"),
-        ("v1", "ServiceAccount"),
-        ("v1", "Secret"),
-        ("v1", "ConfigMap"),
-        ("v1", "PersistentVolumeClaim"),
-        ("rbac.authorization.k8s.io/v1", "ClusterRole"),
-        ("rbac.authorization.k8s.io/v1", "ClusterRoleBinding"),
-        ("rbac.authorization.k8s.io/v1", "Role"),
-        ("rbac.authorization.k8s.io/v1", "RoleBinding"),
-        ("apps/v1", "Deployment"),
-        ("v1", "Service"),
-    }
-    missing = sorted(required - resources)
-    if missing:
-        raise SystemExit(f"raw manifest is missing required resources: {missing}")
+    if len(args) > 1:
+        raise SystemExit("usage: validate_deployment.py [rendered-helm-manifest.yaml]")
+    if args:
+        rendered = list(yaml.safe_load_all(Path(args[0]).read_text(encoding="utf-8")))
+        _require_resources(rendered, label="rendered Helm manifest", require_namespace=False)
+
+    _require_resources(manifests, label="raw manifest", require_namespace=True)
 
     deployment = next(
         item for item in manifests if isinstance(item, dict) and item.get("kind") == "Deployment"
@@ -79,6 +69,29 @@ def main() -> int:
 
     print(f"deployment metadata ok: {version}")
     return 0
+
+
+def _require_resources(manifests: list[Any], *, label: str, require_namespace: bool) -> None:
+    resources = {
+        (item.get("apiVersion"), item.get("kind")) for item in manifests if isinstance(item, dict)
+    }
+    required = {
+        ("v1", "ServiceAccount"),
+        ("v1", "Secret"),
+        ("v1", "ConfigMap"),
+        ("v1", "PersistentVolumeClaim"),
+        ("rbac.authorization.k8s.io/v1", "ClusterRole"),
+        ("rbac.authorization.k8s.io/v1", "ClusterRoleBinding"),
+        ("rbac.authorization.k8s.io/v1", "Role"),
+        ("rbac.authorization.k8s.io/v1", "RoleBinding"),
+        ("apps/v1", "Deployment"),
+        ("v1", "Service"),
+    }
+    if require_namespace:
+        required.add(("v1", "Namespace"))
+    missing = sorted(required - resources)
+    if missing:
+        raise SystemExit(f"{label} is missing required resources: {missing}")
 
 
 def _project_version() -> str:

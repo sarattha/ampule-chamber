@@ -96,9 +96,6 @@ jobs:
       - name: Set up Helm
         uses: azure/setup-helm@v4
 
-      - name: Set up kubectl
-        uses: azure/setup-kubectl@v4
-
       - name: Lint and render Helm chart
         run: |
           helm lint deploy/helm/ampule-chamber \
@@ -108,7 +105,8 @@ jobs:
             --namespace ampule-system \
             --set auth.adminToken=op_live_ci_validation_token_123456 \
             --set 'discovery.namespaces[0]=default' \
-            | kubectl apply --dry-run=client --validate=false -f -
+            > /tmp/ampule-rendered.yaml
+          uv run python scripts/validate_deployment.py /tmp/ampule-rendered.yaml
 
       - name: Build control-plane image
         run: docker build --tag ampule-chamber:ci .
