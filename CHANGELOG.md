@@ -2,6 +2,22 @@
 
 All notable changes to Ampule Chamber are documented in this file.
 
+## 1.5.2 - 2026-07-12
+
+### Added
+
+- Added a repeatable traffic-journey editor to the control plane for multiple
+  HTTP or Relayna journeys, editable expected response statuses, request
+  bodies, load schedules, lifecycle settings, and follow-up checks.
+- Added no-body, JSON, multipart file upload, URL-encoded form, and raw-text
+  request encodings, including durable UI upload storage and k6 multipart
+  generation for file-based services such as OCR APIs.
+
+### Changed
+
+- Control-plane plans now preserve the complete journey array in the generated
+  ChamberConfig instead of reducing the exercise to one hard-coded journey.
+
 ## 1.5.1 - 2026-07-12
 
 ### Fixed

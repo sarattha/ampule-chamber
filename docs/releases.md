@@ -1,5 +1,19 @@
 # Releases
 
+## 1.5.2 - 2026-07-12
+
+Ampule Chamber `1.5.2` expands the control-plane exercise editor to match the
+multi-journey ChamberConfig contract.
+
+Highlights:
+
+- Add, remove, and configure multiple HTTP or Relayna traffic journeys.
+- Edit each journey's method, path, expected response status, request body,
+  load schedule, and lifecycle settings.
+- Preserve the complete journey array in generated YAML and validate it before
+  plan creation.
+- Verify multi-journey execution against an existing Kind service.
+
 ## 1.5.1 - 2026-07-12
 
 Ampule Chamber `1.5.1` repairs and hardens the container release pipeline.

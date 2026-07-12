@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}New assessment · Ampule Chamber{% endblock %}
 {% block content %}
-<form method="post" action="/ui/plan" class="wizard" data-wizard>
+<form method="post" action="/ui/plan" enctype="multipart/form-data" class="wizard" data-wizard>
   <input type="hidden" name="_csrf" value="{{ csrf_token }}">
   <div class="wizard-steps" aria-label="Assessment steps">
     <button type="button" class="wizard-step active" data-step-button="0"><span>1</span> Target</button>
@@ -45,20 +45,60 @@
   </section>
 
   <section class="wizard-panel" data-step="2" hidden>
-    <div class="page-heading"><div class="eyebrow">Step 3 of 4</div><h1>Define the exercise</h1><p>Start with a calm health journey. The generated YAML remains the complete source of truth.</p></div>
-    <div class="panel form-grid">
+    <div class="page-heading"><div class="eyebrow">Step 3 of 4</div><h1>Define the exercise</h1><p>Add one or more traffic journeys. Every field is written directly to the generated ChamberConfig.</p></div>
+    <div class="panel form-grid exercise-settings">
       <label>Service port<input name="service_port" type="number" min="1" max="65535" value="8080"></label>
-      <label>Journey type<select name="journey_type"><option value="http">HTTP health/load</option><option value="relayna">Relayna task lifecycle</option></select></label>
-      <label>Traffic path<input name="traffic_path" value="/health"></label>
-      <label>Traffic profile<select name="traffic_profile"><option value="smoke">Smoke · 1 VU</option><option value="baseline" selected>Baseline · 4 VUs</option><option value="stress">Stress · ramp to 25 VUs</option></select></label>
-      <label data-relayna-field hidden>Request JSON<textarea name="request_body" rows="5">{"text":"Hello from Ampule Chamber.","language_target":"Thai","priority":5}</textarea></label>
-      <label data-relayna-field hidden>Events path<input name="events_path" value="/events/{task_id}"></label>
-      <label data-relayna-field hidden>Task ID response path<input name="task_id_path" value="task_id"></label>
-      <label data-relayna-field hidden>Completion timeout (seconds)<input name="relayna_timeout_seconds" type="number" min="1" max="3600" value="300"></label>
       <label>Attach fault template<select name="fault_type"><option value="none">Observe only</option><option value="pod_kill">Kill one pod and verify recovery</option><option value="deployment_scale">Scale deployment to zero and restore</option></select><span class="help">Faults run only in attach mode and require an explicit allow-faults label.</span></label>
       <label>Agent mode<select name="agents_mode"><option value="offline">Offline deterministic</option><option value="off">Disabled</option><option value="live">Live OpenAI agents</option></select></label>
-      <div class="field-note"><strong>Reusable templates</strong><span>Profiles are converted to explicit stages in the resolved ChamberConfig.</span></div>
+      <div class="field-note"><strong>Execution boundary</strong><span>An assessment may contain multiple HTTP journeys or multiple Relayna journeys, but cannot mix the two adapter types.</span></div>
     </div>
+    <input type="hidden" name="journeys_json" data-journeys-json>
+    <div class="journey-editor" data-journey-editor>
+      <div class="section-heading"><div><h2>Traffic journeys</h2><p>Journeys run sequentially and retain their own request, expected response, and load schedule.</p></div><button class="button" type="button" data-add-journey>Add traffic</button></div>
+      <div class="journey-list" data-journey-list></div>
+    </div>
+    <template data-journey-template>
+      <article class="panel journey-card" data-journey>
+        <div class="journey-heading"><div><span class="eyebrow" data-journey-number>Journey</span><h3 data-journey-title>HTTP traffic</h3></div><button class="button subtle compact" type="button" data-remove-journey>Remove</button></div>
+        <div class="form-grid">
+          <label>Name<input data-journey-field="name" required value="baseline-health" placeholder="baseline-health"></label>
+          <label>Adapter<select data-journey-field="adapter"><option value="http">HTTP / k6</option><option value="relayna">Relayna task lifecycle</option></select></label>
+          <label>Method<select data-journey-field="method"><option>GET</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option><option>HEAD</option><option>OPTIONS</option></select></label>
+          <label>Path<input data-journey-field="path" required value="/health" pattern="/.*" placeholder="/health"></label>
+          <label>Expected status<input data-journey-field="expectedStatus" type="number" required min="100" max="599" value="200"></label>
+          <label>Tool<input data-journey-field="tool" value="k6" placeholder="k6"></label>
+          <label>Load model<select data-journey-field="loadModel"><option value="profile">Reusable profile</option><option value="stages">Custom stages</option><option value="iterations">Fixed iterations</option></select></label>
+          <label data-load-profile>Traffic profile<select data-journey-field="profile"><option value="smoke">Smoke · 1 VU</option><option value="baseline" selected>Baseline · 4 VUs</option><option value="stress">Stress · ramp to 25 VUs</option></select></label>
+          <label class="wide-field" data-custom-stages hidden>Stages JSON<textarea data-journey-field="stages">[{"duration":"30s","targetVus":4},{"duration":"30s","targetVus":0}]</textarea><span class="help">YAML equivalent: <code>stages</code> array with <code>duration</code> and <code>targetVus</code>.</span></label>
+          <div class="form-grid nested-grid wide-field" data-fixed-iterations hidden>
+            <label>Virtual users<input data-journey-field="vus" type="number" min="1" value="1"></label>
+            <label>Iterations<input data-journey-field="iterations" type="number" min="1" value="1"></label>
+            <label>Duration seconds<input data-journey-field="durationSeconds" type="number" min="1" value="1"></label>
+          </div>
+          <label data-text-bytes>Generated text bytes<input data-journey-field="textBytes" type="number" min="0" value="0"><span class="help">Optionally expands the request body’s <code>text</code> field.</span></label>
+          <label>Request encoding<select data-journey-field="requestEncoding"><option value="none">No body</option><option value="json" selected>JSON</option><option value="multipart">Multipart form + file</option><option value="form">URL-encoded form</option><option value="raw">Raw text</option></select></label>
+          <label class="wide-field" data-json-request>Request body JSON <span class="optional">optional for HTTP</span><textarea data-journey-field="body" placeholder='{"message":"hello"}'></textarea></label>
+          <div class="form-grid nested-grid wide-field" data-multipart-request hidden>
+            <label>File field name<input data-journey-field="fileField" value="file" placeholder="file"></label>
+            <label>Upload file<input name="journey_files" data-journey-field="file" type="file" accept=".pdf,.png,.jpg,.jpeg,.tiff,.tif,.bmp,.gif,.webp"></label>
+            <label class="wide-field">Multipart form fields JSON<textarea data-journey-field="multipartFields" placeholder='{"engine":"internal","mode":"layout","force_ocr":false,"priority":5}'></textarea><span class="help">The browser stores the selected file in Chamber workspace storage; the generated config references that durable path.</span></label>
+          </div>
+          <label class="wide-field" data-form-request hidden>URL-encoded form fields JSON<textarea data-journey-field="form" placeholder='{"query":"hello","limit":10}'></textarea></label>
+          <div class="form-grid nested-grid wide-field" data-raw-request hidden>
+            <label>Content type<input data-journey-field="contentType" value="text/plain" placeholder="text/plain"></label>
+            <label class="wide-field">Raw request body<textarea data-journey-field="rawBody" placeholder="raw request content"></textarea></label>
+          </div>
+          <div class="form-grid nested-grid wide-field relayna-settings" data-relayna-settings hidden>
+            <label>Events path<input data-journey-field="eventsPath" value="/events/{task_id}"></label>
+            <label>Task ID response path<input data-journey-field="taskIdPath" value="task_id"></label>
+            <label>Terminal statuses<input data-journey-field="terminalStatuses" value="completed, failed"></label>
+            <label>Success statuses<input data-journey-field="successStatuses" value="completed"></label>
+            <label>Completion timeout (seconds)<input data-journey-field="timeoutSeconds" type="number" min="1" max="3600" value="300"></label>
+          </div>
+          <label class="wide-field">Follow-up checks JSON <span class="optional">optional</span><textarea data-journey-field="followUps" placeholder='[{"name":"translation-status","type":"http_status","target":"/translations/{task_id}","expected":"completed","serviceName":"translation-service"}]'></textarea><span class="help">Each check requires <code>name</code>, <code>type</code>, <code>target</code>, and <code>expected</code>; <code>serviceName</code> is optional.</span></label>
+        </div>
+      </article>
+    </template>
   </section>
 
   <section class="wizard-panel" data-step="3" hidden>
@@ -66,7 +106,7 @@
     <div class="review-grid">
       <div class="panel"><h2>Target</h2><dl><div><dt>Source</dt><dd data-review="target_source">Repository</dd></div><div><dt>Repository</dt><dd data-review="repo">Not required</dd></div><div><dt>Service</dt><dd data-review="service_name">Inferred</dd></div><div><dt>Workload</dt><dd data-review="workload_name">Inferred</dd></div><div><dt>Kind</dt><dd data-review="workload_kind">Inferred</dd></div></dl></div>
       <div class="panel"><h2>Environment</h2><dl><div><dt>Mode</dt><dd data-review="execution_mode">Local</dd></div><div><dt>Context</dt><dd data-review="kubernetes_context">Not applicable</dd></div></dl></div>
-      <div class="panel"><h2>Exercise</h2><dl><div><dt>Adapter</dt><dd data-review="journey_type">HTTP</dd></div><div><dt>Journey</dt><dd data-review="traffic_path">/health</dd></div><div><dt>Profile</dt><dd data-review="traffic_profile">Baseline</dd></div><div><dt>Fault</dt><dd data-review="fault_type">Observe only</dd></div><div><dt>Agents</dt><dd data-review="agents_mode">Offline</dd></div></dl></div>
+      <div class="panel"><h2>Exercise</h2><dl><div><dt>Traffic</dt><dd data-review-journeys>1 HTTP journey</dd></div><div><dt>Fault</dt><dd data-review="fault_type">Observe only</dd></div><div><dt>Agents</dt><dd data-review="agents_mode">Offline</dd></div></dl></div>
       <div class="panel safety-card"><h2>Safety contract</h2><ul><li>Explicit context for live execution</li><li>Production-like context names rejected</li><li>Bounded traffic and fault windows</li><li>Cancel triggers rollback and cleanup</li><li>Reports cite registered evidence only</li></ul></div>
     </div>
   </section>

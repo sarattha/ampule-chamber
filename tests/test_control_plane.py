@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import io
 import json
 import subprocess
 import time
@@ -10,12 +12,20 @@ from tempfile import TemporaryDirectory
 from unittest.mock import MagicMock, patch
 
 import yaml
+from fastapi import UploadFile
 from fastapi.testclient import TestClient
+from starlette.datastructures import Headers
 
 from chamber.application.results import analyze_guided_run, build_assessment_result
 from chamber.application.service import ChamberApplication
 from chamber.control_plane.jobs import AssessmentJob, AssessmentJobManager, _command, _last_line
-from chamber.control_plane.server import _json_file, create_app, run_server
+from chamber.control_plane.server import (
+    _json_file,
+    _persist_journey_files,
+    _ui_journeys,
+    create_app,
+    run_server,
+)
 from chamber.runs import (
     RunIndex,
     append_run_event,
@@ -225,6 +235,10 @@ class ControlPlaneTests(unittest.TestCase):
                 new_page = client.get("/new")
                 self.assertIn("Choose the service to assess", new_page.text)
                 self.assertIn("Running Kubernetes service", new_page.text)
+                self.assertIn("data-add-journey", new_page.text)
+                self.assertIn("Expected status", new_page.text)
+                self.assertIn("Custom stages", new_page.text)
+                self.assertIn('enctype="multipart/form-data"', new_page.text)
                 self.assertIn("Content-Security-Policy", new_page.headers)
                 self.assertEqual(client.get("/runs").status_code, 200)
                 self.assertEqual(client.get("/api/v1/capabilities").status_code, 200)
@@ -430,6 +444,221 @@ class ControlPlaneTests(unittest.TestCase):
                 )
                 self.assertTrue(attached_config["service"]["repo"].startswith("kubernetes://"))
 
+                journeys = [
+                    {
+                        "name": "read-backpressure",
+                        "method": "GET",
+                        "path": "/relayna/runtime/backpressure",
+                        "expectedStatus": 204,
+                        "tool": "k6",
+                        "stages": [
+                            {"duration": "5s", "targetVus": 2},
+                            {"duration": "3s", "targetVus": 0},
+                        ],
+                    },
+                    {
+                        "name": "submit-translation",
+                        "method": "POST",
+                        "path": "/translations",
+                        "expectedStatus": 201,
+                        "body": {"text": "Hello", "language_target": "Thai"},
+                        "vus": 1,
+                        "iterations": 2,
+                        "durationSeconds": 10,
+                        "followUps": [
+                            {
+                                "name": "translation-status",
+                                "type": "http_status",
+                                "target": "/translations/{task_id}",
+                                "expected": "completed",
+                                "serviceName": "target-service",
+                            }
+                        ],
+                    },
+                ]
+                multiple = client.post(
+                    "/ui/plan",
+                    data={
+                        "_csrf": csrf,
+                        "repo": str(repo),
+                        "service_name": "target-service",
+                        "execution_mode": "kubernetes",
+                        "runtime_mode": "deploy",
+                        "kubernetes_context": "kind-ampule-chamber",
+                        "service_port": "8080",
+                        "journeys_json": json.dumps(journeys),
+                        "agents_mode": "offline",
+                    },
+                    follow_redirects=False,
+                )
+                self.assertEqual(multiple.status_code, 303, multiple.text)
+                multiple_id = multiple.headers["location"].split("/")[2].split("?")[0]
+                multiple_config = yaml.safe_load(
+                    (workspace / "runs" / multiple_id / "chamber.yaml").read_text(encoding="utf-8")
+                )
+                expected_journeys = [
+                    dict(journey, requestEncoding="json" if "body" in journey else "none")
+                    for journey in journeys
+                ]
+                self.assertEqual(multiple_config["traffic"]["journeys"], expected_journeys)
+
+                ocr_journey = {
+                    "name": "ocr-file-admission",
+                    "method": "POST",
+                    "path": "/ocr",
+                    "expectedStatus": 202,
+                    "requestEncoding": "multipart",
+                    "multipart": {
+                        "fields": {
+                            "engine": "internal",
+                            "mode": "layout",
+                            "force_ocr": False,
+                            "priority": 5,
+                        },
+                        "files": [
+                            {
+                                "field": "file",
+                                "uploadIndex": 0,
+                                "path": "/etc/hosts",
+                                "filename": "stolen.txt",
+                                "contentType": "text/plain",
+                            }
+                        ],
+                    },
+                    "iterations": 1,
+                    "vus": 1,
+                    "durationSeconds": 1,
+                }
+                ocr_plan = client.post(
+                    "/ui/plan",
+                    data={
+                        "_csrf": csrf,
+                        "repo": str(repo),
+                        "service_name": "ocr-service",
+                        "execution_mode": "kubernetes",
+                        "runtime_mode": "deploy",
+                        "kubernetes_context": "kind-ampule-chamber",
+                        "service_port": "8080",
+                        "journeys_json": json.dumps([ocr_journey]),
+                        "agents_mode": "offline",
+                    },
+                    files={"journey_files": ("invoice.pdf", b"%PDF-1.7 test", "application/pdf")},
+                    follow_redirects=False,
+                )
+                self.assertEqual(ocr_plan.status_code, 303, ocr_plan.text)
+                ocr_id = ocr_plan.headers["location"].split("/")[2].split("?")[0]
+                ocr_config = yaml.safe_load(
+                    (workspace / "runs" / ocr_id / "chamber.yaml").read_text(encoding="utf-8")
+                )
+                uploaded_file = ocr_config["traffic"]["journeys"][0]["multipart"]["files"][0]
+                self.assertEqual(uploaded_file["field"], "file")
+                self.assertEqual(uploaded_file["filename"], "invoice.pdf")
+                self.assertEqual(uploaded_file["contentType"], "application/pdf")
+                self.assertEqual(Path(uploaded_file["path"]).read_bytes(), b"%PDF-1.7 test")
+
+                crafted_path = client.post(
+                    "/ui/plan",
+                    data={
+                        "_csrf": csrf,
+                        "repo": str(repo),
+                        "journeys_json": json.dumps(
+                            [
+                                {
+                                    "name": "crafted-path",
+                                    "method": "POST",
+                                    "path": "/upload",
+                                    "expectedStatus": 200,
+                                    "requestEncoding": "multipart",
+                                    "multipart": {
+                                        "fields": {},
+                                        "files": [{"field": "file", "path": "/etc/hosts"}],
+                                    },
+                                    "iterations": 1,
+                                }
+                            ]
+                        ),
+                    },
+                )
+                self.assertEqual(crafted_path.status_code, 400)
+                self.assertIn("require a browser upload", crafted_path.text)
+
+                invalid_status = client.post(
+                    "/ui/plan",
+                    data={
+                        "_csrf": csrf,
+                        "repo": str(repo),
+                        "journeys_json": json.dumps(
+                            [
+                                {
+                                    "name": "invalid",
+                                    "method": "GET",
+                                    "path": "/health",
+                                    "expectedStatus": 700,
+                                }
+                            ]
+                        ),
+                    },
+                )
+                self.assertEqual(invalid_status.status_code, 400)
+                self.assertIn("between 100 and 599", invalid_status.text)
+
+                invalid_loads = (
+                    (
+                        {"stages": [{"duration": "30s", "target": 4}]},
+                        "targetVus must be a non-negative integer",
+                    ),
+                    (
+                        {"stages": [{"duration": "30s", "targetVus": "4"}]},
+                        "targetVus must be a non-negative integer",
+                    ),
+                    ({"vus": 0, "iterations": 1}, "vus must be a positive integer"),
+                )
+                for load, message in invalid_loads:
+                    invalid_journey = {
+                        "name": "invalid-load",
+                        "method": "GET",
+                        "path": "/health",
+                        "expectedStatus": 200,
+                        **load,
+                    }
+                    invalid_load = client.post(
+                        "/ui/plan",
+                        data={
+                            "_csrf": csrf,
+                            "repo": str(repo),
+                            "journeys_json": json.dumps([invalid_journey]),
+                        },
+                    )
+                    self.assertEqual(invalid_load.status_code, 400)
+                    self.assertIn(message, invalid_load.text)
+
+                invalid_follow_up = client.post(
+                    "/ui/plan",
+                    data={
+                        "_csrf": csrf,
+                        "repo": str(repo),
+                        "journeys_json": json.dumps(
+                            [
+                                {
+                                    "name": "invalid-follow-up",
+                                    "method": "GET",
+                                    "path": "/health",
+                                    "expectedStatus": 200,
+                                    "followUps": [
+                                        {
+                                            "name": "status",
+                                            "method": "GET",
+                                            "path": "/status",
+                                        }
+                                    ],
+                                }
+                            ]
+                        ),
+                    },
+                )
+                self.assertEqual(invalid_follow_up.status_code, 400)
+                self.assertIn("requires type", invalid_follow_up.text)
+
                 missing_workload = client.post(
                     "/ui/plan",
                     data={
@@ -440,6 +669,154 @@ class ControlPlaneTests(unittest.TestCase):
                     },
                 )
                 self.assertEqual(missing_workload.status_code, 400)
+
+    def test_request_encoding_validation_and_upload_safety(self) -> None:
+        base = {
+            "name": "request",
+            "method": "POST",
+            "path": "/submit",
+            "expectedStatus": 200,
+            "iterations": 1,
+        }
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            upload_path = root / "invoice.pdf"
+            upload_path.write_bytes(b"%PDF")
+            valid = (
+                dict(base, requestEncoding="form", form={"query": "hello"}),
+                dict(
+                    base,
+                    requestEncoding="raw",
+                    body="hello",
+                    contentType="text/plain",
+                ),
+                dict(
+                    base,
+                    requestEncoding="multipart",
+                    multipart={
+                        "fields": {"mode": "layout"},
+                        "files": [{"field": "file", "path": str(upload_path)}],
+                    },
+                ),
+            )
+            for journey in valid:
+                self.assertEqual(_ui_journeys(json.dumps([journey]))[0], journey)
+
+            invalid = (
+                (dict(base, requestEncoding="xml"), "requestEncoding"),
+                (dict(base, requestEncoding="form", form=[]), "form must be"),
+                (dict(base, requestEncoding="raw", body=1, contentType="text/plain"), "raw body"),
+                (dict(base, requestEncoding="raw", body="hello"), "requires contentType"),
+                (dict(base, requestEncoding="multipart", multipart=[]), "multipart must be"),
+                (
+                    dict(
+                        base,
+                        requestEncoding="multipart",
+                        multipart={"fields": [], "files": []},
+                    ),
+                    "multipart fields",
+                ),
+                (
+                    dict(
+                        base,
+                        requestEncoding="multipart",
+                        multipart={"fields": {}, "files": []},
+                    ),
+                    "requires at least one file",
+                ),
+                (
+                    dict(
+                        base,
+                        requestEncoding="multipart",
+                        multipart={"fields": {}, "files": ["file"]},
+                    ),
+                    "must be a JSON object",
+                ),
+                (
+                    dict(
+                        base,
+                        requestEncoding="multipart",
+                        multipart={"fields": {}, "files": [{"field": "", "path": "x"}]},
+                    ),
+                    "requires field",
+                ),
+                (
+                    dict(
+                        base,
+                        requestEncoding="multipart",
+                        multipart={
+                            "fields": {},
+                            "files": [
+                                {"field": "file", "path": str(upload_path)},
+                                {"field": "file", "path": str(upload_path)},
+                            ],
+                        },
+                    ),
+                    "fields must be unique",
+                ),
+                (
+                    dict(
+                        base,
+                        requestEncoding="multipart",
+                        multipart={"fields": {}, "files": [{"field": "file", "path": "x"}]},
+                    ),
+                    "path is not readable",
+                ),
+                (
+                    dict(
+                        base,
+                        adapter="relayna",
+                        requestEncoding="multipart",
+                        multipart={"fields": {}, "files": []},
+                    ),
+                    "supports JSON requests only",
+                ),
+            )
+            for journey, message in invalid:
+                with self.assertRaisesRegex(ValueError, message):
+                    _ui_journeys(json.dumps([journey]))
+
+            def uploaded(content: bytes) -> UploadFile:
+                return UploadFile(
+                    io.BytesIO(content),
+                    filename="invoice.pdf",
+                    headers=Headers({"content-type": "application/pdf"}),
+                )
+
+            with self.assertRaisesRegex(ValueError, "valid JSON"):
+                asyncio.run(_persist_journey_files(root, "not-json", [uploaded(b"data")]))
+            with self.assertRaisesRegex(ValueError, "JSON array"):
+                asyncio.run(_persist_journey_files(root, "{}", [uploaded(b"data")]))
+            crafted_path = json.dumps(
+                [
+                    {
+                        "multipart": {
+                            "files": [{"field": "file", "path": "/etc/hosts"}],
+                        }
+                    }
+                ]
+            )
+            with self.assertRaisesRegex(ValueError, "require a browser upload"):
+                asyncio.run(_persist_journey_files(root, crafted_path, []))
+            with self.assertRaisesRegex(ValueError, "Every browser-uploaded"):
+                asyncio.run(_persist_journey_files(root, "[]", [uploaded(b"data")]))
+            missing_reference = json.dumps(
+                [
+                    {
+                        "multipart": {
+                            "files": [{"field": "file", "uploadIndex": 1}],
+                        }
+                    }
+                ]
+            )
+            with self.assertRaisesRegex(ValueError, "unavailable browser upload"):
+                asyncio.run(_persist_journey_files(root, missing_reference, [uploaded(b"data")]))
+            empty_file = missing_reference.replace('"uploadIndex": 1', '"uploadIndex": 0')
+            with self.assertRaisesRegex(ValueError, "must not be empty"):
+                asyncio.run(_persist_journey_files(root, empty_file, [uploaded(b"")]))
+            with patch("chamber.control_plane.server.MAX_UI_UPLOAD_BYTES", 2):
+                with self.assertRaisesRegex(ValueError, "limited to 128 MiB"):
+                    asyncio.run(_persist_journey_files(root, empty_file, [uploaded(b"data")]))
 
     def test_json_plan_start_job_cancel_and_event_endpoints(self) -> None:
         with TemporaryDirectory() as tmp:

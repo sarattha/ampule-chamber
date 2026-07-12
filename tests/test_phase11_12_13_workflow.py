@@ -1084,6 +1084,60 @@ class Phase13OneCommandAssessmentTests(unittest.TestCase):
         self.assertIn("runJourney('health_check_1')", script)
         self.assertIn("runJourney('health_check_2')", script)
 
+    def test_kubernetes_k6_script_supports_multipart_form_and_raw_requests(self) -> None:
+        with TemporaryDirectory() as tmp:
+            upload = Path(tmp) / "invoice.pdf"
+            upload.write_bytes(b"%PDF-1.7 test")
+            script = workflow._k6_script_for_journeys(
+                (
+                    {
+                        "name": "ocr-upload",
+                        "method": "POST",
+                        "path": "/ocr",
+                        "expectedStatus": 202,
+                        "requestEncoding": "multipart",
+                        "multipart": {
+                            "fields": {"engine": "internal", "mode": "layout"},
+                            "files": [
+                                {
+                                    "field": "file",
+                                    "path": str(upload),
+                                    "filename": "invoice.pdf",
+                                    "contentType": "application/pdf",
+                                }
+                            ],
+                        },
+                        "iterations": 1,
+                    },
+                    {
+                        "name": "form-request",
+                        "method": "POST",
+                        "path": "/form",
+                        "expectedStatus": 200,
+                        "requestEncoding": "form",
+                        "form": {"query": "hello", "limit": 10},
+                        "iterations": 1,
+                    },
+                    {
+                        "name": "raw-request",
+                        "method": "POST",
+                        "path": "/raw",
+                        "expectedStatus": 204,
+                        "requestEncoding": "raw",
+                        "body": "plain text",
+                        "contentType": "text/plain",
+                        "iterations": 1,
+                    },
+                ),
+                base_url="http://127.0.0.1:18891",
+            )
+
+        self.assertIn(f"open({json.dumps(str(upload))}, 'b')", script)
+        self.assertIn("http.file(", script)
+        self.assertIn('"field": "file"', script)
+        self.assertIn("application/x-www-form-urlencoded", script)
+        self.assertIn("'Content-Type': journey.contentType", script)
+
     def test_prometheus_query_url_rejects_non_http_urls(self) -> None:
         result = workflow._prometheus_query(
             "file:///etc/passwd",
