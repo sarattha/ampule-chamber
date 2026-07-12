@@ -186,6 +186,7 @@ k6; Relayna journeys use the stateful task-lifecycle executor.
 | Path | `path` | Absolute endpoint path beginning with `/`, relative to the selected Service. |
 | Expected status | `expectedStatus` | Exact HTTP status required for the request check to pass. |
 | Tool | `tool` | Traffic tool identifier. Keep `k6` for ordinary HTTP journeys. |
+| Request encoding | `requestEncoding` | No body, JSON, multipart form plus file, URL-encoded form, or raw text. |
 | Generated text bytes | `textBytes` | Optional size to which the request body's `text` value is repeated and truncated. `0` disables expansion. |
 | Request body JSON | `body` | Optional JSON request payload; Relayna requires a non-empty object. |
 | Follow-up checks JSON | `followUps` | Optional post-request checks included in onboarding and readiness planning. |
@@ -203,6 +204,71 @@ When an HTTP request body contains `task_id`, Chamber adds the VU, iteration,
 and timestamp to keep generated task IDs unique. When `textBytes` is greater
 than zero and `body.text` exists, Chamber repeats and truncates that text to the
 requested size. This is useful for bounded large-request and memory tests.
+
+### Request encodings and file uploads
+
+**No body** sends the request without a payload. This is the normal choice for
+health, readiness, and read-only status endpoints.
+
+**JSON** serializes the Request body JSON value and sends
+`Content-Type: application/json`. JSON values may contain strings, numbers,
+booleans, arrays, nested objects, or `null`; the overall Relayna submission
+body must be a non-empty object.
+
+**Multipart form + file** stores the browser-selected file in Chamber's
+workspace and generates a k6 multipart request using `http.file`. Configure:
+
+- **File field name**, such as `file`, matching the service's multipart API.
+- **Upload file**, the real local file sent during the assessment. UI uploads
+  are limited to 128 MiB and empty files are rejected.
+- **Multipart form fields JSON**, an object containing the other form values.
+
+For the `ocr_service` contract inspected on `vm-machine01`, the request is:
+
+```yaml
+name: ocr-file-admission
+method: POST
+path: /ocr
+expectedStatus: 202
+requestEncoding: multipart
+multipart:
+  fields:
+    engine: internal
+    mode: layout
+    force_ocr: false
+    fallback: docint
+    priority: 5
+  files:
+    - field: file
+      path: /durable/chamber/workspace/uploads/<id>/invoice.pdf
+      filename: invoice.pdf
+      contentType: application/pdf
+vus: 1
+iterations: 1
+durationSeconds: 1
+```
+
+The OCR service accepts PDF, PNG, JPEG, TIFF, BMP, GIF, and WebP inputs. Its
+`file` field is required; `task_id`, `engine`, `mode`, `force_ocr`, `fallback`,
+and `priority` are ordinary multipart form fields. The expected admission
+response is `202`.
+
+The generated YAML stores a durable workspace path, not the browser's original
+local path. The file must remain readable by the Chamber process when k6 starts.
+For in-cluster Chamber, keep workspace storage on the configured PVC.
+
+**URL-encoded form** serializes the Form fields JSON object as
+`application/x-www-form-urlencoded`. Use it for APIs that expect ordinary HTML
+form submissions without files.
+
+**Raw text** sends the Raw request body without JSON conversion and uses the
+configured Content type, such as `text/plain`, `application/xml`, or a custom
+media type.
+
+Relayna lifecycle journeys currently accept JSON submission bodies. Use an
+HTTP multipart journey to test file admission and record lifecycle follow-up
+expectations separately. Stateful multipart Relayna submission is not yet
+enabled.
 
 ### HTTP load models
 

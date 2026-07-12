@@ -15,7 +15,7 @@ from typing import Annotated, Any, cast
 from urllib.parse import urlencode
 
 import yaml
-from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -41,6 +41,7 @@ PACKAGE_DIR = Path(__file__).resolve().parent
 TEMPLATE_DIR = PACKAGE_DIR / "templates"
 STATIC_DIR = PACKAGE_DIR / "static"
 CSRF_COOKIE = "ampule_csrf"
+MAX_UI_UPLOAD_BYTES = 128 * 1024 * 1024
 
 
 class InspectRequest(BaseModel):
@@ -219,6 +220,7 @@ def create_app(
         namespace: Annotated[str, Form()] = "",
         service_port: Annotated[int, Form()] = 8080,
         journeys_json: Annotated[str, Form()] = "",
+        journey_files: Annotated[list[UploadFile] | None, File()] = None,
         journey_type: Annotated[str, Form()] = "http",
         traffic_path: Annotated[str, Form()] = "/health",
         traffic_profile: Annotated[str, Form()] = "baseline",
@@ -231,7 +233,13 @@ def create_app(
         agents_mode: Annotated[str, Form()] = "offline",
     ) -> Response:
         _check_csrf(request, csrf)
+        upload_dir: Path | None = None
         try:
+            journeys_json, upload_dir = await _persist_journey_files(
+                workspace,
+                journeys_json,
+                journey_files or [],
+            )
             run_dir = _plan_from_values(
                 application,
                 workspace=workspace,
@@ -257,6 +265,8 @@ def create_app(
                 agents_mode=agents_mode,
             )
         except (OSError, ValueError, RuntimeError) as exc:
+            if upload_dir is not None:
+                shutil.rmtree(upload_dir, ignore_errors=True)
             return templates.TemplateResponse(
                 request=request,
                 name="new.html",
@@ -739,11 +749,23 @@ def _ui_journeys(raw: str) -> list[dict[str, Any]]:
         if expected_status < 100 or expected_status > 599:
             raise ValueError(f"Traffic journey {index} expectedStatus must be between 100 and 599")
         adapter = str(journey.get("adapter", "http"))
+        encoding = str(journey.get("requestEncoding", "json" if "body" in journey else "none"))
+        if encoding not in {"none", "json", "multipart", "form", "raw"}:
+            raise ValueError(
+                f"Traffic journey {index} requestEncoding must be "
+                "none, json, multipart, form, or raw"
+            )
+        journey["requestEncoding"] = encoding
         adapters.add(adapter)
         if adapter == "http":
             journey.pop("adapter", None)
             _validate_http_load(journey, index=index)
+            _validate_request_encoding(journey, index=index)
         elif adapter == "relayna":
+            if encoding not in {"none", "json"}:
+                raise ValueError(
+                    f"Traffic journey {index} Relayna adapter currently supports JSON requests only"
+                )
             validate_relayna_journey(journey)
         else:
             raise ValueError(f"Traffic journey {index} adapter must be http or relayna")
@@ -755,6 +777,116 @@ def _ui_journeys(raw: str) -> list[dict[str, Any]]:
     if len(adapters) > 1:
         raise ValueError("One assessment cannot mix HTTP and Relayna traffic journeys")
     return journeys
+
+
+async def _persist_journey_files(
+    workspace: Path,
+    raw: str,
+    uploads: list[UploadFile],
+) -> tuple[str, Path | None]:
+    if not raw.strip() or not uploads:
+        return raw, None
+    try:
+        journeys = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError("Traffic journeys must be valid JSON") from exc
+    if not isinstance(journeys, list):
+        raise ValueError("Traffic journeys must be a JSON array")
+    upload_dir = workspace.resolve() / "uploads" / uuid.uuid4().hex
+    upload_dir.mkdir(parents=True, exist_ok=False)
+    referenced: set[int] = set()
+    try:
+        for journey in journeys:
+            if not isinstance(journey, dict):
+                continue
+            multipart = journey.get("multipart")
+            if not isinstance(multipart, dict):
+                continue
+            files = multipart.get("files")
+            if not isinstance(files, list):
+                continue
+            for item in files:
+                if not isinstance(item, dict):
+                    continue
+                upload_index = item.pop("uploadIndex", None)
+                if not isinstance(upload_index, int) or isinstance(upload_index, bool):
+                    raise ValueError("Multipart file is missing its browser upload reference")
+                if upload_index < 0 or upload_index >= len(uploads):
+                    raise ValueError("Multipart file references an unavailable browser upload")
+                if upload_index in referenced:
+                    raise ValueError("Multipart browser upload cannot be reused")
+                referenced.add(upload_index)
+                upload = uploads[upload_index]
+                filename = Path(upload.filename or "upload.bin").name or "upload.bin"
+                destination = upload_dir / f"{upload_index}-{filename}"
+                size = 0
+                with destination.open("wb") as stream:
+                    while chunk := await upload.read(1024 * 1024):
+                        size += len(chunk)
+                        if size > MAX_UI_UPLOAD_BYTES:
+                            raise ValueError(
+                                "Browser-uploaded journey files are limited to 128 MiB"
+                            )
+                        stream.write(chunk)
+                if size == 0:
+                    raise ValueError(f"Multipart file {filename!r} must not be empty")
+                item.update(
+                    {
+                        "path": str(destination),
+                        "filename": filename,
+                        "contentType": upload.content_type or "application/octet-stream",
+                    }
+                )
+        if referenced != set(range(len(uploads))):
+            raise ValueError(
+                "Every browser-uploaded journey file must belong to a multipart request"
+            )
+    except Exception:
+        shutil.rmtree(upload_dir, ignore_errors=True)
+        raise
+    return json.dumps(journeys), upload_dir
+
+
+def _validate_request_encoding(journey: dict[str, Any], *, index: int) -> None:
+    encoding = str(journey["requestEncoding"])
+    if encoding == "multipart":
+        multipart = journey.get("multipart")
+        if not isinstance(multipart, dict):
+            raise ValueError(f"Traffic journey {index} multipart must be a JSON object")
+        fields = multipart.get("fields", {})
+        if not isinstance(fields, dict):
+            raise ValueError(f"Traffic journey {index} multipart fields must be a JSON object")
+        files = multipart.get("files")
+        if not isinstance(files, list) or not files:
+            raise ValueError(f"Traffic journey {index} multipart requires at least one file")
+        seen_fields: set[str] = set()
+        for file_index, item in enumerate(files, start=1):
+            if not isinstance(item, dict):
+                raise ValueError(
+                    f"Traffic journey {index} multipart file {file_index} must be a JSON object"
+                )
+            field = item.get("field")
+            path = item.get("path")
+            if not isinstance(field, str) or not field.strip():
+                raise ValueError(
+                    f"Traffic journey {index} multipart file {file_index} requires field"
+                )
+            if field in seen_fields:
+                raise ValueError(f"Traffic journey {index} multipart file fields must be unique")
+            seen_fields.add(field)
+            if not isinstance(path, str) or not Path(path).is_file():
+                raise ValueError(
+                    f"Traffic journey {index} multipart file {file_index} path is not readable"
+                )
+    elif encoding == "form":
+        if not isinstance(journey.get("form"), dict):
+            raise ValueError(f"Traffic journey {index} form must be a JSON object")
+    elif encoding == "raw":
+        if not isinstance(journey.get("body"), str):
+            raise ValueError(f"Traffic journey {index} raw body must be a string")
+        content_type = journey.get("contentType")
+        if not isinstance(content_type, str) or not content_type.strip():
+            raise ValueError(f"Traffic journey {index} raw request requires contentType")
 
 
 def _validate_http_load(journey: dict[str, Any], *, index: int) -> None:

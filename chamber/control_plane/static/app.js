@@ -59,11 +59,24 @@
       const adapter = field(card, "adapter").value;
       const relayna = adapter === "relayna";
       const loadModel = field(card, "loadModel").value;
+      const requestEncoding = field(card, "requestEncoding").value;
       card.querySelector("[data-relayna-settings]").hidden = !relayna;
       card.querySelector("[data-load-profile]").hidden = loadModel !== "profile" || relayna;
       card.querySelector("[data-custom-stages]").hidden = loadModel !== "stages" || relayna;
       card.querySelector("[data-fixed-iterations]").hidden = loadModel !== "iterations" && !relayna;
+      card.querySelector("[data-json-request]").hidden = requestEncoding !== "json";
+      card.querySelector("[data-multipart-request]").hidden = requestEncoding !== "multipart";
+      card.querySelector("[data-form-request]").hidden = requestEncoding !== "form";
+      card.querySelector("[data-raw-request]").hidden = requestEncoding !== "raw";
+      card.querySelector("[data-text-bytes]").hidden = requestEncoding !== "json";
+      field(card, "requestEncoding").disabled = relayna;
       field(card, "body").required = relayna;
+      field(card, "file").disabled = requestEncoding !== "multipart";
+      field(card, "file").required = requestEncoding === "multipart";
+      field(card, "multipartFields").required = requestEncoding === "multipart";
+      field(card, "form").required = requestEncoding === "form";
+      field(card, "rawBody").required = requestEncoding === "raw";
+      field(card, "contentType").required = requestEncoding === "raw";
       field(card, "eventsPath").required = relayna;
       field(card, "taskIdPath").required = relayna;
       if (resetDefaults) {
@@ -71,6 +84,7 @@
         field(card, "path").value = relayna ? "/translations" : "/health";
         field(card, "expectedStatus").value = relayna ? "202" : "200";
         field(card, "loadModel").value = relayna ? "iterations" : "profile";
+        field(card, "requestEncoding").value = relayna ? "json" : "none";
         if (relayna && !field(card, "body").value.trim()) {
           field(card, "body").value = '{"text":"Hello from Ampule Chamber.","language_target":"Thai","priority":5}';
         }
@@ -88,6 +102,7 @@
       card.addEventListener("input", () => syncJourney(card));
       field(card, "adapter").addEventListener("change", () => syncJourney(card, {resetDefaults: true}));
       field(card, "loadModel").addEventListener("change", () => syncJourney(card));
+      field(card, "requestEncoding").addEventListener("change", () => syncJourney(card));
       card.querySelector("[data-remove-journey]").addEventListener("click", () => {
         card.remove();
         renumberJourneys();
@@ -103,22 +118,50 @@
       if (!cards.length) throw new Error("Add at least one traffic journey.");
       const adapters = new Set(cards.map(card => field(card, "adapter").value));
       if (adapters.size > 1) throw new Error("One assessment cannot mix HTTP and Relayna journeys.");
+      let uploadIndex = 0;
       const journeys = cards.map((card, index) => {
         const adapter = field(card, "adapter").value;
         const loadModel = field(card, "loadModel").value;
+        const requestEncoding = field(card, "requestEncoding").value;
         const journey = {
           name: field(card, "name").value.trim(),
           method: field(card, "method").value,
           path: field(card, "path").value.trim(),
           expectedStatus: Number(field(card, "expectedStatus").value),
+          requestEncoding,
         };
         const tool = field(card, "tool").value.trim();
         if (tool) journey.tool = tool;
         if (adapter === "relayna") journey.adapter = "relayna";
-        const body = parseJson(field(card, "body"), `Journey ${index + 1} request body`, {required: adapter === "relayna"});
-        if (body !== null) journey.body = body;
-        const textBytes = Number(field(card, "textBytes").value);
-        if (textBytes > 0) journey.textBytes = textBytes;
+        if (requestEncoding === "json") {
+          const body = parseJson(field(card, "body"), `Journey ${index + 1} request body`, {required: adapter === "relayna"});
+          if (body !== null) journey.body = body;
+          const textBytes = Number(field(card, "textBytes").value);
+          if (textBytes > 0) journey.textBytes = textBytes;
+        } else if (requestEncoding === "multipart") {
+          const fields = parseJson(field(card, "multipartFields"), `Journey ${index + 1} multipart fields`, {required: true});
+          if (!fields || Array.isArray(fields) || typeof fields !== "object") {
+            field(card, "multipartFields").setCustomValidity("Multipart fields must be a JSON object.");
+            throw new Error("Multipart fields must be a JSON object.");
+          }
+          const upload = field(card, "file").files[0];
+          if (!upload) throw new Error(`Journey ${index + 1} requires an uploaded file.`);
+          journey.multipart = {
+            fields,
+            files: [{field: field(card, "fileField").value.trim(), uploadIndex}],
+          };
+          uploadIndex += 1;
+        } else if (requestEncoding === "form") {
+          const formFields = parseJson(field(card, "form"), `Journey ${index + 1} form fields`, {required: true});
+          if (!formFields || Array.isArray(formFields) || typeof formFields !== "object") {
+            field(card, "form").setCustomValidity("Form fields must be a JSON object.");
+            throw new Error("Form fields must be a JSON object.");
+          }
+          journey.form = formFields;
+        } else if (requestEncoding === "raw") {
+          journey.body = field(card, "rawBody").value;
+          journey.contentType = field(card, "contentType").value.trim();
+        }
         if (adapter === "relayna" || loadModel === "iterations") {
           journey.vus = Number(field(card, "vus").value);
           journey.iterations = Number(field(card, "iterations").value);

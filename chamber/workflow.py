@@ -1418,6 +1418,7 @@ def _traffic_journeys(traffic: dict[str, Any]) -> tuple[dict[str, Any], ...]:
 def _k6_script_for_journeys(journeys: tuple[dict[str, Any], ...], *, base_url: str) -> str:
     journey_payloads = []
     scenario_options: dict[str, Any] = {}
+    file_sources: dict[str, str] = {}
     start_after_seconds = 0
     for index, journey in enumerate(journeys, start=1):
         name = _journey_name(journey)
@@ -1443,6 +1444,40 @@ def _k6_script_for_journeys(journeys: tuple[dict[str, Any], ...], *, base_url: s
             scenario["startTime"] = f"{start_after_seconds}s"
         scenario_options[function_name] = scenario
         start_after_seconds += max(duration_seconds, 1)
+        request_encoding = str(
+            journey.get("requestEncoding", "json" if "body" in journey else "none")
+        )
+        multipart_payload: dict[str, Any] | None = None
+        multipart = journey.get("multipart")
+        if request_encoding == "multipart" and isinstance(multipart, dict):
+            multipart_files = []
+            raw_files = multipart.get("files", [])
+            if isinstance(raw_files, list):
+                for file_index, item in enumerate(raw_files, start=1):
+                    if not isinstance(item, dict):
+                        continue
+                    file_item = _mapping(
+                        item,
+                        "traffic.journeys[].multipart.files[]",
+                    )
+                    source_key = f"{function_name}_file_{file_index}"
+                    file_sources[source_key] = str(file_item["path"])
+                    multipart_files.append(
+                        {
+                            "field": str(file_item["field"]),
+                            "sourceKey": source_key,
+                            "filename": str(
+                                file_item.get("filename") or Path(str(file_item["path"])).name
+                            ),
+                            "contentType": str(
+                                file_item.get("contentType") or "application/octet-stream"
+                            ),
+                        }
+                    )
+            multipart_payload = {
+                "fields": multipart.get("fields", {}),
+                "files": multipart_files,
+            }
         journey_payloads.append(
             {
                 "key": function_name,
@@ -1451,7 +1486,11 @@ def _k6_script_for_journeys(journeys: tuple[dict[str, Any], ...], *, base_url: s
                 "method": str(journey.get("method", "GET")).upper(),
                 "url": base_url + str(journey.get("path", "/health")),
                 "expectedStatus": int(journey.get("expectedStatus", 200)),
+                "requestEncoding": request_encoding,
                 "body": journey.get("body"),
+                "contentType": journey.get("contentType"),
+                "form": journey.get("form"),
+                "multipart": multipart_payload,
                 "textBytes": int(journey.get("textBytes", 0)),
             }
         )
@@ -1465,35 +1504,63 @@ def _k6_script_for_journeys(journeys: tuple[dict[str, Any], ...], *, base_url: s
         {item["key"]: item for item in journey_payloads},
         sort_keys=True,
     )
+    files_javascript = ", ".join(
+        f"{json.dumps(key)}: open({json.dumps(path)}, 'b')" for key, path in file_sources.items()
+    )
     return "\n".join(
         (
             "import http from 'k6/http';",
             "import { check } from 'k6';",
             f"export const options = {options_json};",
             f"const JOURNEYS = {journeys_json};",
-            "function requestBody(journey) {",
-            "  if (!journey.body) { return null; }",
-            "  const body = JSON.parse(JSON.stringify(journey.body));",
-            "  if (body.task_id) {",
-            "    body.task_id = `${body.task_id}-${__VU}-${__ITER}-${Date.now()}`;",
+            f"const FILES = {{{files_javascript}}};",
+            "function requestData(journey) {",
+            "  const params = { tags: { journey: journey.name } };",
+            "  if (journey.requestEncoding === 'multipart') {",
+            "    const body = JSON.parse(JSON.stringify(journey.multipart.fields || {}));",
+            "    if (body.task_id) {",
+            "      body.task_id = `${body.task_id}-${__VU}-${__ITER}-${Date.now()}`;",
+            "    }",
+            "    journey.multipart.files.forEach(file => {",
+            "      body[file.field] = http.file(",
+            "        FILES[file.sourceKey], file.filename, file.contentType",
+            "      );",
+            "    });",
+            "    return { body, params };",
             "  }",
-            "  if (journey.textBytes && body.text) {",
-            "    const repeats = Math.ceil(journey.textBytes / body.text.length);",
-            "    body.text = body.text.repeat(repeats).slice(0, journey.textBytes);",
+            "  if (journey.requestEncoding === 'form') {",
+            "    params.headers = { 'Content-Type': 'application/x-www-form-urlencoded' };",
+            "    const body = Object.entries(journey.form || {}).map(([key, value]) =>",
+            "      `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`",
+            "    ).join('&');",
+            "    return { body, params };",
             "  }",
-            "  return JSON.stringify(body);",
+            "  if (journey.requestEncoding === 'raw') {",
+            "    params.headers = { 'Content-Type': journey.contentType };",
+            "    return { body: journey.body || '', params };",
+            "  }",
+            "  if (journey.requestEncoding === 'json') {",
+            "    params.headers = { 'Content-Type': 'application/json' };",
+            "    if (!journey.body) { return { body: null, params }; }",
+            "    const body = JSON.parse(JSON.stringify(journey.body));",
+            "    if (body.task_id) {",
+            "      body.task_id = `${body.task_id}-${__VU}-${__ITER}-${Date.now()}`;",
+            "    }",
+            "    if (journey.textBytes && body.text) {",
+            "      const repeats = Math.ceil(journey.textBytes / body.text.length);",
+            "      body.text = body.text.repeat(repeats).slice(0, journey.textBytes);",
+            "    }",
+            "    return { body: JSON.stringify(body), params };",
+            "  }",
+            "  return { body: null, params };",
             "}",
             "function runJourney(key) {",
             "  const journey = JOURNEYS[key];",
             "  const name = journey.name;",
-            "  const body = requestBody(journey);",
-            "  const params = {",
-            "    headers: { 'Content-Type': 'application/json' },",
-            "    tags: { journey: name },",
-            "  };",
-            "  const res = body === null",
-            "    ? http.request(journey.method, journey.url, null, params)",
-            "    : http.request(journey.method, journey.url, body, params);",
+            "  const request = requestData(journey);",
+            "  const res = http.request(",
+            "    journey.method, journey.url, request.body, request.params",
+            "  );",
             "  check(res, {",
             "    [`${name} status is expected`]: r => r.status === journey.expectedStatus,",
             "  });",

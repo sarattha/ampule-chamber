@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}New assessment · Ampule Chamber{% endblock %}
 {% block content %}
-<form method="post" action="/ui/plan" class="wizard" data-wizard>
+<form method="post" action="/ui/plan" enctype="multipart/form-data" class="wizard" data-wizard>
   <input type="hidden" name="_csrf" value="{{ csrf_token }}">
   <div class="wizard-steps" aria-label="Assessment steps">
     <button type="button" class="wizard-step active" data-step-button="0"><span>1</span> Target</button>
@@ -75,8 +75,19 @@
             <label>Iterations<input data-journey-field="iterations" type="number" min="1" value="1"></label>
             <label>Duration seconds<input data-journey-field="durationSeconds" type="number" min="1" value="1"></label>
           </div>
-          <label>Generated text bytes<input data-journey-field="textBytes" type="number" min="0" value="0"><span class="help">Optionally expands the request body’s <code>text</code> field.</span></label>
-          <label class="wide-field">Request body JSON <span class="optional">optional for HTTP</span><textarea data-journey-field="body" placeholder='{"message":"hello"}'></textarea></label>
+          <label data-text-bytes>Generated text bytes<input data-journey-field="textBytes" type="number" min="0" value="0"><span class="help">Optionally expands the request body’s <code>text</code> field.</span></label>
+          <label>Request encoding<select data-journey-field="requestEncoding"><option value="none">No body</option><option value="json" selected>JSON</option><option value="multipart">Multipart form + file</option><option value="form">URL-encoded form</option><option value="raw">Raw text</option></select></label>
+          <label class="wide-field" data-json-request>Request body JSON <span class="optional">optional for HTTP</span><textarea data-journey-field="body" placeholder='{"message":"hello"}'></textarea></label>
+          <div class="form-grid nested-grid wide-field" data-multipart-request hidden>
+            <label>File field name<input data-journey-field="fileField" value="file" placeholder="file"></label>
+            <label>Upload file<input name="journey_files" data-journey-field="file" type="file" accept=".pdf,.png,.jpg,.jpeg,.tiff,.tif,.bmp,.gif,.webp"></label>
+            <label class="wide-field">Multipart form fields JSON<textarea data-journey-field="multipartFields" placeholder='{"engine":"internal","mode":"layout","force_ocr":false,"priority":5}'></textarea><span class="help">The browser stores the selected file in Chamber workspace storage; the generated config references that durable path.</span></label>
+          </div>
+          <label class="wide-field" data-form-request hidden>URL-encoded form fields JSON<textarea data-journey-field="form" placeholder='{"query":"hello","limit":10}'></textarea></label>
+          <div class="form-grid nested-grid wide-field" data-raw-request hidden>
+            <label>Content type<input data-journey-field="contentType" value="text/plain" placeholder="text/plain"></label>
+            <label class="wide-field">Raw request body<textarea data-journey-field="rawBody" placeholder="raw request content"></textarea></label>
+          </div>
           <div class="form-grid nested-grid wide-field relayna-settings" data-relayna-settings hidden>
             <label>Events path<input data-journey-field="eventsPath" value="/events/{task_id}"></label>
             <label>Task ID response path<input data-journey-field="taskIdPath" value="task_id"></label>
