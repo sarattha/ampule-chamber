@@ -225,6 +225,9 @@ class ControlPlaneTests(unittest.TestCase):
                 new_page = client.get("/new")
                 self.assertIn("Choose the service to assess", new_page.text)
                 self.assertIn("Running Kubernetes service", new_page.text)
+                self.assertIn("data-add-journey", new_page.text)
+                self.assertIn("Expected status", new_page.text)
+                self.assertIn("Custom stages", new_page.text)
                 self.assertIn("Content-Security-Policy", new_page.headers)
                 self.assertEqual(client.get("/runs").status_code, 200)
                 self.assertEqual(client.get("/api/v1/capabilities").status_code, 200)
@@ -429,6 +432,78 @@ class ControlPlaneTests(unittest.TestCase):
                     [{"name": "payments-worker", "role": "target", "kind": "StatefulSet"}],
                 )
                 self.assertTrue(attached_config["service"]["repo"].startswith("kubernetes://"))
+
+                journeys = [
+                    {
+                        "name": "read-backpressure",
+                        "method": "GET",
+                        "path": "/relayna/runtime/backpressure",
+                        "expectedStatus": 204,
+                        "tool": "k6",
+                        "stages": [
+                            {"duration": "5s", "targetVus": 2},
+                            {"duration": "3s", "targetVus": 0},
+                        ],
+                    },
+                    {
+                        "name": "submit-translation",
+                        "method": "POST",
+                        "path": "/translations",
+                        "expectedStatus": 201,
+                        "body": {"text": "Hello", "language_target": "Thai"},
+                        "vus": 1,
+                        "iterations": 2,
+                        "durationSeconds": 10,
+                        "followUps": [
+                            {
+                                "name": "translation-status",
+                                "method": "GET",
+                                "path": "/translations/{task_id}",
+                            }
+                        ],
+                    },
+                ]
+                multiple = client.post(
+                    "/ui/plan",
+                    data={
+                        "_csrf": csrf,
+                        "repo": str(repo),
+                        "service_name": "target-service",
+                        "execution_mode": "kubernetes",
+                        "runtime_mode": "deploy",
+                        "kubernetes_context": "kind-ampule-chamber",
+                        "service_port": "8080",
+                        "journeys_json": json.dumps(journeys),
+                        "agents_mode": "offline",
+                    },
+                    follow_redirects=False,
+                )
+                self.assertEqual(multiple.status_code, 303, multiple.text)
+                multiple_id = multiple.headers["location"].split("/")[2].split("?")[0]
+                multiple_config = yaml.safe_load(
+                    (workspace / "runs" / multiple_id / "chamber.yaml").read_text(encoding="utf-8")
+                )
+                self.assertEqual(multiple_config["traffic"]["journeys"], journeys)
+
+                invalid_status = client.post(
+                    "/ui/plan",
+                    data={
+                        "_csrf": csrf,
+                        "repo": str(repo),
+                        "journeys_json": json.dumps(
+                            [
+                                {
+                                    "name": "invalid",
+                                    "method": "GET",
+                                    "path": "/health",
+                                    "expectedStatus": 700,
+                                }
+                            ]
+                        ),
+                    },
+                )
+                self.assertEqual(invalid_status.status_code, 400)
+                self.assertIn("between 100 and 599", invalid_status.text)
 
                 missing_workload = client.post(
                     "/ui/plan",

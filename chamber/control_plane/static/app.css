@@ -112,6 +112,22 @@ input::placeholder { color: #99a49d; }
 .field-note { display: flex; flex-direction: column; justify-content: center; padding: 13px 14px; border: 1px dashed #cbd8cf; border-radius: 9px; }
 .field-note strong { font-size: .78rem; }
 .field-note span { margin-top: 4px; color: var(--muted); font-size: .7rem; }
+.exercise-settings { align-items: start; }
+.journey-editor { margin-top: 26px; }
+.section-heading, .journey-heading { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.section-heading { margin-bottom: 14px; }
+.section-heading h2 { margin: 0 0 5px; font-size: 1.05rem; }
+.section-heading p { margin: 0; color: var(--muted); font-size: .74rem; }
+.journey-list { display: grid; gap: 16px; }
+.journey-card { padding: 20px; }
+.journey-heading { margin-bottom: 18px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.journey-heading h3 { margin: 4px 0 0; font-size: 1rem; }
+.journey-heading .eyebrow { font-size: .65rem; }
+.journey-card .wide-field, .journey-card .nested-grid { grid-column: 1 / -1; }
+.nested-grid { padding: 16px; border: 1px solid var(--line); border-radius: 9px; background: #f8faf8; }
+.relayna-settings { border-color: #bdd7c8; background: #f8fcf9; }
+.journey-card code { font-size: .68rem; }
+.journey-card [hidden] { display: none !important; }
 .discovery-card { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr auto; gap: 12px 20px; align-items: center; padding: 18px; border: 1px solid #bdd7c8; border-radius: 10px; background: #f8fcf9; }
 .discovery-card h2 { margin: 4px 0; font-size: 1.05rem; }
 .discovery-card p { margin: 0; }

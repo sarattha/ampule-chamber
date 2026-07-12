@@ -114,10 +114,13 @@ custom security/resource settings are needed.
 2. **Environment:** choose a local artifact assessment, isolated Kubernetes
    deploy, or attach to an existing non-production namespace. Live runs require
    an explicit context.
-3. **Exercise:** choose a smoke, baseline, or stress traffic template; set the
-   journey path; optionally configure a Relayna task lifecycle (`202` response,
-   task ID extraction, SSE terminal-status wait); and optionally choose an
-   attach-only, allow-listed fault.
+3. **Exercise:** add one or more HTTP or Relayna traffic journeys. Each journey
+   has its own method, path, expected HTTP status, body, and load model. HTTP
+   journeys support reusable profiles, custom stages, or fixed iterations;
+   Relayna journeys additionally configure task ID extraction, SSE terminal
+   statuses, concurrency, iterations, and completion timeout. One assessment
+   cannot mix HTTP and Relayna adapters. Optionally choose an attach-only,
+   allow-listed fault.
 4. **Review:** inspect the safety receipt and generated plan before any live
    action.
 5. **Run:** observe state and evidence updates. Cancellation sends an interrupt
@@ -135,7 +138,7 @@ run and SHA-256 digest. Evidence download rejects unknown, cross-run, missing,
 or modified entries.
 
 Relayna lifecycle runs additionally persist `relayna-summary.json` with one
-bounded record per task. The UI defaults Relayna journeys to a single smoke
+bounded record per task. The UI defaults each new Relayna journey to one
 iteration because task execution may invoke costly downstream services.
 
 Readiness is scored only after required live Kubernetes, traffic, and

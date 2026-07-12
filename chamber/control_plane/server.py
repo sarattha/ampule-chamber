@@ -34,6 +34,7 @@ from chamber.control_plane.security import (
     load_admin_auth,
     safe_next_path,
 )
+from chamber.load import validate_relayna_journey
 from chamber.runs import registered_evidence
 
 PACKAGE_DIR = Path(__file__).resolve().parent
@@ -217,6 +218,7 @@ def create_app(
         kubernetes_context: Annotated[str, Form()] = "",
         namespace: Annotated[str, Form()] = "",
         service_port: Annotated[int, Form()] = 8080,
+        journeys_json: Annotated[str, Form()] = "",
         journey_type: Annotated[str, Form()] = "http",
         traffic_path: Annotated[str, Form()] = "/health",
         traffic_profile: Annotated[str, Form()] = "baseline",
@@ -242,6 +244,7 @@ def create_app(
                 kubernetes_context=kubernetes_context,
                 namespace=namespace,
                 service_port=service_port,
+                journeys_json=journeys_json,
                 journey_type=journey_type,
                 traffic_path=traffic_path,
                 traffic_profile=traffic_profile,
@@ -544,6 +547,7 @@ def _plan_from_values(
     kubernetes_context: str,
     namespace: str,
     service_port: int,
+    journeys_json: str,
     journey_type: str,
     traffic_path: str,
     traffic_profile: str,
@@ -603,13 +607,9 @@ def _plan_from_values(
     name = str(service["name"])
     traffic = cast(dict[str, Any], config["traffic"])
     traffic["entrypoint"] = name
-    profiles = {
-        "smoke": (("15s", 1), ("5s", 0)),
-        "baseline": (("30s", 4), ("30s", 0)),
-        "stress": (("30s", 10), ("60s", 25), ("30s", 0)),
-    }
-    stages = profiles.get(traffic_profile, profiles["baseline"])
-    if journey_type == "relayna":
+    if journeys_json.strip():
+        traffic["journeys"] = _ui_journeys(journeys_json)
+    elif journey_type == "relayna":
         try:
             body = json.loads(request_body)
         except json.JSONDecodeError as exc:
@@ -646,6 +646,12 @@ def _plan_from_values(
             }
         ]
     elif journey_type == "http":
+        profiles = {
+            "smoke": (("15s", 1), ("5s", 0)),
+            "baseline": (("30s", 4), ("30s", 0)),
+            "stress": (("30s", 10), ("60s", 25), ("30s", 0)),
+        }
+        stages = profiles.get(traffic_profile, profiles["baseline"])
         traffic["journeys"] = [
             {
                 "name": "baseline-health",
@@ -703,6 +709,50 @@ def _plan_from_values(
             runtime.pop(key, None)
     config_path = _write_draft(workspace, config)
     return application.plan(config_path)
+
+
+def _ui_journeys(raw: str) -> list[dict[str, Any]]:
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError("Traffic journeys must be valid JSON") from exc
+    if not isinstance(value, list) or not value:
+        raise ValueError("At least one traffic journey is required")
+    journeys: list[dict[str, Any]] = []
+    adapters: set[str] = set()
+    for index, item in enumerate(value, start=1):
+        if not isinstance(item, dict):
+            raise ValueError(f"Traffic journey {index} must be a JSON object")
+        journey = dict(item)
+        name = str(journey.get("name", "")).strip()
+        path = str(journey.get("path", "")).strip()
+        method = str(journey.get("method", "GET")).upper()
+        expected_status = journey.get("expectedStatus")
+        if not name:
+            raise ValueError(f"Traffic journey {index} requires a name")
+        if not path.startswith("/"):
+            raise ValueError(f"Traffic journey {index} path must start with /")
+        if not method:
+            raise ValueError(f"Traffic journey {index} requires an HTTP method")
+        if not isinstance(expected_status, int) or isinstance(expected_status, bool):
+            raise ValueError(f"Traffic journey {index} expectedStatus must be an integer")
+        if expected_status < 100 or expected_status > 599:
+            raise ValueError(f"Traffic journey {index} expectedStatus must be between 100 and 599")
+        adapter = str(journey.get("adapter", "http"))
+        adapters.add(adapter)
+        if adapter == "http":
+            journey.pop("adapter", None)
+        elif adapter == "relayna":
+            validate_relayna_journey(journey)
+        else:
+            raise ValueError(f"Traffic journey {index} adapter must be http or relayna")
+        journey["name"] = name
+        journey["method"] = method
+        journey["path"] = path
+        journeys.append(journey)
+    if len(adapters) > 1:
+        raise ValueError("One assessment cannot mix HTTP and Relayna traffic journeys")
+    return journeys
 
 
 def _write_draft(workspace: Path, config: dict[str, Any]) -> Path:

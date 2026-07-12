@@ -17,7 +17,9 @@
     const repo = form.elements.repo;
     const serviceName = form.elements.service_name;
     const workloadName = form.elements.workload_name;
-    const relaynaFields = [...form.querySelectorAll("[data-relayna-field]")];
+    const journeyList = form.querySelector("[data-journey-list]");
+    const journeyTemplate = form.querySelector("[data-journey-template]");
+    const journeysJson = form.querySelector("[data-journeys-json]");
     const discoveryPanel = form.querySelector("[data-discovery-panel]");
     const discoveryButton = form.querySelector("[data-discover-targets]");
     const discoveryStatus = form.querySelector("[data-discovery-status]");
@@ -26,6 +28,127 @@
     const discoveredWorkload = form.querySelector("[data-discovered-workload]");
     let discoveryData = null;
     let current = 0;
+
+    const profiles = {
+      smoke: [{duration: "15s", targetVus: 1}, {duration: "5s", targetVus: 0}],
+      baseline: [{duration: "30s", targetVus: 4}, {duration: "30s", targetVus: 0}],
+      stress: [{duration: "30s", targetVus: 10}, {duration: "60s", targetVus: 25}, {duration: "30s", targetVus: 0}],
+    };
+
+    const field = (card, name) => card.querySelector(`[data-journey-field="${name}"]`);
+    const parseJson = (control, label, {required = false} = {}) => {
+      const raw = control.value.trim();
+      control.setCustomValidity("");
+      if (!raw && !required) return null;
+      try { return JSON.parse(raw); }
+      catch (_) {
+        control.setCustomValidity(`${label} must be valid JSON.`);
+        throw new Error(`${label} must be valid JSON.`);
+      }
+    };
+
+    const renumberJourneys = () => {
+      const cards = [...journeyList.querySelectorAll("[data-journey]")];
+      cards.forEach((card, index) => {
+        card.querySelector("[data-journey-number]").textContent = `Journey ${index + 1}`;
+        card.querySelector("[data-remove-journey]").disabled = cards.length === 1;
+      });
+    };
+
+    const syncJourney = (card, {resetDefaults = false} = {}) => {
+      const adapter = field(card, "adapter").value;
+      const relayna = adapter === "relayna";
+      const loadModel = field(card, "loadModel").value;
+      card.querySelector("[data-relayna-settings]").hidden = !relayna;
+      card.querySelector("[data-load-profile]").hidden = loadModel !== "profile" || relayna;
+      card.querySelector("[data-custom-stages]").hidden = loadModel !== "stages" || relayna;
+      card.querySelector("[data-fixed-iterations]").hidden = loadModel !== "iterations" && !relayna;
+      field(card, "body").required = relayna;
+      field(card, "eventsPath").required = relayna;
+      field(card, "taskIdPath").required = relayna;
+      if (resetDefaults) {
+        field(card, "method").value = relayna ? "POST" : "GET";
+        field(card, "path").value = relayna ? "/translations" : "/health";
+        field(card, "expectedStatus").value = relayna ? "202" : "200";
+        field(card, "loadModel").value = relayna ? "iterations" : "profile";
+        if (relayna && !field(card, "body").value.trim()) {
+          field(card, "body").value = '{"text":"Hello from Ampule Chamber.","language_target":"Thai","priority":5}';
+        }
+        syncJourney(card);
+      }
+      card.querySelector("[data-journey-title]").textContent = `${relayna ? "Relayna" : "HTTP"} · ${field(card, "name").value || "unnamed"}`;
+    };
+
+    const addJourney = ({adapter = "http"} = {}) => {
+      const fragment = journeyTemplate.content.cloneNode(true);
+      const card = fragment.querySelector("[data-journey]");
+      const count = journeyList.querySelectorAll("[data-journey]").length + 1;
+      field(card, "name").value = count === 1 ? "baseline-health" : `traffic-${count}`;
+      field(card, "adapter").value = adapter;
+      card.addEventListener("input", () => syncJourney(card));
+      field(card, "adapter").addEventListener("change", () => syncJourney(card, {resetDefaults: true}));
+      field(card, "loadModel").addEventListener("change", () => syncJourney(card));
+      card.querySelector("[data-remove-journey]").addEventListener("click", () => {
+        card.remove();
+        renumberJourneys();
+      });
+      journeyList.appendChild(fragment);
+      syncJourney(card, {resetDefaults: adapter === "relayna"});
+      renumberJourneys();
+      return card;
+    };
+
+    const serializeJourneys = () => {
+      const cards = [...journeyList.querySelectorAll("[data-journey]")];
+      if (!cards.length) throw new Error("Add at least one traffic journey.");
+      const adapters = new Set(cards.map(card => field(card, "adapter").value));
+      if (adapters.size > 1) throw new Error("One assessment cannot mix HTTP and Relayna journeys.");
+      const journeys = cards.map((card, index) => {
+        const adapter = field(card, "adapter").value;
+        const loadModel = field(card, "loadModel").value;
+        const journey = {
+          name: field(card, "name").value.trim(),
+          method: field(card, "method").value,
+          path: field(card, "path").value.trim(),
+          expectedStatus: Number(field(card, "expectedStatus").value),
+        };
+        const tool = field(card, "tool").value.trim();
+        if (tool) journey.tool = tool;
+        if (adapter === "relayna") journey.adapter = "relayna";
+        const body = parseJson(field(card, "body"), `Journey ${index + 1} request body`, {required: adapter === "relayna"});
+        if (body !== null) journey.body = body;
+        const textBytes = Number(field(card, "textBytes").value);
+        if (textBytes > 0) journey.textBytes = textBytes;
+        if (adapter === "relayna" || loadModel === "iterations") {
+          journey.vus = Number(field(card, "vus").value);
+          journey.iterations = Number(field(card, "iterations").value);
+          journey.durationSeconds = Number(field(card, "durationSeconds").value);
+        } else if (loadModel === "stages") {
+          const stages = parseJson(field(card, "stages"), `Journey ${index + 1} stages`, {required: true});
+          if (!Array.isArray(stages) || !stages.length) {
+            field(card, "stages").setCustomValidity("Stages must be a non-empty JSON array.");
+            throw new Error("Stages must be a non-empty JSON array.");
+          }
+          journey.stages = stages;
+        } else {
+          journey.stages = profiles[field(card, "profile").value];
+        }
+        if (adapter === "relayna") {
+          journey.relayna = {
+            taskIdPath: field(card, "taskIdPath").value.trim(),
+            eventsPath: field(card, "eventsPath").value.trim(),
+            terminalStatuses: field(card, "terminalStatuses").value.split(",").map(value => value.trim()).filter(Boolean),
+            successStatuses: field(card, "successStatuses").value.split(",").map(value => value.trim()).filter(Boolean),
+            timeoutSeconds: Number(field(card, "timeoutSeconds").value),
+          };
+        }
+        const followUps = parseJson(field(card, "followUps"), `Journey ${index + 1} follow-up checks`);
+        if (followUps !== null) journey.followUps = followUps;
+        return journey;
+      });
+      journeysJson.value = JSON.stringify(journeys);
+      return journeys;
+    };
 
     const selectModeCard = input => {
       input.closest(".mode-grid").querySelectorAll(".mode-card").forEach(card =>
@@ -103,7 +226,16 @@
     };
     const valid = () => {
       const fields = [...panels[current].querySelectorAll("input,select,textarea")].filter(field => !field.closest("[hidden]"));
-      return fields.every(field => field.reportValidity());
+      if (!fields.every(field => field.reportValidity())) return false;
+      if (current === 2) {
+        try { serializeJourneys(); }
+        catch (error) {
+          const invalid = panels[current].querySelector(":invalid");
+          if (invalid) invalid.reportValidity(); else window.alert(error.message);
+          return false;
+        }
+      }
+      return true;
     };
     next.addEventListener("click", () => { if (valid() && current < panels.length - 1) { current += 1; render(); } });
     back.addEventListener("click", () => { if (current > 0) { current -= 1; render(); } });
@@ -156,25 +288,20 @@
         discoveryButton.disabled = false;
       }
     });
-    form.elements.journey_type.addEventListener("change", event => {
-      const relayna = event.target.value === "relayna";
-      relaynaFields.forEach(field => field.hidden = !relayna);
-      form.elements.request_body.required = relayna;
-      form.elements.events_path.required = relayna;
-      form.elements.task_id_path.required = relayna;
-      form.elements.relayna_timeout_seconds.required = relayna;
-      if (relayna) {
-        form.elements.traffic_path.value = "/translations";
-        form.elements.traffic_profile.value = "smoke";
-      } else if (form.elements.traffic_path.value === "/translations") {
-        form.elements.traffic_path.value = "/health";
-      }
+    form.querySelector("[data-add-journey]").addEventListener("click", () => {
+      const first = journeyList.querySelector("[data-journey]");
+      addJourney({adapter: first ? field(first, "adapter").value : "http"});
+    });
+    form.addEventListener("submit", event => {
+      try { serializeJourneys(); }
+      catch (error) { event.preventDefault(); window.alert(error.message); }
     });
     form.querySelector("[data-advanced]").addEventListener("click", () => {
       updateReview(form);
       const values = Object.fromEntries(new FormData(form).entries());
       alert(Object.entries(values).filter(([key]) => key !== "_csrf").map(([key,value]) => `${key}: ${value}`).join("\n"));
     });
+    addJourney();
     render();
   }
 
@@ -189,6 +316,10 @@
         : "—";
       node.textContent = value || fallback;
     });
+    const journeys = form.querySelectorAll("[data-journey]");
+    const adapters = new Set([...journeys].map(card => card.querySelector('[data-journey-field="adapter"]').value));
+    const summary = form.querySelector("[data-review-journeys]");
+    if (summary) summary.textContent = `${journeys.length} ${[...adapters].join(" + ").toUpperCase()} journey${journeys.length === 1 ? "" : "s"}`;
   }
 
   function initializeLivePage(page) {
