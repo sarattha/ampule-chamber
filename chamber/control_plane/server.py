@@ -784,7 +784,7 @@ async def _persist_journey_files(
     raw: str,
     uploads: list[UploadFile],
 ) -> tuple[str, Path | None]:
-    if not raw.strip() or not uploads:
+    if not raw.strip():
         return raw, None
     try:
         journeys = json.loads(raw)
@@ -792,51 +792,56 @@ async def _persist_journey_files(
         raise ValueError("Traffic journeys must be valid JSON") from exc
     if not isinstance(journeys, list):
         raise ValueError("Traffic journeys must be a JSON array")
+    file_entries: list[dict[str, Any]] = []
+    for journey in journeys:
+        if not isinstance(journey, dict):
+            continue
+        multipart = journey.get("multipart")
+        if not isinstance(multipart, dict):
+            continue
+        files = multipart.get("files")
+        if not isinstance(files, list):
+            continue
+        file_entries.extend(item for item in files if isinstance(item, dict))
+    if not uploads:
+        if file_entries:
+            raise ValueError("UI multipart files require a browser upload")
+        return raw, None
     upload_dir = workspace.resolve() / "uploads" / uuid.uuid4().hex
     upload_dir.mkdir(parents=True, exist_ok=False)
     referenced: set[int] = set()
     try:
-        for journey in journeys:
-            if not isinstance(journey, dict):
-                continue
-            multipart = journey.get("multipart")
-            if not isinstance(multipart, dict):
-                continue
-            files = multipart.get("files")
-            if not isinstance(files, list):
-                continue
-            for item in files:
-                if not isinstance(item, dict):
-                    continue
-                upload_index = item.pop("uploadIndex", None)
-                if not isinstance(upload_index, int) or isinstance(upload_index, bool):
-                    raise ValueError("Multipart file is missing its browser upload reference")
-                if upload_index < 0 or upload_index >= len(uploads):
-                    raise ValueError("Multipart file references an unavailable browser upload")
-                if upload_index in referenced:
-                    raise ValueError("Multipart browser upload cannot be reused")
-                referenced.add(upload_index)
-                upload = uploads[upload_index]
-                filename = Path(upload.filename or "upload.bin").name or "upload.bin"
-                destination = upload_dir / f"{upload_index}-{filename}"
-                size = 0
-                with destination.open("wb") as stream:
-                    while chunk := await upload.read(1024 * 1024):
-                        size += len(chunk)
-                        if size > MAX_UI_UPLOAD_BYTES:
-                            raise ValueError(
-                                "Browser-uploaded journey files are limited to 128 MiB"
-                            )
-                        stream.write(chunk)
-                if size == 0:
-                    raise ValueError(f"Multipart file {filename!r} must not be empty")
-                item.update(
-                    {
-                        "path": str(destination),
-                        "filename": filename,
-                        "contentType": upload.content_type or "application/octet-stream",
-                    }
-                )
+        for item in file_entries:
+            item.pop("path", None)
+            item.pop("filename", None)
+            item.pop("contentType", None)
+            upload_index = item.pop("uploadIndex", None)
+            if not isinstance(upload_index, int) or isinstance(upload_index, bool):
+                raise ValueError("Multipart file is missing its browser upload reference")
+            if upload_index < 0 or upload_index >= len(uploads):
+                raise ValueError("Multipart file references an unavailable browser upload")
+            if upload_index in referenced:
+                raise ValueError("Multipart browser upload cannot be reused")
+            referenced.add(upload_index)
+            upload = uploads[upload_index]
+            filename = Path(upload.filename or "upload.bin").name or "upload.bin"
+            destination = upload_dir / f"{upload_index}-{filename}"
+            size = 0
+            with destination.open("wb") as stream:
+                while chunk := await upload.read(1024 * 1024):
+                    size += len(chunk)
+                    if size > MAX_UI_UPLOAD_BYTES:
+                        raise ValueError("Browser-uploaded journey files are limited to 128 MiB")
+                    stream.write(chunk)
+            if size == 0:
+                raise ValueError(f"Multipart file {filename!r} must not be empty")
+            item.update(
+                {
+                    "path": str(destination),
+                    "filename": filename,
+                    "contentType": upload.content_type or "application/octet-stream",
+                }
+            )
         if referenced != set(range(len(uploads))):
             raise ValueError(
                 "Every browser-uploaded journey file must belong to a multipart request"

@@ -515,7 +515,15 @@ class ControlPlaneTests(unittest.TestCase):
                             "force_ocr": False,
                             "priority": 5,
                         },
-                        "files": [{"field": "file", "uploadIndex": 0}],
+                        "files": [
+                            {
+                                "field": "file",
+                                "uploadIndex": 0,
+                                "path": "/etc/hosts",
+                                "filename": "stolen.txt",
+                                "contentType": "text/plain",
+                            }
+                        ],
                     },
                     "iterations": 1,
                     "vus": 1,
@@ -547,6 +555,32 @@ class ControlPlaneTests(unittest.TestCase):
                 self.assertEqual(uploaded_file["filename"], "invoice.pdf")
                 self.assertEqual(uploaded_file["contentType"], "application/pdf")
                 self.assertEqual(Path(uploaded_file["path"]).read_bytes(), b"%PDF-1.7 test")
+
+                crafted_path = client.post(
+                    "/ui/plan",
+                    data={
+                        "_csrf": csrf,
+                        "repo": str(repo),
+                        "journeys_json": json.dumps(
+                            [
+                                {
+                                    "name": "crafted-path",
+                                    "method": "POST",
+                                    "path": "/upload",
+                                    "expectedStatus": 200,
+                                    "requestEncoding": "multipart",
+                                    "multipart": {
+                                        "fields": {},
+                                        "files": [{"field": "file", "path": "/etc/hosts"}],
+                                    },
+                                    "iterations": 1,
+                                }
+                            ]
+                        ),
+                    },
+                )
+                self.assertEqual(crafted_path.status_code, 400)
+                self.assertIn("require a browser upload", crafted_path.text)
 
                 invalid_status = client.post(
                     "/ui/plan",
@@ -753,6 +787,17 @@ class ControlPlaneTests(unittest.TestCase):
                 asyncio.run(_persist_journey_files(root, "not-json", [uploaded(b"data")]))
             with self.assertRaisesRegex(ValueError, "JSON array"):
                 asyncio.run(_persist_journey_files(root, "{}", [uploaded(b"data")]))
+            crafted_path = json.dumps(
+                [
+                    {
+                        "multipart": {
+                            "files": [{"field": "file", "path": "/etc/hosts"}],
+                        }
+                    }
+                ]
+            )
+            with self.assertRaisesRegex(ValueError, "require a browser upload"):
+                asyncio.run(_persist_journey_files(root, crafted_path, []))
             with self.assertRaisesRegex(ValueError, "Every browser-uploaded"):
                 asyncio.run(_persist_journey_files(root, "[]", [uploaded(b"data")]))
             missing_reference = json.dumps(
