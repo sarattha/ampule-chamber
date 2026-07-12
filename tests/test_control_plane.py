@@ -457,8 +457,10 @@ class ControlPlaneTests(unittest.TestCase):
                         "followUps": [
                             {
                                 "name": "translation-status",
-                                "method": "GET",
-                                "path": "/translations/{task_id}",
+                                "type": "http_status",
+                                "target": "/translations/{task_id}",
+                                "expected": "completed",
+                                "serviceName": "target-service",
                             }
                         ],
                     },
@@ -504,6 +506,63 @@ class ControlPlaneTests(unittest.TestCase):
                 )
                 self.assertEqual(invalid_status.status_code, 400)
                 self.assertIn("between 100 and 599", invalid_status.text)
+
+                invalid_loads = (
+                    (
+                        {"stages": [{"duration": "30s", "target": 4}]},
+                        "targetVus must be a non-negative integer",
+                    ),
+                    (
+                        {"stages": [{"duration": "30s", "targetVus": "4"}]},
+                        "targetVus must be a non-negative integer",
+                    ),
+                    ({"vus": 0, "iterations": 1}, "vus must be a positive integer"),
+                )
+                for load, message in invalid_loads:
+                    invalid_journey = {
+                        "name": "invalid-load",
+                        "method": "GET",
+                        "path": "/health",
+                        "expectedStatus": 200,
+                        **load,
+                    }
+                    invalid_load = client.post(
+                        "/ui/plan",
+                        data={
+                            "_csrf": csrf,
+                            "repo": str(repo),
+                            "journeys_json": json.dumps([invalid_journey]),
+                        },
+                    )
+                    self.assertEqual(invalid_load.status_code, 400)
+                    self.assertIn(message, invalid_load.text)
+
+                invalid_follow_up = client.post(
+                    "/ui/plan",
+                    data={
+                        "_csrf": csrf,
+                        "repo": str(repo),
+                        "journeys_json": json.dumps(
+                            [
+                                {
+                                    "name": "invalid-follow-up",
+                                    "method": "GET",
+                                    "path": "/health",
+                                    "expectedStatus": 200,
+                                    "followUps": [
+                                        {
+                                            "name": "status",
+                                            "method": "GET",
+                                            "path": "/status",
+                                        }
+                                    ],
+                                }
+                            ]
+                        ),
+                    },
+                )
+                self.assertEqual(invalid_follow_up.status_code, 400)
+                self.assertIn("requires type", invalid_follow_up.text)
 
                 missing_workload = client.post(
                     "/ui/plan",

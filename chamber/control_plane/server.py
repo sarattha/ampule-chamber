@@ -742,10 +742,12 @@ def _ui_journeys(raw: str) -> list[dict[str, Any]]:
         adapters.add(adapter)
         if adapter == "http":
             journey.pop("adapter", None)
+            _validate_http_load(journey, index=index)
         elif adapter == "relayna":
             validate_relayna_journey(journey)
         else:
             raise ValueError(f"Traffic journey {index} adapter must be http or relayna")
+        _validate_follow_ups(journey, index=index)
         journey["name"] = name
         journey["method"] = method
         journey["path"] = path
@@ -753,6 +755,57 @@ def _ui_journeys(raw: str) -> list[dict[str, Any]]:
     if len(adapters) > 1:
         raise ValueError("One assessment cannot mix HTTP and Relayna traffic journeys")
     return journeys
+
+
+def _validate_http_load(journey: dict[str, Any], *, index: int) -> None:
+    stages = journey.get("stages")
+    if stages is not None:
+        if not isinstance(stages, list) or not stages:
+            raise ValueError(f"Traffic journey {index} stages must be a non-empty array")
+        for stage_index, stage in enumerate(stages, start=1):
+            if not isinstance(stage, dict):
+                raise ValueError(
+                    f"Traffic journey {index} stage {stage_index} must be a JSON object"
+                )
+            duration = stage.get("duration")
+            target_vus = stage.get("targetVus")
+            if not isinstance(duration, str) or not duration.strip():
+                raise ValueError(f"Traffic journey {index} stage {stage_index} requires a duration")
+            if not isinstance(target_vus, int) or isinstance(target_vus, bool) or target_vus < 0:
+                raise ValueError(
+                    f"Traffic journey {index} stage {stage_index} targetVus "
+                    "must be a non-negative integer"
+                )
+    for field in ("vus", "iterations", "durationSeconds"):
+        value = journey.get(field)
+        if value is not None and (
+            not isinstance(value, int) or isinstance(value, bool) or value <= 0
+        ):
+            raise ValueError(f"Traffic journey {index} {field} must be a positive integer")
+    text_bytes = journey.get("textBytes")
+    if text_bytes is not None and (
+        not isinstance(text_bytes, int) or isinstance(text_bytes, bool) or text_bytes < 0
+    ):
+        raise ValueError(f"Traffic journey {index} textBytes must be a non-negative integer")
+
+
+def _validate_follow_ups(journey: dict[str, Any], *, index: int) -> None:
+    follow_ups = journey.get("followUps")
+    if follow_ups is None:
+        return
+    if not isinstance(follow_ups, list) or not follow_ups:
+        raise ValueError(f"Traffic journey {index} followUps must be a non-empty array")
+    for follow_up_index, follow_up in enumerate(follow_ups, start=1):
+        if not isinstance(follow_up, dict):
+            raise ValueError(
+                f"Traffic journey {index} follow-up {follow_up_index} must be a JSON object"
+            )
+        for field in ("name", "type", "target", "expected"):
+            value = follow_up.get(field)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(
+                    f"Traffic journey {index} follow-up {follow_up_index} requires {field}"
+                )
 
 
 def _write_draft(workspace: Path, config: dict[str, Any]) -> Path:
