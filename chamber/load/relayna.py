@@ -173,7 +173,7 @@ def _execute_task(
             method="GET",
         )
         stream_started = time.monotonic()
-        with opener(stream_request, timeout=min(contract["timeout_seconds"], 20)) as response:
+        with opener(stream_request, timeout=contract["timeout_seconds"]) as response:
             if int(response.status) != 200:
                 raise RelaynaJourneyError(f"event stream returned HTTP {response.status}")
             terminal_status, statuses, event_count = _consume_sse(

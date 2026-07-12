@@ -69,9 +69,23 @@
       serviceName.value = service.name;
       if (service.ports.length) form.elements.service_port.value = service.ports[0].port;
       const candidates = service.workloads.length ? service.workloads : discoveryData.workloads;
-      discoveredWorkload.replaceChildren(...candidates.map(item =>
-        new Option(`${item.name} · ${item.kind}`, `${item.kind}/${item.name}`)));
-      applyWorkload();
+      const needsExplicitChoice = service.workloads.length !== 1;
+      const options = candidates.map(item =>
+        new Option(`${item.name} · ${item.kind}`, `${item.kind}/${item.name}`));
+      if (needsExplicitChoice) {
+        options.unshift(new Option("Select the backing workload…", "", true, true));
+        workloadName.value = "";
+      }
+      discoveredWorkload.replaceChildren(...options);
+      discoveredWorkload.required = candidates.length > 0;
+      if (!needsExplicitChoice) applyWorkload();
+      if (needsExplicitChoice && candidates.length) {
+        discoveryStatus.textContent = "No unique workload match was found. Choose the backing workload explicitly.";
+      } else if (!candidates.length) {
+        discoveryStatus.textContent = "No workload was found. Enter its name and kind in the Target step.";
+      } else {
+        discoveryStatus.textContent = `Matched ${service.name} to ${candidates[0].kind} ${candidates[0].name}.`;
+      }
     };
 
     const render = () => {
@@ -133,7 +147,6 @@
         discoveryResults.hidden = !payload.services.length;
         if (!payload.services.length) throw new Error("No Services were found in this namespace");
         applyService();
-        discoveryStatus.textContent = `Found ${payload.services.length} Services and ${payload.workloads.length} workloads.`;
       } catch (error) {
         discoveryData = null;
         discoveryResults.hidden = true;

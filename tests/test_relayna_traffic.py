@@ -37,9 +37,11 @@ class _Response(io.BytesIO):
 class RelaynaTrafficTests(unittest.TestCase):
     def test_submit_extract_stream_and_terminal_completion(self) -> None:
         requested_urls: list[str] = []
+        requested_timeouts: list[int] = []
 
         def opener(request: Any, *, timeout: int) -> _Response:
             requested_urls.append(request.full_url)
+            requested_timeouts.append(timeout)
             self.assertGreater(timeout, 0)
             if request.method == "POST":
                 self.assertEqual(
@@ -69,6 +71,7 @@ class RelaynaTrafficTests(unittest.TestCase):
                 "http://127.0.0.1:8080/events/task%2F123",
             ],
         )
+        self.assertEqual(requested_timeouts, [30, 30])
 
     def test_failed_terminal_status_fails_journey(self) -> None:
         def opener(request: Any, *, timeout: int) -> _Response:
