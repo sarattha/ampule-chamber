@@ -246,13 +246,17 @@ health, readiness, and read-only status endpoints.
 booleans, arrays, nested objects, or `null`; the overall Relayna submission
 body must be a non-empty object.
 
-**Multipart form + file** stores the browser-selected file in Chamber's
-workspace and generates a k6 multipart request using `http.file`. Configure:
+**Multipart form + file** stores browser-selected files in Chamber's workspace.
+HTTP journeys generate k6 `http.file` requests; Relayna journeys submit the same
+inputs through the stateful task-lifecycle executor. Configure:
 
-- **File field name**, such as `file`, matching the service's multipart API.
-- **Upload file**, the real local file sent during the assessment. UI uploads
-  are limited to 128 MiB and empty files are rejected.
-- **Multipart form fields JSON**, an object containing the other form values.
+- One or more file rows with a unique **Field name**, **Upload**, optional
+  filename and content-type overrides, and required/optional state.
+- **Multipart form fields JSON** containing scalar strings, integers, and
+  booleans. Arrays and objects must use an explicit
+  `{"encoding":"json","value":...}` descriptor.
+- A 128 MiB per-file and 256 MiB total-request hard limit. Empty files and
+  missing or unsupported content types are rejected.
 
 For the `ocr_service` contract inspected on `vm-machine01`, the request is:
 
@@ -274,6 +278,7 @@ multipart:
       path: /durable/chamber/workspace/uploads/<id>/invoice.pdf
       filename: invoice.pdf
       contentType: application/pdf
+      required: true
 vus: 1
 iterations: 1
 durationSeconds: 1
@@ -284,9 +289,11 @@ The OCR service accepts PDF, PNG, JPEG, TIFF, BMP, GIF, and WebP inputs. Its
 and `priority` are ordinary multipart form fields. The expected admission
 response is `202`.
 
-The generated YAML stores a durable workspace path, not the browser's original
-local path. The file must remain readable by the Chamber process when k6 starts.
-For in-cluster Chamber, keep workspace storage on the configured PVC.
+The generated YAML stores durable workspace paths, not the browser's original
+local paths. Files must remain readable by the Chamber process when execution
+starts. Paths that escape the approved workspace, including symlink escapes,
+are rejected. For in-cluster Chamber, keep workspace storage on the configured
+PVC.
 
 **URL-encoded form** serializes the Form fields JSON object as
 `application/x-www-form-urlencoded`. Use it for APIs that expect ordinary HTML
@@ -296,10 +303,12 @@ form submissions without files.
 configured Content type, such as `text/plain`, `application/xml`, or a custom
 media type.
 
-Relayna lifecycle journeys currently accept JSON submission bodies. Use an
-HTTP multipart journey to test file admission and record lifecycle follow-up
-expectations separately. Stateful multipart Relayna submission is not yet
-enabled.
+For Relayna, choose **Multipart form + file** and configure task ID extraction,
+events path, terminal statuses, success statuses, timeout, VUs, and iterations
+in the same journey card. Use **Add file** for a required document plus optional
+inputs such as an ROI mask. The Review step displays file count, filename,
+content type, and size; it never displays document contents. Lifecycle evidence
+and reports persist only field, filename, content type, size, and SHA-256 digest.
 
 ### HTTP load models
 

@@ -113,10 +113,20 @@
           <label data-text-bytes>Generated text bytes<input data-journey-field="textBytes" type="number" min="0" value="0"><span class="help">Optionally expands the request body’s <code>text</code> field.</span></label>
           <label>Request encoding<select data-journey-field="requestEncoding"><option value="none">No body</option><option value="json" selected>JSON</option><option value="multipart">Multipart form + file</option><option value="form">URL-encoded form</option><option value="raw">Raw text</option></select></label>
           <label class="wide-field" data-json-request>Request body JSON <span class="optional">optional for HTTP</span><textarea data-journey-field="body" placeholder='{"message":"hello"}'></textarea></label>
-          <div class="form-grid nested-grid wide-field" data-multipart-request hidden>
-            <label>File field name<input data-journey-field="fileField" value="file" placeholder="file"></label>
-            <label>Upload file<input name="journey_files" data-journey-field="file" type="file" accept=".pdf,.png,.jpg,.jpeg,.tiff,.tif,.bmp,.gif,.webp"><span class="help" data-existing-file hidden></span></label>
-            <label class="wide-field">Multipart form fields JSON<textarea data-journey-field="multipartFields" placeholder='{"engine":"internal","mode":"layout","force_ocr":false,"priority":5}'></textarea><span class="help">The browser stores the selected file in Chamber workspace storage; the generated config references that durable path.</span></label>
+          <div class="nested-grid wide-field multipart-settings" data-multipart-request hidden>
+            <label class="wide-field">Multipart form fields JSON<textarea data-journey-field="multipartFields" placeholder='{"engine":"internal","mode":"layout","force_ocr":false,"priority":5,"extraction_fields":{"encoding":"json","value":[{"name":"document_number","type":"string"}]}}'></textarea><span class="help">Strings, integers, and booleans are scalar fields. Wrap arrays and objects as <code>{"encoding":"json","value":...}</code> for deterministic JSON serialization.</span></label>
+            <div class="multipart-file-heading"><div><strong>Files</strong><span class="help">Uploads are stored in durable Chamber workspace storage. Contents are never shown in reports or evidence.</span></div><button class="button subtle compact" type="button" data-add-multipart-file>Add file</button></div>
+            <div class="multipart-file-list" data-multipart-file-list></div>
+            <template data-multipart-file-template>
+              <div class="multipart-file-row" data-multipart-file>
+                <label>Field name<input data-multipart-file-field="field" value="file" placeholder="file"></label>
+                <label>Upload<input name="journey_files" data-multipart-file-field="file" type="file" accept=".pdf,.png,.jpg,.jpeg,.tiff,.tif,.bmp,.gif,.webp"><span class="help" data-existing-multipart-file hidden></span></label>
+                <label>Filename <span class="optional">optional override</span><input data-multipart-file-field="filename" placeholder="document.png"></label>
+                <label>Content type <span class="optional">detected when blank</span><input data-multipart-file-field="contentType" placeholder="image/png"></label>
+                <label class="checkbox-row"><input data-multipart-file-field="required" type="checkbox" checked> Required file</label>
+                <button class="button subtle compact" type="button" data-remove-multipart-file>Remove file</button>
+              </div>
+            </template>
           </div>
           <label class="wide-field" data-form-request hidden>URL-encoded form fields JSON<textarea data-journey-field="form" placeholder='{"query":"hello","limit":10}'></textarea></label>
           <div class="form-grid nested-grid wide-field" data-raw-request hidden>
@@ -141,7 +151,7 @@
     <div class="review-grid">
       <div class="panel"><h2>Target</h2><dl><div><dt>Source</dt><dd data-review="target_source">Repository</dd></div><div><dt>Repository</dt><dd data-review="repo">Not required</dd></div><div><dt>Service</dt><dd data-review="service_name">Inferred</dd></div><div><dt>Workload</dt><dd data-review="workload_name">Inferred</dd></div><div><dt>Kind</dt><dd data-review="workload_kind">Inferred</dd></div></dl></div>
       <div class="panel"><h2>Environment</h2><dl><div><dt>Mode</dt><dd data-review="execution_mode">Local</dd></div><div><dt>Context</dt><dd data-review="kubernetes_context">Not applicable</dd></div><div><dt>Namespace</dt><dd data-review="namespace">Not applicable</dd></div></dl></div>
-      <div class="panel"><h2>Exercise</h2><dl><div><dt>Scenario</dt><dd data-review="scenario_id">Custom</dd></div><div><dt>Traffic</dt><dd data-review-journeys>1 HTTP journey</dd></div><div><dt>Maximum concurrency</dt><dd data-review-vus>4 VUs</dd></div><div><dt>Estimated duration</dt><dd data-review-duration>60s</dd></div><div><dt>Fault</dt><dd data-review="fault_type">Observe only</dd></div><div><dt>Rollback</dt><dd data-review-rollback>Not required</dd></div><div><dt>Agents</dt><dd data-review="agents_mode">Offline</dd></div></dl></div>
+      <div class="panel"><h2>Exercise</h2><dl><div><dt>Scenario</dt><dd data-review="scenario_id">Custom</dd></div><div><dt>Traffic</dt><dd data-review-journeys>1 HTTP journey</dd></div><div><dt>Files</dt><dd data-review-files>No multipart uploads</dd></div><div><dt>Maximum concurrency</dt><dd data-review-vus>4 VUs</dd></div><div><dt>Estimated duration</dt><dd data-review-duration>60s</dd></div><div><dt>Fault</dt><dd data-review="fault_type">Observe only</dd></div><div><dt>Rollback</dt><dd data-review-rollback>Not required</dd></div><div><dt>Agents</dt><dd data-review="agents_mode">Offline</dd></div></dl></div>
       <div class="panel safety-card"><h2>Safety contract</h2><ul><li>Explicit context for live execution</li><li>Production-like context names rejected</li><li>Bounded traffic and fault windows</li><li>Cancel triggers rollback and cleanup</li><li>Required telemetry: <span data-review-signals>default Chamber evidence</span></li><li>Unresolved limitations: <span data-review-limitations>none</span></li><li>Reports cite registered evidence only</li></ul></div>
     </div>
   </section>

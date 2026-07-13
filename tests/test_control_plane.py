@@ -236,6 +236,8 @@ class ControlPlaneTests(unittest.TestCase):
                 self.assertIn("Choose the service to assess", new_page.text)
                 self.assertIn("Running Kubernetes service", new_page.text)
                 self.assertIn("data-add-journey", new_page.text)
+                self.assertIn("data-add-multipart-file", new_page.text)
+                self.assertIn("data-review-files", new_page.text)
                 self.assertIn("Expected status", new_page.text)
                 self.assertIn("Custom stages", new_page.text)
                 self.assertIn('enctype="multipart/form-data"', new_page.text)
@@ -552,8 +554,8 @@ class ControlPlaneTests(unittest.TestCase):
                 )
                 uploaded_file = ocr_config["traffic"]["journeys"][0]["multipart"]["files"][0]
                 self.assertEqual(uploaded_file["field"], "file")
-                self.assertEqual(uploaded_file["filename"], "invoice.pdf")
-                self.assertEqual(uploaded_file["contentType"], "application/pdf")
+                self.assertEqual(uploaded_file["filename"], "stolen.txt")
+                self.assertEqual(uploaded_file["contentType"], "text/plain")
                 self.assertEqual(Path(uploaded_file["path"]).read_bytes(), b"%PDF-1.7 test")
 
                 crafted_path = client.post(
@@ -698,9 +700,40 @@ class ControlPlaneTests(unittest.TestCase):
                         "files": [{"field": "file", "path": str(upload_path)}],
                     },
                 ),
+                dict(
+                    base,
+                    adapter="relayna",
+                    expectedStatus=202,
+                    requestEncoding="multipart",
+                    multipart={
+                        "fields": {
+                            "priority": 5,
+                            "schema": {
+                                "encoding": "json",
+                                "value": {"fields": ["invoice_number"]},
+                            },
+                        },
+                        "files": [
+                            {
+                                "field": "file",
+                                "path": str(upload_path),
+                                "filename": "invoice.pdf",
+                                "contentType": "application/pdf",
+                                "required": True,
+                            }
+                        ],
+                    },
+                    relayna={
+                        "taskIdPath": "task_id",
+                        "eventsPath": "/events/{task_id}",
+                        "terminalStatuses": ["completed", "failed"],
+                        "successStatuses": ["completed"],
+                        "timeoutSeconds": 30,
+                    },
+                ),
             )
             for journey in valid:
-                self.assertEqual(_ui_journeys(json.dumps([journey]))[0], journey)
+                self.assertEqual(_ui_journeys(json.dumps([journey]), workspace=root)[0], journey)
 
             invalid = (
                 (dict(base, requestEncoding="xml"), "requestEncoding"),
@@ -769,12 +802,37 @@ class ControlPlaneTests(unittest.TestCase):
                         requestEncoding="multipart",
                         multipart={"fields": {}, "files": []},
                     ),
-                    "supports JSON requests only",
+                    "requires at least one file",
                 ),
             )
             for journey, message in invalid:
                 with self.assertRaisesRegex(ValueError, message):
                     _ui_journeys(json.dumps([journey]))
+
+            malformed = (
+                ("not-json", "valid JSON"),
+                ("[]", "At least one"),
+                ("[1]", "must be a JSON object"),
+                (json.dumps([dict(base, name="")]), "requires a name"),
+                (json.dumps([dict(base, path="submit")]), "path must start"),
+                (json.dumps([dict(base, method="")]), "requires an HTTP method"),
+                (json.dumps([dict(base, expectedStatus=True)]), "must be an integer"),
+                (json.dumps([dict(base, adapter="smtp")]), "adapter must be"),
+                (
+                    json.dumps([dict(base, adapter="relayna", requestEncoding="form", form={})]),
+                    "supports JSON or multipart",
+                ),
+                (
+                    json.dumps(
+                        [base, dict(base, name="relayna", adapter="relayna", body={"x": 1})]
+                    ),
+                    "cannot mix",
+                ),
+            )
+            for raw, message in malformed:
+                with self.subTest(message=message):
+                    with self.assertRaisesRegex(ValueError, message):
+                        _ui_journeys(raw)
 
             def uploaded(content: bytes) -> UploadFile:
                 return UploadFile(
@@ -787,6 +845,63 @@ class ControlPlaneTests(unittest.TestCase):
                 asyncio.run(_persist_journey_files(root, "not-json", [uploaded(b"data")]))
             with self.assertRaisesRegex(ValueError, "JSON array"):
                 asyncio.run(_persist_journey_files(root, "{}", [uploaded(b"data")]))
+            with self.assertRaisesRegex(ValueError, "missing its browser upload"):
+                asyncio.run(
+                    _persist_journey_files(
+                        root,
+                        json.dumps([{"multipart": {"files": [{"field": "file"}]}}]),
+                        [uploaded(b"data")],
+                    )
+                )
+            with self.assertRaisesRegex(ValueError, "required state"):
+                asyncio.run(
+                    _persist_journey_files(
+                        root,
+                        json.dumps(
+                            [
+                                {
+                                    "multipart": {
+                                        "files": [
+                                            {
+                                                "field": "file",
+                                                "required": "yes",
+                                                "uploadIndex": 0,
+                                            }
+                                        ]
+                                    }
+                                }
+                            ]
+                        ),
+                        [uploaded(b"data")],
+                    )
+                )
+            optional, _ = asyncio.run(
+                _persist_journey_files(
+                    root,
+                    json.dumps(
+                        [
+                            {
+                                "multipart": {
+                                    "files": [
+                                        {
+                                            "field": "file",
+                                            "uploadIndex": 0,
+                                        },
+                                        {
+                                            "field": "roi",
+                                            "required": False,
+                                            "filename": "ignored.pdf",
+                                            "contentType": "application/pdf",
+                                        },
+                                    ]
+                                }
+                            }
+                        ]
+                    ),
+                    [uploaded(b"data")],
+                )
+            )
+            self.assertNotIn("path", json.loads(optional)[0]["multipart"]["files"][1])
             crafted_path = json.dumps(
                 [
                     {
@@ -817,6 +932,155 @@ class ControlPlaneTests(unittest.TestCase):
             with patch("chamber.control_plane.server.MAX_UI_UPLOAD_BYTES", 2):
                 with self.assertRaisesRegex(ValueError, "limited to 128 MiB"):
                     asyncio.run(_persist_journey_files(root, empty_file, [uploaded(b"data")]))
+            unsafe_filename = empty_file.replace(
+                '"uploadIndex": 0',
+                '"uploadIndex": 0, "filename": "../invoice.pdf"',
+            )
+            with self.assertRaisesRegex(ValueError, "must not contain paths"):
+                asyncio.run(_persist_journey_files(root, unsafe_filename, [uploaded(b"data")]))
+
+            multiple_files = json.dumps(
+                [
+                    {
+                        "multipart": {
+                            "files": [
+                                {
+                                    "field": "file",
+                                    "filename": "document.pdf",
+                                    "contentType": "application/pdf",
+                                    "required": True,
+                                    "uploadIndex": 0,
+                                },
+                                {
+                                    "field": "roi",
+                                    "filename": "roi.pdf",
+                                    "contentType": "application/pdf",
+                                    "required": False,
+                                    "uploadIndex": 1,
+                                },
+                            ]
+                        }
+                    }
+                ]
+            )
+            persisted, upload_dir = asyncio.run(
+                _persist_journey_files(
+                    root,
+                    multiple_files,
+                    [uploaded(b"document"), uploaded(b"roi")],
+                )
+            )
+            persisted_files = json.loads(persisted)[0]["multipart"]["files"]
+            self.assertEqual([item["field"] for item in persisted_files], ["file", "roi"])
+            self.assertTrue(
+                all(
+                    Path(item["path"]).resolve().is_relative_to(root.resolve())
+                    for item in persisted_files
+                )
+            )
+            self.assertEqual([item["required"] for item in persisted_files], [True, False])
+            self.assertIsNotNone(upload_dir)
+
+            with patch("chamber.control_plane.server.MAX_UI_TOTAL_UPLOAD_BYTES", 5):
+                with self.assertRaisesRegex(ValueError, "256 MiB total"):
+                    asyncio.run(
+                        _persist_journey_files(
+                            root,
+                            multiple_files,
+                            [uploaded(b"123"), uploaded(b"456")],
+                        )
+                    )
+
+    def test_ui_persists_multiple_relayna_multipart_files(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workspace = root / ".chamber"
+            repo = _fixture_repo(root)
+            app = create_app(workspace)
+            journey = {
+                "name": "document-lifecycle",
+                "adapter": "relayna",
+                "method": "POST",
+                "path": "/tasks",
+                "expectedStatus": 202,
+                "requestEncoding": "multipart",
+                "multipart": {
+                    "fields": {
+                        "priority": 5,
+                        "extraction_fields": {
+                            "encoding": "json",
+                            "value": [{"name": "invoice_number"}],
+                        },
+                    },
+                    "files": [
+                        {
+                            "field": "file",
+                            "filename": "document.png",
+                            "contentType": "image/png",
+                            "required": True,
+                            "uploadIndex": 0,
+                        },
+                        {
+                            "field": "roi",
+                            "filename": "roi.png",
+                            "contentType": "image/png",
+                            "required": False,
+                            "uploadIndex": 1,
+                        },
+                    ],
+                },
+                "vus": 1,
+                "iterations": 1,
+                "durationSeconds": 1,
+                "relayna": {
+                    "taskIdPath": "task_id",
+                    "eventsPath": "/events/{task_id}",
+                    "terminalStatuses": ["completed", "failed"],
+                    "successStatuses": ["completed"],
+                    "timeoutSeconds": 30,
+                },
+            }
+            with TestClient(app) as client:
+                client.get("/new")
+                csrf = str(client.cookies.get("ampule_csrf"))
+                response = client.post(
+                    "/ui/plan",
+                    data={
+                        "_csrf": csrf,
+                        "repo": str(repo),
+                        "service_name": "document-service",
+                        "execution_mode": "kubernetes",
+                        "runtime_mode": "deploy",
+                        "kubernetes_context": "kind-ampule-chamber",
+                        "service_port": "8080",
+                        "journeys_json": json.dumps([journey]),
+                        "agents_mode": "offline",
+                    },
+                    files=[
+                        ("journey_files", ("document.png", b"document", "image/png")),
+                        ("journey_files", ("roi.png", b"roi", "image/png")),
+                    ],
+                    follow_redirects=False,
+                )
+
+            self.assertEqual(response.status_code, 303, response.text)
+            run_id = response.headers["location"].split("/")[2].split("?")[0]
+            config = yaml.safe_load(
+                (workspace / "runs" / run_id / "chamber.yaml").read_text(encoding="utf-8")
+            )
+            persisted = config["traffic"]["journeys"][0]
+            self.assertEqual(persisted["adapter"], "relayna")
+            self.assertEqual(persisted["requestEncoding"], "multipart")
+            self.assertEqual(
+                [item["field"] for item in persisted["multipart"]["files"]],
+                ["file", "roi"],
+            )
+            self.assertTrue(
+                all(
+                    Path(item["path"]).resolve().is_relative_to((workspace / "uploads").resolve())
+                    for item in persisted["multipart"]["files"]
+                )
+            )
 
     def test_saved_multipart_paths_survive_ui_planning_without_reupload(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -864,7 +1128,7 @@ class ControlPlaneTests(unittest.TestCase):
 
             with TestClient(create_app(workspace)) as client:
                 new_page = client.get("/new")
-                self.assertIn("data-existing-file", new_page.text)
+                self.assertIn("data-existing-multipart-file", new_page.text)
                 csrf = str(client.cookies["ampule_csrf"])
                 headers = {"X-CSRF-Token": csrf}
                 imported = client.post(
@@ -964,11 +1228,9 @@ class ControlPlaneTests(unittest.TestCase):
             script = (Path(__file__).parents[1] / "chamber/control_plane/static/app.js").read_text(
                 encoding="utf-8"
             )
-            self.assertIn("card.dataset.multipartFiles = JSON.stringify(retainedFiles);", script)
-            self.assertIn("pathToken: item.pathToken", script)
-            self.assertIn(
-                'files = [{field: field(card, "fileField").value.trim(), uploadIndex}]', script
-            )
+            self.assertIn("row.dataset.retainedMultipartFile = JSON.stringify(item);", script)
+            self.assertIn("pathToken: retained.pathToken", script)
+            self.assertIn("Object.assign(item, {filename, contentType, uploadIndex});", script)
 
     def test_failed_plan_does_not_save_scenario_or_retain_uploaded_file(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -1085,7 +1347,9 @@ class ControlPlaneTests(unittest.TestCase):
         self.assertIn("? JSON.stringify(journey.body, null, 2)", populate_source)
         self.assertIn(': "";', populate_source)
 
-        serialize_start = script.index("const serializeJourneys = () =>")
+        serialize_start = script.index(
+            "const serializeJourneys = ({prepareUploads = false} = {}) =>"
+        )
         serialize_end = script.index("const selectModeCard", serialize_start)
         serialize_source = script[serialize_start:serialize_end]
         self.assertIn('const bodyControl = field(card, "body");', serialize_source)

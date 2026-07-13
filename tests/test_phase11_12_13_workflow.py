@@ -156,6 +156,59 @@ class Phase11GuidedWorkflowTests(unittest.TestCase):
             with self.assertRaisesRegex(WorkflowError, "runtime.secretEnv"):
                 plan_config(config_path, run_dir=root / ".chamber/runs/secret-leak")
 
+    def test_relayna_multipart_paths_are_validated_against_config_workspace(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = _fixture_repo(root)
+            upload = root / "uploads/document.png"
+            upload.parent.mkdir()
+            upload.write_bytes(b"image")
+            config = infer_config(repo)
+            config["traffic"]["journeys"] = [
+                {
+                    "name": "document-lifecycle",
+                    "adapter": "relayna",
+                    "method": "POST",
+                    "path": "/tasks",
+                    "expectedStatus": 202,
+                    "requestEncoding": "multipart",
+                    "multipart": {
+                        "fields": {"priority": 5},
+                        "files": [
+                            {
+                                "field": "file",
+                                "path": str(upload),
+                                "filename": "document.png",
+                                "contentType": "image/png",
+                                "required": True,
+                            }
+                        ],
+                    },
+                    "vus": 1,
+                    "iterations": 1,
+                    "relayna": {
+                        "taskIdPath": "task_id",
+                        "eventsPath": "/events/{task_id}",
+                        "terminalStatuses": ["completed", "failed"],
+                        "successStatuses": ["completed"],
+                        "timeoutSeconds": 30,
+                    },
+                }
+            ]
+            config_path = root / "chamber.yaml"
+            save_config(config, config_path)
+
+            loaded = load_config(config_path)
+            self.assertEqual(
+                loaded["traffic"]["journeys"][0]["multipart"]["files"][0]["path"],
+                str(upload),
+            )
+
+            config["traffic"]["journeys"][0]["multipart"]["files"][0]["path"] = "/etc/hosts"
+            save_config(config, config_path)
+            with self.assertRaisesRegex(WorkflowError, "outside the approved"):
+                load_config(config_path)
+
     def test_kubernetes_runtime_config_is_validated_and_recorded_in_plan(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1104,7 +1157,11 @@ class Phase13OneCommandAssessmentTests(unittest.TestCase):
                                     "path": str(upload),
                                     "filename": "invoice.pdf",
                                     "contentType": "application/pdf",
-                                }
+                                },
+                                {
+                                    "field": "roi",
+                                    "required": False,
+                                },
                             ],
                         },
                         "iterations": 1,
@@ -1135,6 +1192,7 @@ class Phase13OneCommandAssessmentTests(unittest.TestCase):
         self.assertIn(f"open({json.dumps(str(upload))}, 'b')", script)
         self.assertIn("http.file(", script)
         self.assertIn('"field": "file"', script)
+        self.assertNotIn('"field": "roi"', script)
         self.assertIn("application/x-www-form-urlencoded", script)
         self.assertIn("'Content-Type': journey.contentType", script)
 

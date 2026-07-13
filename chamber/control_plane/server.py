@@ -51,6 +51,7 @@ TEMPLATE_DIR = PACKAGE_DIR / "templates"
 STATIC_DIR = PACKAGE_DIR / "static"
 CSRF_COOKIE = "ampule_csrf"
 MAX_UI_UPLOAD_BYTES = 128 * 1024 * 1024
+MAX_UI_TOTAL_UPLOAD_BYTES = 256 * 1024 * 1024
 
 
 class InspectRequest(BaseModel):
@@ -720,7 +721,7 @@ def _plan_from_values(
     traffic = cast(dict[str, Any], config["traffic"])
     traffic["entrypoint"] = name
     if journeys_json.strip():
-        traffic["journeys"] = _ui_journeys(journeys_json)
+        traffic["journeys"] = _ui_journeys(journeys_json, workspace=workspace)
     elif journey_type == "relayna":
         try:
             body = json.loads(request_body)
@@ -960,7 +961,7 @@ def _matching_user_scenario(
     return selected if matches else None
 
 
-def _ui_journeys(raw: str) -> list[dict[str, Any]]:
+def _ui_journeys(raw: str, *, workspace: Path | None = None) -> list[dict[str, Any]]:
     try:
         value = json.loads(raw)
     except json.JSONDecodeError as exc:
@@ -1001,11 +1002,13 @@ def _ui_journeys(raw: str) -> list[dict[str, Any]]:
             _validate_http_load(journey, index=index)
             _validate_request_encoding(journey, index=index)
         elif adapter == "relayna":
-            if encoding not in {"none", "json"}:
+            if encoding not in {"json", "multipart"}:
                 raise ValueError(
-                    f"Traffic journey {index} Relayna adapter currently supports JSON requests only"
+                    f"Traffic journey {index} Relayna adapter supports JSON or multipart requests"
                 )
-            validate_relayna_journey(journey)
+            if encoding == "multipart":
+                _validate_request_encoding(journey, index=index)
+            validate_relayna_journey(journey, workspace=workspace)
         else:
             raise ValueError(f"Traffic journey {index} adapter must be http or relayna")
         _validate_follow_ups(journey, index=index)
@@ -1047,8 +1050,18 @@ async def _persist_journey_files(
         file_entries.extend(item for item in files if isinstance(item, dict))
     if not uploads:
         for item in file_entries:
+            if item.pop("uploadIndex", None) is not None:
+                raise ValueError("UI multipart files require a browser upload")
             token = item.pop("pathToken", None)
-            managed_path = _redeem_multipart_path(item.get("path"), token, path_secret, upload_root)
+            required = item.get("required", True)
+            if not isinstance(required, bool):
+                raise ValueError("Multipart file required state must be true or false")
+            raw_path = item.get("path")
+            if not raw_path and not token and not required:
+                item.pop("filename", None)
+                item.pop("contentType", None)
+                continue
+            managed_path = _redeem_multipart_path(raw_path, token, path_secret, upload_root)
             if managed_path is None:
                 raise ValueError("UI multipart files require a browser upload")
             item["path"] = str(managed_path)
@@ -1056,21 +1069,26 @@ async def _persist_journey_files(
     upload_dir = upload_root / uuid.uuid4().hex
     upload_dir.mkdir(parents=True, exist_ok=False)
     referenced: set[int] = set()
+    total_size = 0
     try:
         for item in file_entries:
+            required = item.get("required", True)
+            if not isinstance(required, bool):
+                raise ValueError("Multipart file required state must be true or false")
             token = item.pop("pathToken", None)
             upload_index = item.pop("uploadIndex", None)
             if upload_index is None:
-                managed_path = _redeem_multipart_path(
-                    item.get("path"), token, path_secret, upload_root
-                )
+                raw_path = item.get("path")
+                managed_path = _redeem_multipart_path(raw_path, token, path_secret, upload_root)
                 if managed_path is not None:
                     item["path"] = str(managed_path)
                     continue
+                if not raw_path and not token and not required:
+                    item.pop("filename", None)
+                    item.pop("contentType", None)
+                    continue
                 raise ValueError("Multipart file is missing its browser upload reference")
             item.pop("path", None)
-            item.pop("filename", None)
-            item.pop("contentType", None)
             if not isinstance(upload_index, int) or isinstance(upload_index, bool):
                 raise ValueError("Multipart file is missing its browser upload reference")
             if upload_index < 0 or upload_index >= len(uploads):
@@ -1079,7 +1097,20 @@ async def _persist_journey_files(
                 raise ValueError("Multipart browser upload cannot be reused")
             referenced.add(upload_index)
             upload = uploads[upload_index]
-            filename = Path(upload.filename or "upload.bin").name or "upload.bin"
+            original_filename = Path(upload.filename or "").name
+            configured_filename = item.get("filename")
+            filename = str(configured_filename or original_filename).strip()
+            if not filename:
+                raise ValueError("Browser-uploaded journey files require a filename")
+            if Path(filename).name != filename or any(
+                character in filename for character in "\r\n"
+            ):
+                raise ValueError("Browser-uploaded journey filenames must not contain paths")
+            content_type = str(item.get("contentType") or upload.content_type or "").strip()
+            if not content_type:
+                raise ValueError(
+                    f"Browser-uploaded journey file {filename!r} requires a content type"
+                )
             destination = upload_dir / f"{upload_index}-{filename}"
             size = 0
             with destination.open("wb") as stream:
@@ -1087,6 +1118,11 @@ async def _persist_journey_files(
                     size += len(chunk)
                     if size > MAX_UI_UPLOAD_BYTES:
                         raise ValueError("Browser-uploaded journey files are limited to 128 MiB")
+                    total_size += len(chunk)
+                    if total_size > MAX_UI_TOTAL_UPLOAD_BYTES:
+                        raise ValueError(
+                            "Browser-uploaded journey files are limited to 256 MiB total"
+                        )
                     stream.write(chunk)
             if size == 0:
                 raise ValueError(f"Multipart file {filename!r} must not be empty")
@@ -1094,7 +1130,8 @@ async def _persist_journey_files(
                 {
                     "path": str(destination),
                     "filename": filename,
-                    "contentType": upload.content_type or "application/octet-stream",
+                    "contentType": content_type,
+                    "required": required,
                 }
             )
         if referenced != set(range(len(uploads))):
@@ -1185,6 +1222,14 @@ def _validate_request_encoding(journey: dict[str, Any], *, index: int) -> None:
             if field in seen_fields:
                 raise ValueError(f"Traffic journey {index} multipart file fields must be unique")
             seen_fields.add(field)
+            required = item.get("required", True)
+            if not isinstance(required, bool):
+                raise ValueError(
+                    f"Traffic journey {index} multipart file {file_index} required "
+                    "must be a boolean"
+                )
+            if (path is None or path == "") and not required:
+                continue
             if not isinstance(path, str) or not Path(path).is_file():
                 raise ValueError(
                     f"Traffic journey {index} multipart file {file_index} path is not readable"

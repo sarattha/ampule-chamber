@@ -2,10 +2,19 @@
 
 ## 1.6.0 - 2026-07-13
 
-Ampule Chamber `1.6.0` adds reusable, editable scenarios to the control plane.
+Ampule Chamber `1.6.0` adds reusable, editable control-plane scenarios and
+brings file and image submissions into the Relayna task-lifecycle adapter.
 
 Highlights:
 
+- Submit multiple required or optional files alongside deterministic scalar
+  and explicit JSON multipart fields.
+- Follow the configured parent task ID through the existing SSE lifecycle and
+  readiness path.
+- Bound, validate, and workspace-contain uploads before planning or execution.
+- Record only filenames, content types, sizes, field names, and SHA-256 digests
+  in evidence and reports.
+- Configure and review multi-file Relayna journeys in the control-plane UI.
 - Choose bundled or durable workspace scenarios with metadata, compatibility
   warnings, search, and adapter or fault filtering.
 - Import validated `Scenario` or `ChamberConfig` YAML/JSON and resolve it into

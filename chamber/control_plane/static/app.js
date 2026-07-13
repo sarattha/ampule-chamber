@@ -44,11 +44,12 @@
     };
 
     const field = (card, name) => card.querySelector(`[data-journey-field="${name}"]`);
-    const existingMultipartFiles = card => {
+    const multipartField = (row, name) => row.querySelector(`[data-multipart-file-field="${name}"]`);
+    const retainedMultipartFile = row => {
       try {
-        const files = JSON.parse(card.dataset.multipartFiles || "[]");
-        return Array.isArray(files) ? files : [];
-      } catch (_) { return []; }
+        const item = JSON.parse(row.dataset.retainedMultipartFile || "null");
+        return item && typeof item === "object" ? item : null;
+      } catch (_) { return null; }
     };
     const parseJson = (control, label, {required = false} = {}) => {
       const raw = control.value.trim();
@@ -69,6 +70,44 @@
       });
     };
 
+    const syncMultipartFiles = (card, active) => {
+      const rows = [...card.querySelectorAll("[data-multipart-file]")];
+      rows.forEach(row => {
+        const upload = multipartField(row, "file");
+        const retained = retainedMultipartFile(row);
+        const usingRetained = retained && !upload.files.length;
+        upload.disabled = !active;
+        upload.required = active && multipartField(row, "required").checked && !usingRetained;
+        const existingFileStatus = row.querySelector("[data-existing-multipart-file]");
+        existingFileStatus.hidden = !active || !usingRetained;
+        existingFileStatus.textContent = usingRetained
+          ? `Using validated file: ${retained.filename || retained.path}. Select a new upload to replace it.`
+          : "";
+        row.querySelector("[data-remove-multipart-file]").disabled = rows.length === 1;
+      });
+    };
+
+    const addMultipartFile = (card, {fieldName, item = null} = {}) => {
+      const template = card.querySelector("[data-multipart-file-template]");
+      const fragment = template.content.cloneNode(true);
+      const row = fragment.querySelector("[data-multipart-file]");
+      const count = card.querySelectorAll("[data-multipart-file]").length + 1;
+      multipartField(row, "field").value = fieldName || item?.field || (count === 1 ? "file" : `file_${count}`);
+      multipartField(row, "filename").value = item?.filename || "";
+      multipartField(row, "contentType").value = item?.contentType || "";
+      multipartField(row, "required").checked = item?.required !== false;
+      if (item?.path && item?.pathToken) {
+        row.dataset.retainedMultipartFile = JSON.stringify(item);
+      }
+      row.querySelector("[data-remove-multipart-file]").addEventListener("click", () => {
+        row.remove();
+        syncMultipartFiles(card, field(card, "requestEncoding").value === "multipart");
+      });
+      card.querySelector("[data-multipart-file-list]").appendChild(fragment);
+      syncMultipartFiles(card, field(card, "requestEncoding").value === "multipart");
+      return row;
+    };
+
     const syncJourney = (card, {resetDefaults = false} = {}) => {
       const adapter = field(card, "adapter").value;
       const relayna = adapter === "relayna";
@@ -83,22 +122,17 @@
       card.querySelector("[data-form-request]").hidden = requestEncoding !== "form";
       card.querySelector("[data-raw-request]").hidden = requestEncoding !== "raw";
       card.querySelector("[data-text-bytes]").hidden = requestEncoding !== "json";
-      field(card, "requestEncoding").disabled = relayna;
-      field(card, "body").required = relayna;
-      field(card, "file").disabled = requestEncoding !== "multipart";
-      const retainedFiles = existingMultipartFiles(card);
-      field(card, "file").required = requestEncoding === "multipart" && !retainedFiles.length;
-      const existingFileStatus = card.querySelector("[data-existing-file]");
-      existingFileStatus.hidden = requestEncoding !== "multipart" || !retainedFiles.length;
-      existingFileStatus.textContent = retainedFiles.length
-        ? `Using validated file: ${retainedFiles.map(item => item.filename || item.path).join(", ")}. Select a new upload to replace it.`
-        : "";
-      field(card, "multipartFields").required = requestEncoding === "multipart";
+      [...field(card, "requestEncoding").options].forEach(option => {
+        option.disabled = relayna && !["json", "multipart"].includes(option.value);
+      });
+      field(card, "body").required = relayna && requestEncoding === "json";
+      field(card, "multipartFields").required = false;
       field(card, "form").required = requestEncoding === "form";
       field(card, "rawBody").required = requestEncoding === "raw";
       field(card, "contentType").required = requestEncoding === "raw";
       field(card, "eventsPath").required = relayna;
       field(card, "taskIdPath").required = relayna;
+      syncMultipartFiles(card, requestEncoding === "multipart");
       if (resetDefaults) {
         field(card, "method").value = relayna ? "POST" : "GET";
         field(card, "path").value = relayna ? "/translations" : "/health";
@@ -123,10 +157,12 @@
       field(card, "adapter").addEventListener("change", () => syncJourney(card, {resetDefaults: true}));
       field(card, "loadModel").addEventListener("change", () => syncJourney(card));
       field(card, "requestEncoding").addEventListener("change", () => syncJourney(card));
+      card.querySelector("[data-add-multipart-file]").addEventListener("click", () => addMultipartFile(card));
       card.querySelector("[data-remove-journey]").addEventListener("click", () => {
         card.remove();
         renumberJourneys();
       });
+      addMultipartFile(card);
       journeyList.appendChild(fragment);
       syncJourney(card, {resetDefaults: adapter === "relayna"});
       if (journey) populateJourney(card, journey);
@@ -151,10 +187,13 @@
       }
       if (encoding === "multipart") {
         const files = Array.isArray(journey.multipart?.files) ? journey.multipart.files : [];
-        const retainedFiles = files.filter(item => item?.path && item?.pathToken);
-        card.dataset.multipartFiles = JSON.stringify(retainedFiles);
         field(card, "multipartFields").value = JSON.stringify(journey.multipart?.fields || {}, null, 2);
-        field(card, "fileField").value = files[0]?.field || "file";
+        card.querySelector("[data-multipart-file-list]").replaceChildren();
+        if (files.length) {
+          files.forEach(item => addMultipartFile(card, {fieldName: item?.field, item}));
+        } else {
+          addMultipartFile(card);
+        }
       }
       if (encoding === "form") field(card, "form").value = JSON.stringify(journey.form || {}, null, 2);
       if (encoding === "raw") {
@@ -263,7 +302,7 @@
       applyScenario(payload);
     };
 
-    const serializeJourneys = () => {
+    const serializeJourneys = ({prepareUploads = false} = {}) => {
       const cards = [...journeyList.querySelectorAll("[data-journey]")];
       if (!cards.length) throw new Error("Add at least one traffic journey.");
       const adapters = new Set(cards.map(card => field(card, "adapter").value));
@@ -290,32 +329,39 @@
           const textBytes = Number(field(card, "textBytes").value);
           if (textBytes > 0) journey.textBytes = textBytes;
         } else if (requestEncoding === "multipart") {
-          const fields = parseJson(field(card, "multipartFields"), `Journey ${index + 1} multipart fields`, {required: true});
-          if (!fields || Array.isArray(fields) || typeof fields !== "object") {
+          const fields = parseJson(field(card, "multipartFields"), `Journey ${index + 1} multipart fields`) || {};
+          if (Array.isArray(fields) || typeof fields !== "object") {
             field(card, "multipartFields").setCustomValidity("Multipart fields must be a JSON object.");
             throw new Error("Multipart fields must be a JSON object.");
           }
-          const upload = field(card, "file").files[0];
-          const existingFiles = existingMultipartFiles(card);
-          if (!upload && !existingFiles.length) {
-            throw new Error(`Journey ${index + 1} requires an uploaded file.`);
-          }
-          let files;
-          if (upload) {
-            files = [{field: field(card, "fileField").value.trim(), uploadIndex}];
-            uploadIndex += 1;
-          } else {
-            files = existingFiles.map((item, fileIndex) => {
-              const retained = {
-                field: fileIndex === 0 ? field(card, "fileField").value.trim() : item.field,
-                path: item.path,
-                pathToken: item.pathToken,
-              };
-              if (item.filename) retained.filename = item.filename;
-              if (item.contentType) retained.contentType = item.contentType;
-              return retained;
-            });
-          }
+          const fileRows = [...card.querySelectorAll("[data-multipart-file]")];
+          if (!fileRows.length) throw new Error(`Journey ${index + 1} requires at least one file row.`);
+          const files = fileRows.map((row, fileIndex) => {
+            const uploadControl = multipartField(row, "file");
+            const upload = uploadControl.files[0];
+            const retained = retainedMultipartFile(row);
+            const required = multipartField(row, "required").checked;
+            const fileField = multipartField(row, "field").value.trim();
+            if (!fileField) throw new Error(`Journey ${index + 1} file ${fileIndex + 1} requires a field name.`);
+            if (required && !upload && !retained) throw new Error(`Journey ${index + 1} required file ${fileField} needs an upload.`);
+            uploadControl.disabled = prepareUploads && !upload;
+            const item = {field: fileField, required};
+            if (upload) {
+              const filename = multipartField(row, "filename").value.trim() || upload.name;
+              const contentType = multipartField(row, "contentType").value.trim() || upload.type;
+              if (!contentType) throw new Error(`Journey ${index + 1} file ${fileField} requires a content type.`);
+              Object.assign(item, {filename, contentType, uploadIndex});
+              uploadIndex += 1;
+            } else if (retained) {
+              Object.assign(item, {
+                path: retained.path,
+                pathToken: retained.pathToken,
+                filename: multipartField(row, "filename").value.trim() || retained.filename,
+                contentType: multipartField(row, "contentType").value.trim() || retained.contentType,
+              });
+            }
+            return item;
+          });
           journey.multipart = {
             fields,
             files,
@@ -561,8 +607,12 @@
     });
     submit.addEventListener("click", ensureScenarioIdentity);
     form.addEventListener("submit", event => {
-      try { serializeJourneys(); }
-      catch (error) { event.preventDefault(); window.alert(error.message); }
+      try { serializeJourneys({prepareUploads: true}); }
+      catch (error) {
+        event.preventDefault();
+        journeyList.querySelectorAll("[data-journey]").forEach(card => syncJourney(card));
+        window.alert(error.message);
+      }
     });
     form.querySelector("[data-advanced]").addEventListener("click", () => {
       updateReview(form);
@@ -590,6 +640,22 @@
     const adapters = new Set([...journeys].map(card => card.querySelector('[data-journey-field="adapter"]').value));
     const summary = form.querySelector("[data-review-journeys]");
     if (summary) summary.textContent = `${journeys.length} ${[...adapters].join(" + ").toUpperCase()} journey${journeys.length === 1 ? "" : "s"}`;
+    const fileDescriptions = [...form.querySelectorAll("[data-multipart-file]")].flatMap(row => {
+      const card = row.closest("[data-journey]");
+      if (card.querySelector('[data-journey-field="requestEncoding"]').value !== "multipart") return [];
+      const upload = row.querySelector('[data-multipart-file-field="file"]').files[0];
+      if (upload) return [`${upload.name} (${upload.type || "unknown type"}, ${upload.size} bytes)`];
+      try {
+        const retained = JSON.parse(row.dataset.retainedMultipartFile || "null");
+        return retained ? [`${retained.filename || retained.path} (${retained.contentType || "unknown type"}, retained upload)`] : [];
+      } catch (_) { return []; }
+    });
+    const fileSummary = form.querySelector("[data-review-files]");
+    if (fileSummary) {
+      fileSummary.textContent = fileDescriptions.length
+        ? `${fileDescriptions.length} file${fileDescriptions.length === 1 ? "" : "s"}: ${fileDescriptions.join(", ")}`
+        : "No multipart uploads";
+    }
     let serialized = [];
     try { serialized = JSON.parse(form.querySelector("[data-journeys-json]").value || "[]"); }
     catch (_) { serialized = []; }

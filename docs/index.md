@@ -9,12 +9,12 @@ collects runtime evidence, and produces evidence-backed readiness reports.
 
 ## Production-Ready Release
 
-The `1.6.0` release adds reusable, editable scenarios to the control plane.
-Operators can choose bundled or durable workspace scenarios, import supported
-YAML/JSON, inspect compatibility metadata, adjust the resolved exercise, and
-save custom definitions without accidental replacement. Generated configs and
-run records preserve scenario ID, source, and revision, and imported faults stay
-disabled until explicitly selected.
+The `1.6.0` release adds reusable, editable control-plane scenarios and Relayna
+multipart lifecycle journeys for asynchronous file and image processors.
+Scenario ID, source, and revision remain durable while multiple required or
+optional uploads use explicit scalar/JSON fields, safe digest evidence, and the
+existing parent-task SSE completion semantics. Imported faults remain disabled
+until explicitly selected.
 
 ## Core Commands
 

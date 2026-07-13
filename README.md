@@ -15,12 +15,13 @@ teams that need to answer:
 
 ## Release Status
 
-Ampule Chamber `1.6.0` adds reusable, editable scenarios to the control plane.
-Operators can choose bundled or durable workspace scenarios, import supported
-YAML/JSON, review compatibility metadata, adjust every resolved exercise field,
-and save custom definitions without accidental replacement. Generated configs
-and durable run records preserve scenario ID, source, and revision. Imported
-faults remain disabled until an operator explicitly selects them.
+Ampule Chamber `1.6.0` adds reusable, editable control-plane scenarios and
+first-class multipart submissions to Relayna lifecycle journeys. Operators can
+import or save scenario definitions, attach multiple required or optional
+files, follow parent tasks through SSE, and retain safe scenario provenance and
+file digests in evidence. Imported faults remain disabled until explicitly
+selected, and existing JSON Relayna and HTTP multipart journeys remain
+compatible.
 
 ## What It Tests
 
