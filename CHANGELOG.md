@@ -2,6 +2,31 @@
 
 All notable changes to Ampule Chamber are documented in this file.
 
+## 1.6.0 - 2026-07-13
+
+### Added
+
+- Added multipart Relayna lifecycle execution with multiple named required or
+  optional files, deterministic scalar and explicit JSON form serialization,
+  bounded upload sizes, parent task-ID extraction, and existing SSE terminal
+  status semantics.
+- Added safe upload metadata and SHA-256 digests to Relayna evidence and
+  reports without persisting file bytes or paths in lifecycle summaries.
+- Added multi-file Relayna controls and Review-step metadata to the control
+  plane, backed by workspace-contained durable uploads.
+
+### Changed
+
+- Relayna validation now accepts JSON or multipart requests while preserving
+  existing JSON Relayna and HTTP multipart behavior.
+- Multipart lifecycle failures now identify admission, task-ID extraction, SSE
+  connection, timeout, or terminal-status stages.
+
+### Documentation
+
+- Added single-file OCR and multi-file extraction ChamberConfig examples,
+  serialization rules, supported content types, limits, and evidence behavior.
+
 ## 1.5.2 - 2026-07-12
 
 ### Added

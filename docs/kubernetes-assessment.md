@@ -97,6 +97,7 @@ traffic:
       method: POST
       path: /translations
       expectedStatus: 202
+      requestEncoding: json
       vus: 1
       iterations: 3
       textBytes: 32768
@@ -134,6 +135,7 @@ traffic:
       method: POST
       path: /translations
       expectedStatus: 202
+      requestEncoding: json
       vus: 1
       iterations: 1
       body:
@@ -160,6 +162,113 @@ task ID, malformed response, stream error, or timeout fails the traffic stage.
 The task ID is URL-encoded before the SSE request is sent. Request bodies are
 kept in the resolved configuration but are not copied into Relayna execution
 evidence.
+
+Relayna journeys also accept multipart document and image submissions. Scalar
+strings, integers, and booleans are serialized directly. Arrays and objects use
+an explicit JSON descriptor so their wire representation is deterministic.
+
+Single-file OCR-style example:
+
+```yaml
+traffic:
+  entrypoint: document-service
+  journeys:
+    - name: document-processing-lifecycle
+      adapter: relayna
+      method: POST
+      path: /tasks
+      expectedStatus: 202
+      requestEncoding: multipart
+      multipart:
+        maxFileBytes: 134217728
+        maxTotalBytes: 268435456
+        fields:
+          task_id: chamber-document-smoke
+          mode: layout
+          priority: 5
+          strict_mode: false
+        files:
+          - field: file
+            path: /durable/chamber/workspace/uploads/document.png
+            filename: document.png
+            contentType: image/png
+            required: true
+      vus: 1
+      iterations: 1
+      relayna:
+        taskIdPath: task_id
+        eventsPath: /events/{task_id}
+        terminalStatuses: [completed, failed]
+        successStatuses: [completed]
+        timeoutSeconds: 300
+```
+
+Multi-file extraction-style example with an optional ROI mask and JSON-encoded
+array/object fields:
+
+```yaml
+traffic:
+  entrypoint: extraction-service
+  journeys:
+    - name: field-extraction-lifecycle
+      adapter: relayna
+      method: POST
+      path: /tasks
+      expectedStatus: 202
+      requestEncoding: multipart
+      multipart:
+        fields:
+          task_id: chamber-extraction-smoke
+          priority: 5
+          strict_mode: false
+          extraction_fields:
+            encoding: json
+            value:
+              - name: document_number
+                type: string
+          processing_config:
+            encoding: json
+            value:
+              engine: internal
+              fallback: true
+        files:
+          - field: file
+            path: /durable/chamber/workspace/uploads/document.png
+            filename: document.png
+            contentType: image/png
+            required: true
+          - field: roi
+            path: /durable/chamber/workspace/uploads/roi.png
+            filename: roi.png
+            contentType: image/png
+            required: false
+      vus: 1
+      iterations: 1
+      relayna:
+        taskIdPath: task_id
+        eventsPath: /events/{task_id}
+        terminalStatuses: [completed, failed]
+        successStatuses: [completed]
+        timeoutSeconds: 300
+```
+
+`task_id` multipart fields receive the same bounded per-iteration uniqueness
+suffix as existing HTTP multipart journeys. Set `uniqueTaskIdField` to another
+field name, or to an empty string to disable this behavior. Chamber follows only
+the value at `relayna.taskIdPath`, even when the admission response also contains
+child task IDs.
+
+Multipart files must resolve inside the Chamber workspace and remain readable.
+PDF, PNG, JPEG, TIFF, BMP, GIF, and WebP are accepted; empty files, missing or
+unsupported content types, workspace escapes, and requests over the configured
+limits are rejected. Hard limits are 128 MiB per file and 256 MiB per request.
+Lifecycle evidence and reports contain field name, filename, content type, byte
+size, and SHA-256 digest only. They never contain the file path or bytes.
+
+Each Relayna task result includes `failure_stage` so admission,
+`task_id_extraction`, `sse_connection`, `timeout`, and `terminal_failure`
+outcomes remain distinguishable. Any unsuccessful lifecycle makes traffic fail
+and therefore prevents a ready assessment result.
 
 Store secrets as environment requirements, not plaintext runtime values:
 

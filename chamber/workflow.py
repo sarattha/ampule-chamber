@@ -293,7 +293,12 @@ def save_config(config: dict[str, Any], path: Path) -> None:
     path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
 
 
-def load_config(path: Path, *, require_repo: bool = True) -> dict[str, Any]:
+def load_config(
+    path: Path,
+    *,
+    require_repo: bool = True,
+    workspace: Path | None = None,
+) -> dict[str, Any]:
     """Load and validate a user-facing chamber config."""
 
     try:
@@ -302,7 +307,12 @@ def load_config(path: Path, *, require_repo: bool = True) -> dict[str, Any]:
         raise WorkflowError(f"cannot read config {path}: {exc}") from exc
     if not isinstance(raw, dict):
         raise WorkflowError(f"{path}: config must be a YAML mapping")
-    validate_config(raw, source=str(path), require_repo=require_repo)
+    validate_config(
+        raw,
+        source=str(path),
+        require_repo=require_repo,
+        workspace=workspace or _config_workspace(path),
+    )
     return raw
 
 
@@ -311,6 +321,7 @@ def validate_config(
     *,
     source: str = "<memory>",
     require_repo: bool = True,
+    workspace: Path | None = None,
 ) -> None:
     """Validate the minimum stable ChamberConfig contract."""
 
@@ -356,7 +367,7 @@ def validate_config(
         journey = _mapping(journey_item, f"{source}.traffic.journeys[{index}]")
         if journey.get("adapter") == "relayna":
             try:
-                validate_relayna_journey(journey)
+                validate_relayna_journey(journey, workspace=workspace)
             except ValueError as exc:
                 raise WorkflowError(f"{source}.traffic.journeys[{index}]: {exc}") from exc
     agents = _mapping(config.get("agents", {}), f"{source}.agents")
@@ -375,6 +386,15 @@ def validate_config(
         source=f"{source}.agents.exclude",
     )
     _validate_runtime(runtime, source=f"{source}.runtime")
+
+
+def _config_workspace(path: Path) -> Path:
+    resolved = path.resolve()
+    if resolved.parent.name in {"drafts", "runs"}:
+        return resolved.parent.parent
+    if resolved.parent.parent.name == "runs":
+        return resolved.parent.parent.parent
+    return resolved.parent
 
 
 def config_to_onboarding_spec(config: dict[str, Any]) -> OnboardingSpec:
@@ -1371,7 +1391,12 @@ def _execute_kubernetes_traffic(
         time.sleep(2)
     try:
         if relayna_journeys:
-            summary = execute_relayna_journeys(relayna_journeys, base_url=base_url)
+            workspace = run_dir.parent.parent if run_dir.parent.name == RUNS_DIR else run_dir.parent
+            summary = execute_relayna_journeys(
+                relayna_journeys,
+                base_url=base_url,
+                workspace=workspace,
+            )
             _write_json(summary_path, summary)
             return {
                 "success": bool(summary["success"]),
@@ -2777,7 +2802,7 @@ def _report_input(
         for index, item in enumerate(_list(traffic["journeys"], "traffic.journeys"))
     )
     cleanup_notes = tuple(metadata.get("cleanup_notes") or ["Cleanup status was not recorded."])
-    agent_sections = _agent_sections(run_dir)
+    agent_sections = _agent_sections(run_dir) + _relayna_input_sections(run_dir)
     evidence = [
         EvidenceReference(
             "plan",
@@ -2883,6 +2908,36 @@ def _report_input(
             else None
         ),
     )
+
+
+def _relayna_input_sections(run_dir: Path) -> tuple[ReportSection, ...]:
+    path = run_dir / "evidence/relayna-summary.json"
+    if not path.exists():
+        return ()
+    inputs = _read_json(path).get("inputs")
+    if not isinstance(inputs, list):
+        return ()
+    lines = []
+    for journey in inputs:
+        if not isinstance(journey, dict):
+            continue
+        name = str(journey.get("journey", "relayna"))
+        files = journey.get("files")
+        if not isinstance(files, list):
+            continue
+        for item in files:
+            if not isinstance(item, dict):
+                continue
+            lines.append(
+                f"{name}: field={item.get('field', 'unknown')}, "
+                f"filename={item.get('filename', 'unknown')}, "
+                f"content-type={item.get('content_type', 'unknown')}, "
+                f"size={item.get('size_bytes', 'unknown')} bytes, "
+                f"sha256={item.get('sha256', 'unavailable')}"
+            )
+    if not lines:
+        return ()
+    return (ReportSection(heading="Relayna Upload Inputs", lines=tuple(lines)),)
 
 
 def _registered_evidence_references(

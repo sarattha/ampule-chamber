@@ -1,6 +1,6 @@
 # Ampule Chamber
 
-Version: 1.5.2
+Version: 1.6.0
 
 Ampule Chamber is a production-ready reliability testing chamber for Kubernetes
 services before production. It deploys services into isolated chamber
@@ -9,13 +9,10 @@ collects runtime evidence, and produces evidence-backed readiness reports.
 
 ## Production-Ready Release
 
-The `1.5.2` release runs the authenticated control-plane UI inside Kubernetes.
-It adds a release image, Helm chart and raw manifests, PVC-backed run storage,
-operator-token sign-in, and declared-namespace discovery for existing Services
-and their backing Deployments or StatefulSets. The exercise editor supports
-multiple HTTP or Relayna journeys with editable expected response statuses. Its
-release image is scanned before registry publication, and its documentation
-deploys to GitHub Pages.
+The `1.6.0` release adds Relayna multipart lifecycle journeys for asynchronous
+file and image processors. It supports multiple required or optional uploads,
+explicit scalar and JSON multipart fields, safe digest-based evidence, and the
+same parent-task SSE completion semantics used by JSON Relayna journeys.
 
 ## Core Commands
 

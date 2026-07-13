@@ -1,6 +1,6 @@
 # Ampule Chamber
 
-Version: 1.5.2
+Version: 1.6.0
 
 Production-ready release for agent-driven reliability testing of Kubernetes
 services before production.
@@ -15,14 +15,12 @@ teams that need to answer:
 
 ## Release Status
 
-Ampule Chamber `1.5.2` packages the authenticated control-plane UI for
-in-cluster operation. Helm and raw manifests provide a ServiceAccount,
-namespace-scoped discovery RBAC, Service, and PVC-backed run store. The UI can
-attach to an existing Kubernetes Service and backing Deployment or StatefulSet
-without a local repository, and its exercise editor supports multiple HTTP or
-Relayna journeys with explicit expected response statuses. Release images are
-vulnerability-scanned before publication, and the documentation is deployed
-through GitHub Pages.
+Ampule Chamber `1.6.0` adds first-class multipart submissions to Relayna
+lifecycle journeys. Operators can attach multiple required or optional files,
+serialize scalar and explicit JSON form fields, follow the configured parent
+task through its SSE terminal state, and retain only safe file metadata and
+digests in evidence. Existing JSON Relayna and HTTP multipart journeys remain
+compatible.
 
 ## What It Tests
 
