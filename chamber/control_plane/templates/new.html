@@ -115,7 +115,7 @@
           <label class="wide-field" data-json-request>Request body JSON <span class="optional">optional for HTTP</span><textarea data-journey-field="body" placeholder='{"message":"hello"}'></textarea></label>
           <div class="form-grid nested-grid wide-field" data-multipart-request hidden>
             <label>File field name<input data-journey-field="fileField" value="file" placeholder="file"></label>
-            <label>Upload file<input name="journey_files" data-journey-field="file" type="file" accept=".pdf,.png,.jpg,.jpeg,.tiff,.tif,.bmp,.gif,.webp"></label>
+            <label>Upload file<input name="journey_files" data-journey-field="file" type="file" accept=".pdf,.png,.jpg,.jpeg,.tiff,.tif,.bmp,.gif,.webp"><span class="help" data-existing-file hidden></span></label>
             <label class="wide-field">Multipart form fields JSON<textarea data-journey-field="multipartFields" placeholder='{"engine":"internal","mode":"layout","force_ocr":false,"priority":5}'></textarea><span class="help">The browser stores the selected file in Chamber workspace storage; the generated config references that durable path.</span></label>
           </div>
           <label class="wide-field" data-form-request hidden>URL-encoded form fields JSON<textarea data-journey-field="form" placeholder='{"query":"hello","limit":10}'></textarea></label>

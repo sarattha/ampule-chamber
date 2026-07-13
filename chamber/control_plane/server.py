@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import json
 import secrets
 import shutil
@@ -95,6 +97,7 @@ def create_app(
     application.initialize()
     jobs = AssessmentJobManager(workspace)
     scenarios = ScenarioCatalog(workspace, PACKAGE_DIR / "bundled_scenarios")
+    multipart_path_secret = secrets.token_bytes(32)
     templates = Jinja2Templates(directory=TEMPLATE_DIR)
     app = FastAPI(title="Ampule Chamber Control Plane", version="1")
     app.state.chamber = application
@@ -267,6 +270,7 @@ def create_app(
                 workspace,
                 journeys_json,
                 journey_files or [],
+                path_secret=multipart_path_secret,
             )
             run_dir = _plan_from_values(
                 application,
@@ -438,6 +442,7 @@ def create_app(
         except (ScenarioCatalogError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         normalized["warnings"] = compatibility_warnings(normalized, service_name=service_name)
+        _authorize_multipart_paths(normalized, multipart_path_secret)
         return normalized
 
     @app.post("/api/v1/scenarios/validate")
@@ -456,6 +461,7 @@ def create_app(
         normalized["warnings"] = compatibility_warnings(
             normalized, service_name=payload.service_name
         )
+        _authorize_multipart_paths(normalized, multipart_path_secret)
         return normalized
 
     @app.post("/api/v1/scenarios", status_code=201)
@@ -925,6 +931,8 @@ async def _persist_journey_files(
     workspace: Path,
     raw: str,
     uploads: list[UploadFile],
+    *,
+    path_secret: bytes | None = None,
 ) -> tuple[str, Path | None]:
     if not raw.strip():
         return raw, None
@@ -946,18 +954,25 @@ async def _persist_journey_files(
             continue
         file_entries.extend(item for item in files if isinstance(item, dict))
     if not uploads:
-        if file_entries:
-            raise ValueError("UI multipart files require a browser upload")
-        return raw, None
+        for item in file_entries:
+            token = item.pop("pathToken", None)
+            if not _valid_multipart_path(item.get("path"), token, path_secret):
+                raise ValueError("UI multipart files require a browser upload")
+        return json.dumps(journeys) if file_entries else raw, None
     upload_dir = workspace.resolve() / "uploads" / uuid.uuid4().hex
     upload_dir.mkdir(parents=True, exist_ok=False)
     referenced: set[int] = set()
     try:
         for item in file_entries:
+            token = item.pop("pathToken", None)
+            upload_index = item.pop("uploadIndex", None)
+            if upload_index is None:
+                if _valid_multipart_path(item.get("path"), token, path_secret):
+                    continue
+                raise ValueError("Multipart file is missing its browser upload reference")
             item.pop("path", None)
             item.pop("filename", None)
             item.pop("contentType", None)
-            upload_index = item.pop("uploadIndex", None)
             if not isinstance(upload_index, int) or isinstance(upload_index, bool):
                 raise ValueError("Multipart file is missing its browser upload reference")
             if upload_index < 0 or upload_index >= len(uploads):
@@ -992,6 +1007,32 @@ async def _persist_journey_files(
         shutil.rmtree(upload_dir, ignore_errors=True)
         raise
     return json.dumps(journeys), upload_dir
+
+
+def _authorize_multipart_paths(projection: dict[str, Any], secret: bytes) -> None:
+    for journey in projection.get("journeys", []):
+        if not isinstance(journey, dict):
+            continue
+        multipart = journey.get("multipart")
+        if not isinstance(multipart, dict):
+            continue
+        files = multipart.get("files")
+        if not isinstance(files, list):
+            continue
+        for item in files:
+            if isinstance(item, dict) and isinstance(item.get("path"), str):
+                item["pathToken"] = _multipart_path_token(item["path"], secret)
+
+
+def _valid_multipart_path(path: Any, token: Any, secret: bytes | None) -> bool:
+    if not isinstance(path, str) or not isinstance(token, str) or secret is None:
+        return False
+    return secrets.compare_digest(token, _multipart_path_token(path, secret))
+
+
+def _multipart_path_token(path: str, secret: bytes) -> str:
+    resolved = str(Path(path).resolve()).encode()
+    return hmac.new(secret, resolved, hashlib.sha256).hexdigest()
 
 
 def _validate_request_encoding(journey: dict[str, Any], *, index: int) -> None:

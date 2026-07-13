@@ -818,6 +818,118 @@ class ControlPlaneTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "limited to 128 MiB"):
                     asyncio.run(_persist_journey_files(root, empty_file, [uploaded(b"data")]))
 
+    def test_saved_multipart_paths_survive_ui_planning_without_reupload(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workspace = root / ".chamber"
+            repo = _fixture_repo(root)
+            invoice = root / "invoice.pdf"
+            mask = root / "mask.png"
+            invoice.write_bytes(b"%PDF")
+            mask.write_bytes(b"PNG")
+            config = infer_config(repo)
+            config["scenarioId"] = "saved-multipart"
+            config["scenario"] = {
+                "id": "saved-multipart",
+                "name": "Saved multipart",
+                "description": "Reusable local multipart fixture.",
+                "tags": ["multipart"],
+                "source": "custom",
+                "revision": "draft",
+                "requiredSignals": ["logs"],
+            }
+            config["traffic"]["journeys"] = [
+                {
+                    "name": "ocr",
+                    "method": "POST",
+                    "path": "/ocr",
+                    "expectedStatus": 202,
+                    "requestEncoding": "multipart",
+                    "multipart": {
+                        "fields": {"mode": "layout"},
+                        "files": [
+                            {"field": "file", "path": str(invoice)},
+                            {"field": "mask", "path": str(mask)},
+                        ],
+                    },
+                    "vus": 1,
+                    "iterations": 1,
+                    "durationSeconds": 1,
+                }
+            ]
+
+            with TestClient(create_app(workspace)) as client:
+                new_page = client.get("/new")
+                self.assertIn("data-existing-file", new_page.text)
+                csrf = str(client.cookies["ampule_csrf"])
+                headers = {"X-CSRF-Token": csrf}
+                imported = client.post(
+                    "/api/v1/scenarios/validate",
+                    json={"content": yaml.safe_dump(config), "service_name": "target-service"},
+                    headers=headers,
+                )
+                self.assertEqual(imported.status_code, 200, imported.text)
+                imported_files = imported.json()["journeys"][0]["multipart"]["files"]
+                self.assertTrue(all(item.get("pathToken") for item in imported_files))
+
+                saved = client.post(
+                    "/api/v1/scenarios",
+                    json={"document": config},
+                    headers=headers,
+                )
+                self.assertEqual(saved.status_code, 201, saved.text)
+                projection = client.get("/api/v1/scenarios/user/saved-multipart")
+                self.assertEqual(projection.status_code, 200, projection.text)
+                journeys = projection.json()["journeys"]
+                saved_files = journeys[0]["multipart"]["files"]
+                self.assertTrue(all(item.get("pathToken") for item in saved_files))
+
+                planned = client.post(
+                    "/ui/plan",
+                    data={
+                        "_csrf": csrf,
+                        "repo": str(repo),
+                        "service_name": "target-service",
+                        "journeys_json": json.dumps(journeys),
+                    },
+                    follow_redirects=False,
+                )
+                self.assertEqual(planned.status_code, 303, planned.text)
+                run_id = planned.headers["location"].split("/")[2].split("?")[0]
+                planned_config = yaml.safe_load(
+                    (workspace / "runs" / run_id / "chamber.yaml").read_text(encoding="utf-8")
+                )
+                planned_files = planned_config["traffic"]["journeys"][0]["multipart"]["files"]
+                self.assertEqual(
+                    planned_files,
+                    [
+                        {"field": "file", "path": str(invoice)},
+                        {"field": "mask", "path": str(mask)},
+                    ],
+                )
+
+                forged = json.loads(json.dumps(journeys))
+                forged[0]["multipart"]["files"][0]["path"] = "/etc/hosts"
+                rejected = client.post(
+                    "/ui/plan",
+                    data={
+                        "_csrf": csrf,
+                        "repo": str(repo),
+                        "journeys_json": json.dumps(forged),
+                    },
+                )
+                self.assertEqual(rejected.status_code, 400)
+                self.assertIn("require a browser upload", rejected.text)
+
+            script = (Path(__file__).parents[1] / "chamber/control_plane/static/app.js").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("card.dataset.multipartFiles = JSON.stringify(retainedFiles);", script)
+            self.assertIn("pathToken: item.pathToken", script)
+            self.assertIn(
+                'files = [{field: field(card, "fileField").value.trim(), uploadIndex}]', script
+            )
+
     def test_json_plan_start_job_cancel_and_event_endpoints(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

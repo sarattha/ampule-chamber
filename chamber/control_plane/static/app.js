@@ -44,6 +44,12 @@
     };
 
     const field = (card, name) => card.querySelector(`[data-journey-field="${name}"]`);
+    const existingMultipartFiles = card => {
+      try {
+        const files = JSON.parse(card.dataset.multipartFiles || "[]");
+        return Array.isArray(files) ? files : [];
+      } catch (_) { return []; }
+    };
     const parseJson = (control, label, {required = false} = {}) => {
       const raw = control.value.trim();
       control.setCustomValidity("");
@@ -80,7 +86,13 @@
       field(card, "requestEncoding").disabled = relayna;
       field(card, "body").required = relayna;
       field(card, "file").disabled = requestEncoding !== "multipart";
-      field(card, "file").required = requestEncoding === "multipart";
+      const retainedFiles = existingMultipartFiles(card);
+      field(card, "file").required = requestEncoding === "multipart" && !retainedFiles.length;
+      const existingFileStatus = card.querySelector("[data-existing-file]");
+      existingFileStatus.hidden = requestEncoding !== "multipart" || !retainedFiles.length;
+      existingFileStatus.textContent = retainedFiles.length
+        ? `Using validated file: ${retainedFiles.map(item => item.filename || item.path).join(", ")}. Select a new upload to replace it.`
+        : "";
       field(card, "multipartFields").required = requestEncoding === "multipart";
       field(card, "form").required = requestEncoding === "form";
       field(card, "rawBody").required = requestEncoding === "raw";
@@ -134,8 +146,11 @@
       field(card, "requestEncoding").value = encoding;
       if (encoding === "json") field(card, "body").value = JSON.stringify(journey.body ?? {}, null, 2);
       if (encoding === "multipart") {
+        const files = Array.isArray(journey.multipart?.files) ? journey.multipart.files : [];
+        const retainedFiles = files.filter(item => item?.path && item?.pathToken);
+        card.dataset.multipartFiles = JSON.stringify(retainedFiles);
         field(card, "multipartFields").value = JSON.stringify(journey.multipart?.fields || {}, null, 2);
-        field(card, "fileField").value = journey.multipart?.files?.[0]?.field || "file";
+        field(card, "fileField").value = files[0]?.field || "file";
       }
       if (encoding === "form") field(card, "form").value = JSON.stringify(journey.form || {}, null, 2);
       if (encoding === "raw") {
@@ -273,12 +288,30 @@
             throw new Error("Multipart fields must be a JSON object.");
           }
           const upload = field(card, "file").files[0];
-          if (!upload) throw new Error(`Journey ${index + 1} requires an uploaded file.`);
+          const existingFiles = existingMultipartFiles(card);
+          if (!upload && !existingFiles.length) {
+            throw new Error(`Journey ${index + 1} requires an uploaded file.`);
+          }
+          let files;
+          if (upload) {
+            files = [{field: field(card, "fileField").value.trim(), uploadIndex}];
+            uploadIndex += 1;
+          } else {
+            files = existingFiles.map((item, fileIndex) => {
+              const retained = {
+                field: fileIndex === 0 ? field(card, "fileField").value.trim() : item.field,
+                path: item.path,
+                pathToken: item.pathToken,
+              };
+              if (item.filename) retained.filename = item.filename;
+              if (item.contentType) retained.contentType = item.contentType;
+              return retained;
+            });
+          }
           journey.multipart = {
             fields,
-            files: [{field: field(card, "fileField").value.trim(), uploadIndex}],
+            files,
           };
-          uploadIndex += 1;
         } else if (requestEncoding === "form") {
           const formFields = parseJson(field(card, "form"), `Journey ${index + 1} form fields`, {required: true});
           if (!formFields || Array.isArray(formFields) || typeof formFields !== "object") {
