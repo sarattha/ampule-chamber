@@ -132,7 +132,7 @@ through SSE, and produce content-safe lifecycle evidence.
   two independent `task-a` and `task-b` event feeds whose projected events all
   retained the correct admission task ID even when the fixture payload supplied
   an untrusted different ID.
-- `make check` passed on 2026-07-13 with 221 tests and 90% combined branch/line
+- `make check` passed on 2026-07-13 with 222 tests and 90% combined branch/line
   coverage, followed by scenario, deployment, `1.7.0` release metadata, strict
   documentation, source-distribution, and wheel validation.
 - Chrome rendered the completed Evidence tab at desktop width with the API and
@@ -140,3 +140,8 @@ through SSE, and produce content-safe lifecycle evidence.
   values, the explicit run-level worker-correlation limitation, and separate
   three-event `task-a` and `task-b` feeds. The DOM snapshot and full-page visual
   inspection agreed with the projection assertions.
+- The first PR review identified that the bounded 100-series raw Prometheus
+  preview was also feeding derived summaries. Range queries now derive compact
+  per-pod peaks and sample counts from the complete response before truncating
+  raw series for persistence. A 101-pod regression fixture verifies the last
+  worker remains summarized, and the complete `make check` gate passed again.

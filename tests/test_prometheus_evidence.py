@@ -207,7 +207,7 @@ class PrometheusQueryTests(unittest.TestCase):
             {
                 "container_memory_working_set_bytes": result,
                 "container_cpu_usage_cores": {
-                    **result,
+                    **{key: value for key, value in result.items() if key != "pod_summaries"},
                     "series": [
                         {
                             "metric": {"pod": "ocr-worker-abc", "container": "worker"},
@@ -216,7 +216,7 @@ class PrometheusQueryTests(unittest.TestCase):
                     ],
                 },
                 "kube_pod_container_status_restarts_total": {
-                    **result,
+                    **{key: value for key, value in result.items() if key != "pod_summaries"},
                     "series": [
                         {
                             "metric": {"pod": "ocr-worker-abc", "container": "worker"},
@@ -240,6 +240,37 @@ class PrometheusQueryTests(unittest.TestCase):
         self.assertEqual(summaries[0]["peak_cpu_cores"], 0.089)
         self.assertEqual(summaries[0]["max_restarts"], 0)
         self.assertEqual(summaries[0]["sample_count"], 2)
+
+    def test_range_summaries_use_all_series_beyond_persisted_preview(self) -> None:
+        series = [
+            {
+                "metric": {"pod": f"ocr-worker-{index:03d}", "container": "worker"},
+                "values": [[1, str(index)], [2, str(index + 1)]],
+            }
+            for index in range(101)
+        ]
+        with patch(
+            "chamber.workflow._read_prometheus_payload",
+            return_value={"status": "success", "data": {"result": series}},
+        ):
+            result = workflow._prometheus_query_range(
+                "http://prometheus.example",
+                "memory query",
+                start=datetime(2026, 7, 13, tzinfo=UTC),
+                end=datetime(2026, 7, 13, 0, 1, tzinfo=UTC),
+                step_seconds=15,
+            )
+        summaries = workflow._prometheus_range_summaries(
+            {name: result for name in REQUIRED_QUERIES},
+            workloads=[],
+        )
+        last_worker = next(item for item in summaries if item["pod_name"] == "ocr-worker-100")
+
+        self.assertEqual(result["series_count"], 101)
+        self.assertEqual(len(result["series"]), 100)
+        self.assertEqual(result["pod_summaries"]["ocr-worker-100"]["peak"], 101)
+        self.assertEqual(last_worker["peak_memory_bytes"], 101)
+        self.assertEqual(last_worker["max_restarts"], 101)
 
     def test_collector_writes_bounded_run_window_for_api_and_worker(self) -> None:
         def range_query(

@@ -2534,12 +2534,17 @@ def _prometheus_query_range(
             and metric["pod"]
         }
     )
+    peaks, sample_counts = _prometheus_pod_peaks(result)
     return {
         "ok": True,
         "query": query,
         "series_count": len(result),
         "error": None,
         "observed_pod_names": observed_pod_names,
+        "pod_summaries": {
+            pod_name: {"peak": peak, "sample_count": sample_counts[pod_name]}
+            for pod_name, peak in peaks.items()
+        },
         "series": result[:100],
     }
 
@@ -2587,7 +2592,20 @@ def _prometheus_range_summaries(
             for summary in summaries.values():
                 cast(list[str], summary["errors"]).append(f"{query_name}: {error}")
             continue
-        peaks, counts = _prometheus_pod_peaks(query.get("series", []))
+        pod_summaries = query.get("pod_summaries")
+        if isinstance(pod_summaries, dict):
+            peaks = {
+                str(pod_name): float(item["peak"])
+                for pod_name, item in pod_summaries.items()
+                if isinstance(item, dict) and isinstance(item.get("peak"), int | float)
+            }
+            counts = {
+                str(pod_name): int(item.get("sample_count", 0))
+                for pod_name, item in pod_summaries.items()
+                if isinstance(item, dict) and str(pod_name) in peaks
+            }
+        else:
+            peaks, counts = _prometheus_pod_peaks(query.get("series", []))
         for pod_name, peak in peaks.items():
             summary = summaries.setdefault(
                 pod_name,
