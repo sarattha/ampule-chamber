@@ -1,0 +1,390 @@
+from __future__ import annotations
+
+import json
+import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from typing import Any
+
+import yaml
+from fastapi.testclient import TestClient
+
+from chamber.control_plane.scenarios import (
+    MAX_SCENARIO_BYTES,
+    ScenarioCatalog,
+    ScenarioCatalogError,
+    compatibility_warnings,
+    normalize_document,
+    parse_scenario_document,
+)
+from chamber.control_plane.server import _ui_journeys, create_app
+from chamber.workflow import infer_config
+
+ROOT = Path(__file__).resolve().parents[1]
+EXAMPLE_REPO = ROOT / "examples/sample-service"
+BUNDLED = ROOT / "scenarios"
+
+
+def _config(scenario_id: str = "saved-health") -> dict[str, Any]:
+    config = infer_config(EXAMPLE_REPO)
+    config["scenarioId"] = scenario_id
+    config["scenario"] = {
+        "id": scenario_id,
+        "name": "Saved health",
+        "description": "Reusable health exercise.",
+        "tags": ["health", "baseline"],
+        "source": "custom",
+        "revision": "draft",
+        "requiredSignals": ["logs", "request_latency"],
+    }
+    return config
+
+
+class ScenarioNormalizationTests(unittest.TestCase):
+    def test_bundled_scenario_normalizes_to_editable_projection(self) -> None:
+        document = parse_scenario_document(
+            (BUNDLED / "external-text-translation.yaml").read_text(encoding="utf-8")
+        )
+        normalized = normalize_document(document, source="imported", validate_journeys=_ui_journeys)
+        self.assertEqual(normalized["kind"], "Scenario")
+        self.assertEqual(normalized["identity"]["id"], "external-text-translation-001")
+        self.assertEqual(normalized["journeys"][0]["path"], "/translations")
+        self.assertEqual(normalized["journeys"][0]["requestEncoding"], "json")
+        self.assertEqual(normalized["recommendedFault"], "none")
+        self.assertIn("queue_depth", normalized["requiredSignals"])
+
+    def test_config_uses_same_journey_validation_and_faults_remain_recommendations(self) -> None:
+        config = _config()
+        config["runtime"] = {
+            "provider": "kubernetes",
+            "mode": "attach",
+            "kubernetesContext": "kind-ampule-chamber",
+            "namespace": "qa",
+            "cleanup": False,
+            "trafficAccess": {
+                "mode": "port-forward",
+                "service": "sample-service",
+                "servicePort": 8080,
+            },
+            "faults": [{"type": "pod_kill"}],
+        }
+        config["deployment"]["manifests"] = []
+        config["deployment"]["services"] = [{"name": "sample-service", "port": 8080}]
+        normalized = normalize_document(config, source="user", validate_journeys=_ui_journeys)
+        self.assertEqual(normalized["recommendedFault"], "pod_kill")
+        self.assertEqual(config["runtime"]["faults"], [{"type": "pod_kill"}])
+        warnings = compatibility_warnings(normalized, service_name="another-service")
+        self.assertTrue(any("remains disabled" in item for item in warnings))
+        self.assertTrue(any("differs from selected service" in item for item in warnings))
+
+    def test_invalid_contract_placeholder_mixed_adapter_and_size_are_actionable(self) -> None:
+        config = _config()
+        config["service"]["name"] = "${TARGET_SERVICE}"
+        with self.assertRaisesRegex(ScenarioCatalogError, "resolve target-dependent placeholders"):
+            normalize_document(config, source="imported", validate_journeys=_ui_journeys)
+
+        config = _config()
+        journeys = config["traffic"]["journeys"]
+        journeys.append(
+            {
+                "name": "relayna",
+                "adapter": "relayna",
+                "method": "POST",
+                "path": "/translations",
+                "expectedStatus": 202,
+                "body": {"text": "hello"},
+                "iterations": 1,
+                "vus": 1,
+                "durationSeconds": 1,
+                "relayna": {
+                    "taskIdPath": "task_id",
+                    "eventsPath": "/events/{task_id}",
+                    "terminalStatuses": ["completed", "failed"],
+                    "successStatuses": ["completed"],
+                    "timeoutSeconds": 30,
+                },
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "cannot mix HTTP and Relayna"):
+            normalize_document(config, source="imported", validate_journeys=_ui_journeys)
+
+        invalid = _config()
+        invalid["apiVersion"] = "chamber.ampule.dev/v2"
+        with self.assertRaisesRegex(ScenarioCatalogError, "apiVersion"):
+            normalize_document(invalid, source="imported", validate_journeys=_ui_journeys)
+        with self.assertRaisesRegex(ScenarioCatalogError, "256 KiB"):
+            parse_scenario_document("x" * (MAX_SCENARIO_BYTES + 1))
+
+    def test_parse_and_contract_error_shapes_cover_both_supported_kinds(self) -> None:
+        with self.assertRaisesRegex(ScenarioCatalogError, "valid YAML or JSON"):
+            parse_scenario_document("[")
+        with self.assertRaisesRegex(ScenarioCatalogError, "must be a YAML or JSON mapping"):
+            parse_scenario_document("[]")
+        with self.assertRaisesRegex(ScenarioCatalogError, "kind must be"):
+            normalize_document(
+                {"apiVersion": "chamber.ampule.dev/v1alpha1", "kind": "Unknown"},
+                source="imported",
+                validate_journeys=_ui_journeys,
+            )
+
+        invalid_scenario = parse_scenario_document(
+            (BUNDLED / "baseline-health.yaml").read_text(encoding="utf-8")
+        )
+        invalid_scenario.pop("safety")
+        with self.assertRaisesRegex(ScenarioCatalogError, "missing required keys"):
+            normalize_document(invalid_scenario, source="imported", validate_journeys=_ui_journeys)
+
+        invalid_config = _config()
+        invalid_config["deployment"] = {}
+        with self.assertRaisesRegex(ScenarioCatalogError, "manifests must"):
+            normalize_document(invalid_config, source="imported", validate_journeys=_ui_journeys)
+
+        legacy_identity = _config()
+        legacy_identity.pop("scenario")
+        legacy_identity.pop("scenarioId")
+        normalized = normalize_document(
+            legacy_identity, source="imported", validate_journeys=_ui_journeys
+        )
+        self.assertEqual(normalized["identity"]["id"], "sample-service-assessment")
+
+        unsupported_value = _config()
+        unsupported_value["unsupported"] = {"not-json"}
+        with self.assertRaisesRegex(ScenarioCatalogError, "unsupported values"):
+            normalize_document(unsupported_value, source="imported", validate_journeys=_ui_journeys)
+
+        placeholder_list = _config()
+        placeholder_list["scenario"]["tags"] = ["{{ target_tag }}"]
+        with self.assertRaisesRegex(ScenarioCatalogError, r"scenario.tags\[0\]"):
+            normalize_document(placeholder_list, source="imported", validate_journeys=_ui_journeys)
+
+
+class ScenarioCatalogPersistenceTests(unittest.TestCase):
+    def test_user_catalog_is_atomic_durable_and_requires_explicit_replacement(self) -> None:
+        with TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            catalog = ScenarioCatalog(workspace, BUNDLED)
+            saved = catalog.save(_config(), replace=False, validate_journeys=_ui_journeys)
+            revision = saved["revision"]
+            self.assertTrue((workspace / "scenarios/saved-health.yaml").is_file())
+            self.assertFalse(list((workspace / "scenarios").glob("*.tmp")))
+            with self.assertRaisesRegex(FileExistsError, "confirm replacement"):
+                catalog.save(_config(), replace=False, validate_journeys=_ui_journeys)
+
+            updated = _config()
+            updated["scenario"]["description"] = "Updated safely."
+            replaced = catalog.save(updated, replace=True, validate_journeys=_ui_journeys)
+            self.assertNotEqual(replaced["revision"], revision)
+
+            restarted = ScenarioCatalog(workspace, BUNDLED)
+            loaded = restarted.read("user", "saved-health", _ui_journeys)
+            self.assertEqual(loaded["identity"]["description"], "Updated safely.")
+            sources = {item["source"] for item in restarted.list(_ui_journeys)}
+            self.assertEqual(sources, {"bundled", "user"})
+            with self.assertRaises(ScenarioCatalogError):
+                restarted.read("user", "../escape", _ui_journeys)
+
+    def test_catalog_skips_invalid_documents_and_rejects_invalid_operations(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bundled = root / "bundled"
+            bundled.mkdir()
+            (bundled / "invalid.yaml").write_text("[", encoding="utf-8")
+            catalog = ScenarioCatalog(root / "workspace", bundled)
+            self.assertEqual(catalog.list(_ui_journeys), ())
+            with self.assertRaises(FileNotFoundError):
+                catalog.read("user", "missing", _ui_journeys)
+            with self.assertRaisesRegex(ScenarioCatalogError, "source must be"):
+                catalog.read("external", "missing", _ui_journeys)
+
+            scenario = parse_scenario_document(
+                (BUNDLED / "baseline-health.yaml").read_text(encoding="utf-8")
+            )
+            with self.assertRaisesRegex(ScenarioCatalogError, "saved as a ChamberConfig"):
+                catalog.save(scenario, replace=False, validate_journeys=_ui_journeys)
+
+            missing_bundled = ScenarioCatalog(root / "another-workspace", root / "missing")
+            self.assertEqual(missing_bundled.list(_ui_journeys), ())
+
+            fixed = _config("fixed-load")
+            fixed["traffic"]["journeys"] = [
+                {
+                    "name": "fixed",
+                    "method": "GET",
+                    "path": "/healthz",
+                    "expectedStatus": 200,
+                    "vus": 3,
+                    "iterations": 6,
+                    "durationSeconds": 12,
+                }
+            ]
+            catalog.save(fixed, replace=False, validate_journeys=_ui_journeys)
+            metadata = next(
+                item for item in catalog.list(_ui_journeys) if item["id"] == "fixed-load"
+            )
+            self.assertEqual(metadata["maxVirtualUsers"], 3)
+            self.assertEqual(metadata["expectedDuration"], "12s")
+
+
+class ScenarioControlPlaneTests(unittest.TestCase):
+    def test_api_ui_planning_persistence_and_run_provenance(self) -> None:
+        with TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            with TestClient(create_app(workspace)) as client:
+                page = client.get("/new")
+                self.assertIn("Select saved scenario", page.text)
+                self.assertIn("Import scenario", page.text)
+                self.assertIn("Scenario ID", page.text)
+                csrf = str(client.cookies["ampule_csrf"])
+                headers = {"X-CSRF-Token": csrf}
+
+                listed = client.get("/api/v1/scenarios").json()["scenarios"]
+                self.assertTrue(any(item["source"] == "bundled" for item in listed))
+                selected = client.get(
+                    "/api/v1/scenarios/bundled/baseline-health-001",
+                    params={"service_name": "payments"},
+                )
+                self.assertEqual(selected.status_code, 200)
+                self.assertTrue(selected.json()["warnings"])
+                self.assertEqual(
+                    client.get("/api/v1/scenarios/user/missing").status_code,
+                    404,
+                )
+                self.assertEqual(
+                    client.get("/api/v1/scenarios/external/missing").status_code,
+                    400,
+                )
+
+                content = (BUNDLED / "external-text-translation.yaml").read_text(encoding="utf-8")
+                imported = client.post(
+                    "/api/v1/scenarios/validate",
+                    json={"content": content, "service_name": "translation-service"},
+                    headers=headers,
+                )
+                self.assertEqual(imported.status_code, 200, imported.text)
+                denied = client.post(
+                    "/api/v1/scenarios/validate",
+                    json={"content": content},
+                )
+                self.assertEqual(denied.status_code, 403)
+                invalid_import = client.post(
+                    "/api/v1/scenarios/validate",
+                    json={"content": "kind: Invalid"},
+                    headers=headers,
+                )
+                self.assertEqual(invalid_import.status_code, 400)
+
+                created = client.post(
+                    "/api/v1/scenarios",
+                    json={"document": _config()},
+                    headers=headers,
+                )
+                self.assertEqual(created.status_code, 201, created.text)
+                collision = client.post(
+                    "/api/v1/scenarios",
+                    json={"document": _config()},
+                    headers=headers,
+                )
+                self.assertEqual(collision.status_code, 409)
+                replaced = client.post(
+                    "/api/v1/scenarios",
+                    json={"document": _config(), "replace": True},
+                    headers=headers,
+                )
+                self.assertEqual(replaced.status_code, 201)
+                invalid_save = client.post(
+                    "/api/v1/scenarios",
+                    json={"document": {"kind": "Invalid"}},
+                    headers=headers,
+                )
+                self.assertEqual(invalid_save.status_code, 400)
+
+                planned = client.post(
+                    "/ui/plan",
+                    data={
+                        "_csrf": csrf,
+                        "repo": str(EXAMPLE_REPO),
+                        "service_name": "sample-service",
+                        "scenario_id": "ui-health",
+                        "scenario_name": "UI health",
+                        "scenario_description": "Saved from the journey editor.",
+                        "scenario_tags": "ui, health",
+                        "scenario_source": "imported",
+                        "scenario_revision": "source-revision",
+                        "required_signals_json": json.dumps(["logs", "request_latency"]),
+                        "save_scenario": "new",
+                        "journeys_json": json.dumps(
+                            [
+                                {
+                                    "name": "health",
+                                    "method": "GET",
+                                    "path": "/healthz",
+                                    "expectedStatus": 200,
+                                    "stages": [
+                                        {"duration": "10s", "targetVus": 2},
+                                        {"duration": "5s", "targetVus": 0},
+                                    ],
+                                }
+                            ]
+                        ),
+                    },
+                    follow_redirects=False,
+                )
+                self.assertEqual(planned.status_code, 303, planned.text)
+                run_id = planned.headers["location"].split("/")[2].split("?")[0]
+                config = yaml.safe_load(
+                    (workspace / "runs" / run_id / "chamber.yaml").read_text(encoding="utf-8")
+                )
+                metadata = json.loads(
+                    (workspace / "runs" / run_id / "run-metadata.json").read_text(encoding="utf-8")
+                )
+                run = json.loads(
+                    (workspace / "runs" / run_id / "run.json").read_text(encoding="utf-8")
+                )
+                self.assertEqual(config["scenarioId"], "ui-health")
+                self.assertEqual(config["scenario"]["source"], "user")
+                self.assertEqual(metadata["scenario"]["id"], "ui-health")
+                self.assertEqual(run["scenario_id"], "ui-health")
+                self.assertEqual(run["scenario_source"], "user")
+                self.assertEqual(
+                    client.get("/api/v1/scenarios/user/ui-health").status_code,
+                    200,
+                )
+
+                no_confirmation = client.post(
+                    "/ui/plan",
+                    data={
+                        "_csrf": csrf,
+                        "repo": str(EXAMPLE_REPO),
+                        "scenario_id": "ui-health",
+                        "scenario_name": "UI health",
+                        "save_scenario": "replace",
+                    },
+                )
+                self.assertEqual(no_confirmation.status_code, 400)
+                self.assertIn("explicit confirmation", no_confirmation.text)
+
+                invalid_signals = client.post(
+                    "/ui/plan",
+                    data={
+                        "_csrf": csrf,
+                        "repo": str(EXAMPLE_REPO),
+                        "required_signals_json": "not-json",
+                    },
+                )
+                self.assertEqual(invalid_signals.status_code, 400)
+                self.assertIn("Required signals must be valid JSON", invalid_signals.text)
+
+                invalid_signal_shape = client.post(
+                    "/ui/plan",
+                    data={
+                        "_csrf": csrf,
+                        "repo": str(EXAMPLE_REPO),
+                        "required_signals_json": "{}",
+                    },
+                )
+                self.assertEqual(invalid_signal_shape.status_code, 400)
+                self.assertIn("JSON array", invalid_signal_shape.text)
+
+
+if __name__ == "__main__":
+    unittest.main()

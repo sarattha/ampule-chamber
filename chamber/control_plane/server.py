@@ -29,6 +29,13 @@ from chamber.control_plane.discovery import (
     KubernetesDiscovery,
 )
 from chamber.control_plane.jobs import TERMINAL_JOB_STATES, AssessmentJobManager
+from chamber.control_plane.scenarios import (
+    ScenarioCatalog,
+    ScenarioCatalogError,
+    compatibility_warnings,
+    normalize_document,
+    parse_scenario_document,
+)
 from chamber.control_plane.security import (
     SESSION_COOKIE,
     load_admin_auth,
@@ -64,6 +71,16 @@ class CompareRequest(BaseModel):
     candidate_run_id: str
 
 
+class ScenarioValidateRequest(BaseModel):
+    content: str
+    service_name: str = ""
+
+
+class ScenarioSaveRequest(BaseModel):
+    document: dict[str, Any]
+    replace: bool = False
+
+
 def create_app(
     workspace: Path = Path(".chamber"),
     *,
@@ -77,6 +94,7 @@ def create_app(
     application = ChamberApplication(workspace)
     application.initialize()
     jobs = AssessmentJobManager(workspace)
+    scenarios = ScenarioCatalog(workspace, PACKAGE_DIR.parent.parent / "scenarios")
     templates = Jinja2Templates(directory=TEMPLATE_DIR)
     app = FastAPI(title="Ampule Chamber Control Plane", version="1")
     app.state.chamber = application
@@ -85,6 +103,7 @@ def create_app(
     app.state.workspace = workspace
     app.state.auth = auth
     app.state.discovery = kubernetes_discovery
+    app.state.scenarios = scenarios
     cast(dict[str, Any], templates.env.globals)["auth_enabled"] = auth.enabled
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -231,6 +250,15 @@ def create_app(
         fault_type: Annotated[str, Form()] = "none",
         prometheus_url: Annotated[str, Form()] = "",
         agents_mode: Annotated[str, Form()] = "offline",
+        scenario_id: Annotated[str, Form()] = "",
+        scenario_name: Annotated[str, Form()] = "",
+        scenario_description: Annotated[str, Form()] = "",
+        scenario_tags: Annotated[str, Form()] = "",
+        scenario_source: Annotated[str, Form()] = "custom",
+        scenario_revision: Annotated[str, Form()] = "",
+        required_signals_json: Annotated[str, Form()] = "[]",
+        save_scenario: Annotated[str, Form()] = "none",
+        replace_scenario: Annotated[str, Form()] = "",
     ) -> Response:
         _check_csrf(request, csrf)
         upload_dir: Path | None = None
@@ -263,6 +291,16 @@ def create_app(
                 fault_type=fault_type,
                 prometheus_url=prometheus_url,
                 agents_mode=agents_mode,
+                scenario_id=scenario_id,
+                scenario_name=scenario_name,
+                scenario_description=scenario_description,
+                scenario_tags=scenario_tags,
+                scenario_source=scenario_source,
+                scenario_revision=scenario_revision,
+                required_signals_json=required_signals_json,
+                save_scenario=save_scenario,
+                replace_scenario=replace_scenario,
+                catalog=scenarios,
             )
         except (OSError, ValueError, RuntimeError) as exc:
             if upload_dir is not None:
@@ -386,6 +424,53 @@ def create_app(
     @app.get("/api/v1/capabilities")
     async def capabilities_api() -> dict[str, Any]:
         return _capabilities(kubernetes_discovery.settings)
+
+    @app.get("/api/v1/scenarios")
+    async def scenarios_api() -> dict[str, Any]:
+        return {"scenarios": scenarios.list(_ui_journeys)}
+
+    @app.get("/api/v1/scenarios/{source}/{scenario_id}")
+    async def scenario_api(source: str, scenario_id: str, service_name: str = "") -> dict[str, Any]:
+        try:
+            normalized = scenarios.read(source, scenario_id, _ui_journeys)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="scenario not found") from None
+        except (ScenarioCatalogError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        normalized["warnings"] = compatibility_warnings(normalized, service_name=service_name)
+        return normalized
+
+    @app.post("/api/v1/scenarios/validate")
+    async def validate_scenario_api(
+        request: Request, payload: ScenarioValidateRequest
+    ) -> dict[str, Any]:
+        _check_csrf(request, request.headers.get("X-CSRF-Token"))
+        try:
+            normalized = normalize_document(
+                parse_scenario_document(payload.content),
+                source="imported",
+                validate_journeys=_ui_journeys,
+            )
+        except (ScenarioCatalogError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        normalized["warnings"] = compatibility_warnings(
+            normalized, service_name=payload.service_name
+        )
+        return normalized
+
+    @app.post("/api/v1/scenarios", status_code=201)
+    async def create_scenario_api(request: Request, payload: ScenarioSaveRequest) -> dict[str, Any]:
+        _check_csrf(request, request.headers.get("X-CSRF-Token"))
+        try:
+            return scenarios.save(
+                payload.document,
+                replace=payload.replace,
+                validate_journeys=_ui_journeys,
+            )
+        except FileExistsError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (ScenarioCatalogError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/api/v1/kubernetes/discovery")
     async def kubernetes_discovery_api(context: str, namespace: str) -> dict[str, Any]:
@@ -568,6 +653,16 @@ def _plan_from_values(
     fault_type: str,
     prometheus_url: str,
     agents_mode: str,
+    scenario_id: str = "",
+    scenario_name: str = "",
+    scenario_description: str = "",
+    scenario_tags: str = "",
+    scenario_source: str = "custom",
+    scenario_revision: str = "",
+    required_signals_json: str = "[]",
+    save_scenario: str = "none",
+    replace_scenario: str = "",
+    catalog: ScenarioCatalog | None = None,
 ) -> Path:
     config: dict[str, Any]
     if repo is not None and not repo.is_dir():
@@ -717,6 +812,46 @@ def _plan_from_values(
             "prometheusUrl",
         ):
             runtime.pop(key, None)
+    selected_scenario_id = scenario_id.strip() or f"{name}-assessment"
+    tags = [value.strip() for value in scenario_tags.split(",") if value.strip()]
+    try:
+        signals = json.loads(required_signals_json or "[]")
+    except json.JSONDecodeError as exc:
+        raise ValueError("Required signals must be valid JSON") from exc
+    if not isinstance(signals, list) or not all(
+        isinstance(value, str) and value.strip() for value in signals
+    ):
+        raise ValueError("Required signals must be a JSON array of non-empty strings")
+    config["scenarioId"] = selected_scenario_id
+    config["scenario"] = {
+        "id": selected_scenario_id,
+        "name": scenario_name.strip() or selected_scenario_id,
+        "description": scenario_description.strip(),
+        "tags": tags,
+        "source": (
+            scenario_source
+            if scenario_source in {"custom", "bundled", "user", "imported"}
+            else "custom"
+        ),
+        "revision": scenario_revision.strip() or "draft",
+        "requiredSignals": signals,
+    }
+    normalized = normalize_document(config, source="custom", validate_journeys=_ui_journeys)
+    if save_scenario not in {"none", "new", "replace"}:
+        raise ValueError("Save scenario mode must be none, new, or replace")
+    if save_scenario != "none":
+        if catalog is None:
+            raise ValueError("Scenario catalog is unavailable")
+        if save_scenario == "replace" and replace_scenario != "confirmed":
+            raise ValueError("Replacing a saved scenario requires explicit confirmation")
+        saved = catalog.save(
+            config,
+            replace=save_scenario == "replace",
+            validate_journeys=_ui_journeys,
+        )
+        config["scenario"].update({"source": "user", "revision": saved["revision"]})
+    else:
+        config["scenario"]["revision"] = scenario_revision.strip() or normalized["revision"]
     config_path = _write_draft(workspace, config)
     return application.plan(config_path)
 

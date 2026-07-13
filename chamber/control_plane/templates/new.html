@@ -46,6 +46,41 @@
 
   <section class="wizard-panel" data-step="2" hidden>
     <div class="page-heading"><div class="eyebrow">Step 3 of 4</div><h1>Define the exercise</h1><p>Add one or more traffic journeys. Every field is written directly to the generated ChamberConfig.</p></div>
+    <section class="scenario-section" data-scenario-section>
+      <div class="section-heading"><div><h2>Scenario</h2><p>Build a custom exercise, select a reusable scenario, or import supported YAML/JSON.</p></div><span class="pill safe">Review before execution</span></div>
+      <div class="mode-grid scenario-source-grid" role="radiogroup" aria-label="Scenario source">
+        <label class="mode-card selected"><input type="radio" name="scenario_source_mode" value="custom" checked><strong>Build custom</strong><span>Start with the guided journey editor.</span></label>
+        <label class="mode-card"><input type="radio" name="scenario_source_mode" value="saved"><strong>Select saved scenario</strong><span>Load a bundled or workspace scenario into the editor.</span></label>
+        <label class="mode-card"><input type="radio" name="scenario_source_mode" value="imported"><strong>Import scenario</strong><span>Paste or upload YAML/JSON and validate server-side.</span></label>
+      </div>
+      <div class="panel scenario-picker" data-saved-scenario hidden>
+        <div class="form-grid">
+          <label>Search<input type="search" data-scenario-search placeholder="ID, name, description, or tag"></label>
+          <label>Adapter<select data-scenario-adapter><option value="">All adapters</option><option value="http">HTTP / k6</option><option value="relayna">Relayna</option></select></label>
+          <label>Fault profile<select data-scenario-fault><option value="">All fault profiles</option><option value="none">Observe only</option><option value="configured">Fault configured</option></select></label>
+          <label>Saved scenario<select data-scenario-select><option value="">Loading catalog…</option></select></label>
+        </div>
+        <div class="scenario-metadata" data-scenario-metadata>Select a scenario to inspect its metadata.</div>
+        <button class="button" type="button" data-apply-scenario>Load into editor</button>
+      </div>
+      <div class="panel scenario-picker" data-import-scenario hidden>
+        <label>Scenario YAML or JSON<textarea data-scenario-import placeholder="apiVersion: chamber.ampule.dev/v1alpha1&#10;kind: Scenario&#10;..."></textarea></label>
+        <label>Upload YAML/JSON <span class="optional">optional</span><input type="file" data-scenario-import-file accept=".yaml,.yml,.json,application/yaml,application/json"></label>
+        <button class="button" type="button" data-validate-scenario>Validate and load into editor</button>
+      </div>
+      <p class="scenario-status" data-scenario-status aria-live="polite">Custom exercise selected. Faults remain disabled unless you choose one below.</p>
+      <div class="panel form-grid scenario-identity">
+        <label>Scenario ID<input name="scenario_id" required pattern="[a-z0-9](?:[a-z0-9.-]{0,61}[a-z0-9])?" placeholder="payments-resilience"></label>
+        <label>Name<input name="scenario_name" required placeholder="Payments resilience assessment"></label>
+        <label class="wide-field">Description<textarea name="scenario_description" placeholder="What this exercise validates and why it is useful."></textarea></label>
+        <label>Tags <span class="optional">optional, comma separated</span><input name="scenario_tags" placeholder="payments, baseline, recovery"></label>
+        <label>Save reusable scenario<select name="save_scenario"><option value="none">Do not save</option><option value="new">Save as new</option><option value="replace">Replace existing user scenario</option></select></label>
+        <label data-replace-confirm hidden><input class="inline-check" type="checkbox" name="replace_scenario" value="confirmed"> I confirm replacement of the existing user scenario.</label>
+      </div>
+      <input type="hidden" name="scenario_source" value="custom">
+      <input type="hidden" name="scenario_revision">
+      <input type="hidden" name="required_signals_json" value="[]">
+    </section>
     <div class="panel form-grid exercise-settings">
       <label>Service port<input name="service_port" type="number" min="1" max="65535" value="8080"></label>
       <label>Attach fault template<select name="fault_type"><option value="none">Observe only</option><option value="pod_kill">Kill one pod and verify recovery</option><option value="deployment_scale">Scale deployment to zero and restore</option></select><span class="help">Faults run only in attach mode and require an explicit allow-faults label.</span></label>
@@ -105,9 +140,9 @@
     <div class="page-heading"><div class="eyebrow">Step 4 of 4</div><h1>Review the safety receipt</h1><p>Chamber will create a durable plan first. You explicitly start execution from the plan page.</p></div>
     <div class="review-grid">
       <div class="panel"><h2>Target</h2><dl><div><dt>Source</dt><dd data-review="target_source">Repository</dd></div><div><dt>Repository</dt><dd data-review="repo">Not required</dd></div><div><dt>Service</dt><dd data-review="service_name">Inferred</dd></div><div><dt>Workload</dt><dd data-review="workload_name">Inferred</dd></div><div><dt>Kind</dt><dd data-review="workload_kind">Inferred</dd></div></dl></div>
-      <div class="panel"><h2>Environment</h2><dl><div><dt>Mode</dt><dd data-review="execution_mode">Local</dd></div><div><dt>Context</dt><dd data-review="kubernetes_context">Not applicable</dd></div></dl></div>
-      <div class="panel"><h2>Exercise</h2><dl><div><dt>Traffic</dt><dd data-review-journeys>1 HTTP journey</dd></div><div><dt>Fault</dt><dd data-review="fault_type">Observe only</dd></div><div><dt>Agents</dt><dd data-review="agents_mode">Offline</dd></div></dl></div>
-      <div class="panel safety-card"><h2>Safety contract</h2><ul><li>Explicit context for live execution</li><li>Production-like context names rejected</li><li>Bounded traffic and fault windows</li><li>Cancel triggers rollback and cleanup</li><li>Reports cite registered evidence only</li></ul></div>
+      <div class="panel"><h2>Environment</h2><dl><div><dt>Mode</dt><dd data-review="execution_mode">Local</dd></div><div><dt>Context</dt><dd data-review="kubernetes_context">Not applicable</dd></div><div><dt>Namespace</dt><dd data-review="namespace">Not applicable</dd></div></dl></div>
+      <div class="panel"><h2>Exercise</h2><dl><div><dt>Scenario</dt><dd data-review="scenario_id">Custom</dd></div><div><dt>Traffic</dt><dd data-review-journeys>1 HTTP journey</dd></div><div><dt>Maximum concurrency</dt><dd data-review-vus>4 VUs</dd></div><div><dt>Estimated duration</dt><dd data-review-duration>60s</dd></div><div><dt>Fault</dt><dd data-review="fault_type">Observe only</dd></div><div><dt>Rollback</dt><dd data-review-rollback>Not required</dd></div><div><dt>Agents</dt><dd data-review="agents_mode">Offline</dd></div></dl></div>
+      <div class="panel safety-card"><h2>Safety contract</h2><ul><li>Explicit context for live execution</li><li>Production-like context names rejected</li><li>Bounded traffic and fault windows</li><li>Cancel triggers rollback and cleanup</li><li>Required telemetry: <span data-review-signals>default Chamber evidence</span></li><li>Unresolved limitations: <span data-review-limitations>none</span></li><li>Reports cite registered evidence only</li></ul></div>
     </div>
   </section>
 
