@@ -92,6 +92,7 @@ def sync_run_record(run_dir: Path, metadata: dict[str, Any]) -> dict[str, Any]:
             "scenario_id": _mapping(metadata.get("scenario")).get("id"),
             "scenario_source": _mapping(metadata.get("scenario")).get("source"),
             "scenario_revision": _mapping(metadata.get("scenario")).get("revision"),
+            "scenario_origin": _mapping(metadata.get("scenario")).get("origin"),
         }
     )
     write_json_atomic(run_dir / "run.json", current)

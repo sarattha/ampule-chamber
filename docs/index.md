@@ -1,6 +1,6 @@
 # Ampule Chamber
 
-Version: 1.5.3
+Version: 1.6.0
 
 Ampule Chamber is a production-ready reliability testing chamber for Kubernetes
 services before production. It deploys services into isolated chamber
@@ -9,12 +9,12 @@ collects runtime evidence, and produces evidence-backed readiness reports.
 
 ## Production-Ready Release
 
-The `1.5.3` release makes Prometheus-backed readiness scoring evidence-safe.
-Required queries must return usable time series before metrics can contribute
-to a readiness score; failed or empty queries stay available as diagnostics and
-keep the result inconclusive. Multi-pod selectors cover every selected workload
-pod, and reports expose the query, labels, value, timestamp, and artifact used
-for verification.
+The `1.6.0` release adds reusable, editable scenarios to the control plane.
+Operators can choose bundled or durable workspace scenarios, import supported
+YAML/JSON, inspect compatibility metadata, adjust the resolved exercise, and
+save custom definitions without accidental replacement. Generated configs and
+run records preserve scenario ID, source, and revision, and imported faults stay
+disabled until explicitly selected.
 
 ## Core Commands
 

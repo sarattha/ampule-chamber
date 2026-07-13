@@ -18,7 +18,7 @@ from chamber.control_plane.scenarios import (
     parse_scenario_document,
 )
 from chamber.control_plane.server import _ui_journeys, create_app
-from chamber.workflow import infer_config
+from chamber.workflow import infer_config, load_config
 
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE_REPO = ROOT / "examples/sample-service"
@@ -52,6 +52,34 @@ class ScenarioNormalizationTests(unittest.TestCase):
         self.assertEqual(normalized["journeys"][0]["requestEncoding"], "json")
         self.assertEqual(normalized["recommendedFault"], "none")
         self.assertIn("queue_depth", normalized["requiredSignals"])
+
+    def test_scenario_projection_enforces_declared_safety_limits(self) -> None:
+        excessive_vus = parse_scenario_document(
+            (BUNDLED / "baseline-health.yaml").read_text(encoding="utf-8")
+        )
+        excessive_vus["safety"]["maxVirtualUsers"] = "4"
+        with self.assertRaisesRegex(
+            ScenarioCatalogError, "requires 5 VUs.*maxVirtualUsers allows 4"
+        ):
+            normalize_document(excessive_vus, source="imported", validate_journeys=_ui_journeys)
+
+        excessive_duration = parse_scenario_document(
+            (BUNDLED / "baseline-health.yaml").read_text(encoding="utf-8")
+        )
+        excessive_duration["safety"]["maxDuration"] = "2m"
+        with self.assertRaisesRegex(
+            ScenarioCatalogError, "duration 180s exceeds safety.maxDuration 2m"
+        ):
+            normalize_document(
+                excessive_duration, source="imported", validate_journeys=_ui_journeys
+            )
+
+        invalid_limit = parse_scenario_document(
+            (BUNDLED / "baseline-health.yaml").read_text(encoding="utf-8")
+        )
+        invalid_limit["safety"]["maxVirtualUsers"] = "many"
+        with self.assertRaisesRegex(ScenarioCatalogError, "must be a positive integer"):
+            normalize_document(invalid_limit, source="imported", validate_journeys=_ui_journeys)
 
     def test_config_uses_same_journey_validation_and_faults_remain_recommendations(self) -> None:
         config = _config()
@@ -157,6 +185,20 @@ class ScenarioNormalizationTests(unittest.TestCase):
         with self.assertRaisesRegex(ScenarioCatalogError, r"scenario.tags\[0\]"):
             normalize_document(placeholder_list, source="imported", validate_journeys=_ui_journeys)
 
+    def test_legacy_execution_config_without_api_version_remains_supported(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "legacy-chamber.yaml"
+            config = _config()
+            config.pop("apiVersion")
+            path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+
+            loaded = load_config(path, require_repo=False)
+
+        self.assertEqual(loaded["kind"], "ChamberConfig")
+        self.assertNotIn("apiVersion", loaded)
+        with self.assertRaisesRegex(ScenarioCatalogError, "apiVersion"):
+            normalize_document(loaded, source="imported", validate_journeys=_ui_journeys)
+
 
 class ScenarioCatalogPersistenceTests(unittest.TestCase):
     def test_user_catalog_is_atomic_durable_and_requires_explicit_replacement(self) -> None:
@@ -234,6 +276,15 @@ class ScenarioControlPlaneTests(unittest.TestCase):
                 self.assertIn("Select saved scenario", page.text)
                 self.assertIn("Import scenario", page.text)
                 self.assertIn("Scenario ID", page.text)
+                script = (ROOT / "chamber/control_plane/static/app.js").read_text(encoding="utf-8")
+                apply_start = script.index("const applyScenario = projection =>")
+                apply_end = script.index("const filteredScenarios", apply_start)
+                apply_source = script[apply_start:apply_end]
+                self.assertIn('form.elements.fault_type.value = "none";', apply_source)
+                self.assertLess(
+                    apply_source.index('form.elements.fault_type.value = "none";'),
+                    apply_source.index("projection.recommendedFault"),
+                )
                 csrf = str(client.cookies["ampule_csrf"])
                 headers = {"X-CSRF-Token": csrf}
 
@@ -342,9 +393,15 @@ class ScenarioControlPlaneTests(unittest.TestCase):
                 )
                 self.assertEqual(config["scenarioId"], "ui-health")
                 self.assertEqual(config["scenario"]["source"], "user")
+                self.assertEqual(
+                    config["scenario"]["origin"],
+                    {"source": "imported", "revision": "source-revision"},
+                )
                 self.assertEqual(metadata["scenario"]["id"], "ui-health")
+                self.assertEqual(metadata["scenario"]["origin"], config["scenario"]["origin"])
                 self.assertEqual(run["scenario_id"], "ui-health")
                 self.assertEqual(run["scenario_source"], "user")
+                self.assertEqual(run["scenario_origin"], config["scenario"]["origin"])
                 self.assertEqual(
                     client.get("/api/v1/scenarios/user/ui-health").status_code,
                     200,
@@ -384,6 +441,64 @@ class ScenarioControlPlaneTests(unittest.TestCase):
                 )
                 self.assertEqual(invalid_signal_shape.status_code, 400)
                 self.assertIn("JSON array", invalid_signal_shape.text)
+
+                edited = client.post(
+                    "/ui/plan",
+                    data={
+                        "_csrf": csrf,
+                        "repo": str(EXAMPLE_REPO),
+                        "scenario_id": "baseline-health-001",
+                        "scenario_name": "Edited baseline",
+                        "scenario_source": "bundled",
+                        "scenario_revision": "bundled-origin-revision",
+                        "journeys_json": json.dumps(
+                            [
+                                {
+                                    "name": "edited-health",
+                                    "method": "GET",
+                                    "path": "/readyz",
+                                    "expectedStatus": 204,
+                                    "stages": [
+                                        {"duration": "7s", "targetVus": 3},
+                                        {"duration": "2s", "targetVus": 0},
+                                    ],
+                                }
+                            ]
+                        ),
+                    },
+                    follow_redirects=False,
+                )
+                self.assertEqual(edited.status_code, 303, edited.text)
+                edited_id = edited.headers["location"].split("/")[2].split("?")[0]
+                edited_config = yaml.safe_load(
+                    (workspace / "runs" / edited_id / "chamber.yaml").read_text(encoding="utf-8")
+                )
+                edited_metadata = json.loads(
+                    (workspace / "runs" / edited_id / "run-metadata.json").read_text(
+                        encoding="utf-8"
+                    )
+                )
+                edited_run = json.loads(
+                    (workspace / "runs" / edited_id / "run.json").read_text(encoding="utf-8")
+                )
+                provenance = edited_config["scenario"]
+                self.assertEqual(provenance["source"], "derived")
+                self.assertEqual(
+                    provenance["origin"],
+                    {"source": "bundled", "revision": "bundled-origin-revision"},
+                )
+                self.assertNotEqual(provenance["revision"], "bundled-origin-revision")
+                self.assertEqual(len(provenance["revision"]), 16)
+                recomputed = normalize_document(
+                    edited_config, source="derived", validate_journeys=_ui_journeys
+                )
+                self.assertEqual(provenance["revision"], recomputed["revision"])
+                self.assertEqual(edited_metadata["scenario"]["source"], "derived")
+                self.assertEqual(edited_metadata["scenario"]["revision"], provenance["revision"])
+                self.assertEqual(edited_metadata["scenario"]["origin"], provenance["origin"])
+                self.assertEqual(edited_run["scenario_source"], "derived")
+                self.assertEqual(edited_run["scenario_revision"], provenance["revision"])
+                self.assertEqual(edited_run["scenario_origin"], provenance["origin"])
 
 
 if __name__ == "__main__":

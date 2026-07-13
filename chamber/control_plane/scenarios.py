@@ -14,6 +14,7 @@ from typing import Any
 import yaml
 
 from chamber.contracts.scenario import SCENARIO_KIND, SCHEMA_VERSION, validate_scenario_document
+from chamber.load.planning import TrafficPlanningError, parse_duration_seconds
 from chamber.workflow import WorkflowError, validate_config
 
 MAX_SCENARIO_BYTES = 256 * 1024
@@ -168,6 +169,8 @@ def normalize_document(
             raise ScenarioCatalogError(str(exc)) from exc
         projection = _config_projection(document)
     journeys = validate_journeys(json.dumps(projection["journeys"]))
+    if kind == SCENARIO_KIND:
+        _validate_scenario_safety(document, journeys)
     projection["journeys"] = journeys
     projection.update(
         {
@@ -273,6 +276,53 @@ def _config_projection(document: dict[str, Any]) -> dict[str, Any]:
         "agentMode": str(_mapping(document.get("agents")).get("mode", "offline")),
         "warnings": [],
     }
+
+
+def _validate_scenario_safety(document: dict[str, Any], journeys: list[dict[str, Any]]) -> None:
+    safety = _mapping(document.get("safety"))
+    raw_max_vus = safety.get("maxVirtualUsers")
+    if not isinstance(raw_max_vus, str) or not raw_max_vus.strip().isdigit():
+        raise ScenarioCatalogError("scenario.safety.maxVirtualUsers must be a positive integer")
+    max_vus = int(raw_max_vus)
+    if max_vus <= 0:
+        raise ScenarioCatalogError("scenario.safety.maxVirtualUsers must be a positive integer")
+    try:
+        max_duration = parse_duration_seconds(safety.get("maxDuration"))
+    except TrafficPlanningError as exc:
+        raise ScenarioCatalogError(f"scenario.safety.maxDuration: {exc}") from exc
+
+    projected_vus = 0
+    projected_duration = 0
+    for journey in journeys:
+        vus = journey.get("vus")
+        if isinstance(vus, int) and not isinstance(vus, bool):
+            projected_vus = max(projected_vus, vus)
+        duration_seconds = journey.get("durationSeconds")
+        if isinstance(duration_seconds, int) and not isinstance(duration_seconds, bool):
+            projected_duration += duration_seconds
+        stages = journey.get("stages", [])
+        if not isinstance(stages, list):
+            continue
+        for stage in stages:
+            if not isinstance(stage, dict):
+                continue
+            target_vus = stage.get("targetVus")
+            if isinstance(target_vus, int) and not isinstance(target_vus, bool):
+                projected_vus = max(projected_vus, target_vus)
+            try:
+                projected_duration += parse_duration_seconds(stage.get("duration"))
+            except TrafficPlanningError as exc:
+                raise ScenarioCatalogError(f"scenario.traffic stage duration: {exc}") from exc
+    if projected_vus > max_vus:
+        raise ScenarioCatalogError(
+            f"scenario traffic requires {projected_vus} VUs but "
+            f"safety.maxVirtualUsers allows {max_vus}"
+        )
+    if projected_duration > max_duration:
+        raise ScenarioCatalogError(
+            f"scenario traffic duration {projected_duration}s exceeds "
+            f"safety.maxDuration {safety['maxDuration']}"
+        )
 
 
 def _metadata(normalized: dict[str, Any], *, source: str) -> dict[str, Any]:

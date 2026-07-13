@@ -319,10 +319,6 @@ def validate_config(
 ) -> None:
     """Validate the minimum stable ChamberConfig contract."""
 
-    _require(
-        config.get("apiVersion") == "chamber.ampule.dev/v1alpha1",
-        f"{source}.apiVersion must be chamber.ampule.dev/v1alpha1",
-    )
     _require(config.get("kind") == "ChamberConfig", f"{source}.kind must be ChamberConfig")
     service = _mapping(config.get("service"), f"{source}.service")
     _non_empty(service.get("name"), f"{source}.service.name")
@@ -396,6 +392,10 @@ def validate_config(
         _non_empty(scenario_doc.get("revision"), f"{source}.scenario.revision")
         _string_list(scenario_doc.get("tags", []), f"{source}.scenario.tags")
         _string_list(scenario_doc.get("requiredSignals", []), f"{source}.scenario.requiredSignals")
+        if scenario_doc.get("origin") is not None:
+            origin = _mapping(scenario_doc["origin"], f"{source}.scenario.origin")
+            _non_empty(origin.get("source"), f"{source}.scenario.origin.source")
+            _non_empty(origin.get("revision"), f"{source}.scenario.origin.revision")
         if scenario_id is not None and nested_id != scenario_id:
             raise WorkflowError(f"{source}.scenario.id must match scenarioId")
 
@@ -3284,7 +3284,7 @@ def _write_metadata(run_dir: Path, payload: dict[str, Any]) -> None:
             if isinstance(scenario, dict):
                 additions["scenario"] = {
                     key: scenario[key]
-                    for key in ("id", "name", "source", "revision")
+                    for key in ("id", "name", "source", "revision", "origin")
                     if key in scenario
                 }
             elif config.get("scenarioId"):

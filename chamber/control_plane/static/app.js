@@ -180,6 +180,7 @@
       form.elements.scenario_revision.value = projection.revision;
       form.elements.required_signals_json.value = JSON.stringify(projection.requiredSignals || []);
       form.elements.agents_mode.value = projection.agentMode || "offline";
+      form.elements.fault_type.value = "none";
       journeyList.replaceChildren();
       projection.journeys.forEach(journey => addJourney({adapter: journey.adapter || "http", journey}));
       scenarioWarnings = projection.warnings || [];

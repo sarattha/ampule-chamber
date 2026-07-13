@@ -2,6 +2,29 @@
 
 All notable changes to Ampule Chamber are documented in this file.
 
+## 1.6.0 - 2026-07-13
+
+### Added
+
+- Added a reusable scenario catalog to the control-plane Exercise step with
+  bundled and durable workspace scenarios, metadata previews, search, adapter
+  and fault filters, editable loading, and custom scenario identity fields.
+- Added server-validated YAML/JSON import for supported `Scenario` and
+  `ChamberConfig` documents plus save-as-new and explicitly confirmed user
+  scenario replacement.
+- Recorded scenario ID, source, and content revision in generated configs and
+  durable run metadata.
+
+### Changed
+
+- Selected and imported scenarios now populate the existing journey editor and
+  safety review; configured faults remain disabled until explicitly selected.
+
+### Documentation
+
+- Documented supported scenario formats, catalog storage, import validation,
+  persistence, provenance, and the reviewed control-plane workflow.
+
 ## 1.5.3 - 2026-07-13
 
 ### Fixed

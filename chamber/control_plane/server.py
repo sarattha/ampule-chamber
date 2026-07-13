@@ -822,21 +822,30 @@ def _plan_from_values(
         isinstance(value, str) and value.strip() for value in signals
     ):
         raise ValueError("Required signals must be a JSON array of non-empty strings")
+    origin_source = (
+        scenario_source
+        if scenario_source in {"custom", "bundled", "user", "imported"}
+        else "custom"
+    )
+    resolved_source = "custom" if origin_source == "custom" else "derived"
     config["scenarioId"] = selected_scenario_id
-    config["scenario"] = {
+    scenario_metadata: dict[str, Any] = {
         "id": selected_scenario_id,
         "name": scenario_name.strip() or selected_scenario_id,
         "description": scenario_description.strip(),
         "tags": tags,
-        "source": (
-            scenario_source
-            if scenario_source in {"custom", "bundled", "user", "imported"}
-            else "custom"
-        ),
-        "revision": scenario_revision.strip() or "draft",
+        "source": resolved_source,
+        "revision": "draft",
         "requiredSignals": signals,
     }
+    if origin_source != "custom":
+        scenario_metadata["origin"] = {
+            "source": origin_source,
+            "revision": scenario_revision.strip() or "unrecorded",
+        }
+    config["scenario"] = scenario_metadata
     normalized = normalize_document(config, source="custom", validate_journeys=_ui_journeys)
+    config["scenario"]["revision"] = normalized["revision"]
     if save_scenario not in {"none", "new", "replace"}:
         raise ValueError("Save scenario mode must be none, new, or replace")
     if save_scenario != "none":
@@ -850,8 +859,6 @@ def _plan_from_values(
             validate_journeys=_ui_journeys,
         )
         config["scenario"].update({"source": "user", "revision": saved["revision"]})
-    else:
-        config["scenario"]["revision"] = scenario_revision.strip() or normalized["revision"]
     config_path = _write_draft(workspace, config)
     return application.plan(config_path)
 

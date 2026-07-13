@@ -1,5 +1,20 @@
 # Releases
 
+## 1.6.0 - 2026-07-13
+
+Ampule Chamber `1.6.0` adds reusable, editable scenarios to the control plane.
+
+Highlights:
+
+- Choose bundled or durable workspace scenarios with metadata, compatibility
+  warnings, search, and adapter or fault filtering.
+- Import validated `Scenario` or `ChamberConfig` YAML/JSON and resolve it into
+  the existing editable exercise fields before planning.
+- Create custom scenario identities and safely save or explicitly replace user
+  scenarios on the configured workspace/PVC.
+- Preserve scenario ID, source, and content revision in run metadata while
+  keeping all imported faults disabled until an operator selects them.
+
 ## 1.5.3 - 2026-07-13
 
 Ampule Chamber `1.5.3` makes Prometheus-backed readiness scoring evidence-safe.
