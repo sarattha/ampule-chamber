@@ -274,6 +274,7 @@ def _config_projection(document: dict[str, Any]) -> dict[str, Any]:
         "configuredFaults": faults,
         "requiredSignals": list(scenario.get("requiredSignals", [])),
         "agentMode": str(_mapping(document.get("agents")).get("mode", "offline")),
+        "origin": scenario.get("origin"),
         "warnings": [],
     }
 
