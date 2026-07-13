@@ -13,6 +13,11 @@ from chamber.observability import EvidenceArtifact
 from chamber.runs import registered_evidence
 
 SEVERITY_PENALTIES = {"critical": 40, "high": 25, "medium": 10, "low": 5}
+PROMETHEUS_REQUIRED_QUERIES = (
+    "container_memory_working_set_bytes",
+    "container_cpu_usage_seconds_total",
+    "kube_pod_container_status_restarts_total",
+)
 
 
 def analyze_guided_run(
@@ -73,15 +78,24 @@ def build_assessment_result(
     mode = str(metadata.get("mode", "local"))
     runtime_value = config.get("runtime")
     runtime: dict[str, Any] = runtime_value if isinstance(runtime_value, dict) else {}
+    metadata_runtime_value = metadata.get("runtime")
+    metadata_runtime = metadata_runtime_value if isinstance(metadata_runtime_value, dict) else {}
     runtime_mode = str(runtime.get("mode", metadata.get("runtime_mode", "deploy")))
     required = ["preflight", "kubernetes-commands", _traffic_evidence_id(config)]
-    if runtime.get("prometheusUrl"):
+    if runtime.get("prometheusUrl") or metadata_runtime.get("prometheus_url"):
         required.append("prometheus-memory")
     if runtime_mode == "attach":
         required.extend(("attach-discovery", "pre-test-state", "rollback"))
     available = {str(item.get("evidence_id")) for item in registered_evidence(run_dir)}
-    present = [item for item in required if item in available]
-    missing = [item for item in required if item not in available]
+    prometheus_available, prometheus_limitations = _prometheus_evidence_status(
+        run_dir, required="prometheus-memory" in required
+    )
+    present = [
+        item
+        for item in required
+        if item in available and (item != "prometheus-memory" or prometheus_available)
+    ]
+    missing = [item for item in required if item not in present]
     evidence_coverage = round(100 * len(present) / len(required)) if required else 100
     rollback_value = metadata.get("rollback")
     rollback: dict[str, Any] = rollback_value if isinstance(rollback_value, dict) else {}
@@ -132,9 +146,46 @@ def build_assessment_result(
         "required_evidence_ids": required,
         "available_evidence_ids": sorted(available),
         "missing_evidence_ids": missing,
+        "evidence_limitations": list(prometheus_limitations),
         "finding_count": len(findings),
         "generated_at": _now(),
     }
+
+
+def _prometheus_evidence_status(
+    run_dir: Path,
+    *,
+    required: bool,
+) -> tuple[bool, tuple[str, ...]]:
+    if not required:
+        return True, ()
+    path = run_dir / "evidence/prometheus-memory.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return False, (f"Prometheus evidence is unreadable: {exc}",)
+    queries = payload.get("queries") if isinstance(payload, dict) else None
+    if not isinstance(queries, dict):
+        return False, ("Prometheus evidence does not contain required queries.",)
+    limitations = []
+    for name in PROMETHEUS_REQUIRED_QUERIES:
+        query = queries.get(name)
+        if not isinstance(query, dict):
+            limitations.append(f"Prometheus query {name} is missing.")
+            continue
+        if query.get("ok") is not True:
+            error = query.get("error")
+            limitations.append(
+                f"Prometheus query {name} failed"
+                + (f": {error}" if isinstance(error, str) and error else ".")
+            )
+            continue
+        series_count = query.get("series_count")
+        if not isinstance(series_count, int) or series_count < 1:
+            limitations.append(
+                f"Prometheus query {name} succeeded but returned zero matching series."
+            )
+    return not limitations, tuple(limitations)
 
 
 def _command_evidence(

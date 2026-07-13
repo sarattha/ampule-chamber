@@ -2013,8 +2013,8 @@ def _collect_prometheus_memory_evidence(
 ) -> None:
     pod_filter = ""
     if pod_names:
-        escaped = "|".join(re.escape(name) for name in pod_names)
-        pod_filter = f',pod=~"{escaped}"'
+        pod_filter = f',pod=~"{_promql_pod_regex(pod_names)}"'
+    namespace_matcher = _promql_string(namespace)
     evidence = {
         "prometheus_url": prometheus_url,
         "namespace": namespace,
@@ -2024,7 +2024,7 @@ def _collect_prometheus_memory_evidence(
                 prometheus_url,
                 (
                     "container_memory_working_set_bytes{"
-                    f'namespace="{namespace}",container!="",pod!=""{pod_filter}'
+                    f'namespace="{namespace_matcher}",container!="",pod!=""{pod_filter}'
                     "}"
                 ),
             ),
@@ -2032,7 +2032,7 @@ def _collect_prometheus_memory_evidence(
                 prometheus_url,
                 (
                     "container_cpu_usage_seconds_total{"
-                    f'namespace="{namespace}",container!="",pod!=""{pod_filter}'
+                    f'namespace="{namespace_matcher}",container!="",pod!=""{pod_filter}'
                     "}"
                 ),
             ),
@@ -2040,7 +2040,7 @@ def _collect_prometheus_memory_evidence(
                 prometheus_url,
                 (
                     "kube_pod_container_status_restarts_total{"
-                    f'namespace="{namespace}"{pod_filter}'
+                    f'namespace="{namespace_matcher}"{pod_filter}'
                     "}"
                 ),
             ),
@@ -2049,22 +2049,80 @@ def _collect_prometheus_memory_evidence(
     _write_json(run_dir / "evidence/prometheus-memory.json", evidence)
 
 
+def _promql_pod_regex(pod_names: tuple[str, ...]) -> str:
+    """Return an exact pod-name alternation encoded for a PromQL string literal."""
+
+    regex_values = (_promql_regex_literal(name) for name in pod_names)
+    return "|".join(_promql_string(value) for value in regex_values)
+
+
+def _promql_regex_literal(value: str) -> str:
+    """Escape RE2 metacharacters without inventing invalid escapes for hyphens."""
+
+    return re.sub(r"([\\.^$|?*+(){}\[\]])", r"\\\1", value)
+
+
+def _promql_string(value: str) -> str:
+    """Encode text for a PromQL double-quoted string literal."""
+
+    return (
+        value.replace("\\", "\\\\")
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\t", "\\t")
+        .replace('"', '\\"')
+    )
+
+
 def _prometheus_query(prometheus_url: str, query: str) -> dict[str, Any]:
     try:
         url = _prometheus_query_url(prometheus_url, query)
         payload = _read_prometheus_payload(url)
     except Exception as exc:
-        return {"ok": False, "query": query, "error": str(exc), "series": []}
+        return {
+            "ok": False,
+            "query": query,
+            "series_count": None,
+            "error": str(exc),
+            "series": [],
+        }
+    if not isinstance(payload, dict) or payload.get("status") != "success":
+        return {
+            "ok": False,
+            "query": query,
+            "series_count": None,
+            "error": _prometheus_response_error(payload),
+            "series": [],
+        }
     data = payload.get("data") if isinstance(payload, dict) else None
     result = data.get("result") if isinstance(data, dict) else None
     if not isinstance(result, list):
-        result = []
+        return {
+            "ok": False,
+            "query": query,
+            "series_count": None,
+            "error": "Prometheus success response did not contain data.result",
+            "series": [],
+        }
     return {
-        "ok": payload.get("status") == "success" if isinstance(payload, dict) else False,
+        "ok": True,
         "query": query,
         "series_count": len(result),
+        "error": None,
         "series": result[:20],
     }
+
+
+def _prometheus_response_error(payload: object) -> str:
+    if not isinstance(payload, dict):
+        return "Prometheus returned a non-object response"
+    error_type = payload.get("errorType")
+    error = payload.get("error")
+    if error_type and error:
+        return f"{error_type}: {error}"
+    if error:
+        return str(error)
+    return f"Prometheus query failed with status {payload.get('status', 'unknown')}"
 
 
 def _prometheus_query_url(prometheus_url: str, query: str) -> str:
@@ -2342,9 +2400,17 @@ def _agent_evidence_summaries(run_dir: Path, evidence_ids: tuple[str, ...]) -> t
             if isinstance(queries, dict):
                 for name, payload in queries.items():
                     if isinstance(payload, dict):
-                        summaries.append(
-                            f"prometheus {name} series: {payload.get('series_count', 0)}"
+                        ok = payload.get("ok") is True
+                        series_count = payload.get("series_count")
+                        count_text = (
+                            str(series_count) if isinstance(series_count, int) else "unavailable"
                         )
+                        summary = (
+                            f"prometheus {name}: ok={str(ok).lower()} series_count={count_text}"
+                        )
+                        if payload.get("error"):
+                            summary += f" error={payload['error']}"
+                        summaries.append(summary)
     if "local-assessment" in evidence_ids:
         local_path = run_dir / "evidence/local-assessment.json"
         if local_path.exists():
@@ -2563,7 +2629,9 @@ def _prometheus_memory_agent_details(payload: dict[str, Any]) -> list[str]:
             continue
         compact[name] = {
             "ok": query_payload.get("ok"),
-            "series_count": query_payload.get("series_count", 0),
+            "query": query_payload.get("query"),
+            "series_count": query_payload.get("series_count"),
+            "error": query_payload.get("error"),
             "series": query_payload.get("series", [])[:5],
         }
     return [_agent_detail("prometheus-memory", compact)]
@@ -2777,7 +2845,7 @@ def _report_input(
         for index, item in enumerate(_list(traffic["journeys"], "traffic.journeys"))
     )
     cleanup_notes = tuple(metadata.get("cleanup_notes") or ["Cleanup status was not recorded."])
-    agent_sections = _agent_sections(run_dir)
+    agent_sections = _prometheus_report_sections(run_dir) + _agent_sections(run_dir)
     evidence = [
         EvidenceReference(
             "plan",
@@ -2792,9 +2860,15 @@ def _report_input(
     findings = _persisted_report_findings(run_dir)
     result = _read_json(run_dir / "result.json") if (run_dir / "result.json").exists() else {}
     missing_evidence = result.get("missing_evidence_ids")
-    result_limitations = (
+    missing_limitations = (
         tuple(f"Missing required evidence: {item}" for item in missing_evidence)
         if isinstance(missing_evidence, list)
+        else ()
+    )
+    evidence_limitations = result.get("evidence_limitations")
+    result_limitations = missing_limitations + (
+        tuple(str(item) for item in evidence_limitations if item)
+        if isinstance(evidence_limitations, list)
         else ()
     )
     journey_names = ", ".join(
@@ -2965,6 +3039,64 @@ def _agent_sections(run_dir: Path) -> tuple[ReportSection, ...]:
             )
         )
     return tuple(sections)
+
+
+def _prometheus_report_sections(run_dir: Path) -> tuple[ReportSection, ...]:
+    path = run_dir / "evidence/prometheus-memory.json"
+    if not path.exists():
+        return ()
+    payload = _read_json(path)
+    queries = payload.get("queries")
+    if not isinstance(queries, dict):
+        return ()
+    artifact = str(path)
+    lines = [
+        f"Evidence artifact: {artifact}",
+        (
+            "Kubernetes logs are separate from Prometheus metrics and are preserved in "
+            "Kubernetes command evidence."
+        ),
+    ]
+    for name, query in queries.items():
+        if not isinstance(query, dict):
+            continue
+        ok = query.get("ok") is True
+        series_count = query.get("series_count")
+        count_text = str(series_count) if isinstance(series_count, int) else "unavailable"
+        line = f"{name}: ok={str(ok).lower()}; series_count={count_text}"
+        error = query.get("error")
+        if not ok:
+            line += f"; error={error or 'unknown Prometheus query failure'}"
+        elif series_count == 0:
+            line += "; no matching target series"
+        else:
+            sample = _prometheus_series_sample(query.get("series"))
+            if sample:
+                line += f"; {sample}"
+        lines.append(line + f"; artifact={artifact}")
+    return (ReportSection(heading="Prometheus Metrics", lines=tuple(lines)),)
+
+
+def _prometheus_series_sample(series: object) -> str:
+    if not isinstance(series, list) or not series or not isinstance(series[0], dict):
+        return "sample unavailable"
+    item = series[0]
+    metric = item.get("metric")
+    labels: dict[str, Any] = (
+        {str(key): value for key, value in metric.items()} if isinstance(metric, dict) else {}
+    )
+    label_parts = []
+    for key in ("pod", "container"):
+        value = labels.get(key)
+        if value:
+            label_parts.append(f"{key}={value}")
+    label_text = " ".join(label_parts)
+    value = item.get("value")
+    if not isinstance(value, list) or len(value) < 2:
+        return (label_text + "; sample unavailable").strip("; ")
+    timestamp, sampled_value = value[0], value[1]
+    prefix = f"{label_text}; " if label_text else ""
+    return f"{prefix}sample_value={sampled_value}; sample_timestamp={timestamp}"
 
 
 def _lifecycle_state(metadata: dict[str, Any]) -> str:

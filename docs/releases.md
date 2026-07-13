@@ -1,5 +1,19 @@
 # Releases
 
+## 1.5.3 - 2026-07-13
+
+Ampule Chamber `1.5.3` makes Prometheus-backed readiness scoring evidence-safe.
+
+Highlights:
+
+- Require non-empty series from every required Prometheus query before metrics
+  can contribute to a readiness score.
+- Keep failed and empty queries available as diagnostic artifacts while marking
+  the related evidence inconclusive.
+- Query every selected workload pod with a safely escaped PromQL alternation.
+- Show query text, labels, values, timestamps, and artifact references in the
+  generated reliability report.
+
 ## 1.5.2 - 2026-07-12
 
 Ampule Chamber `1.5.2` expands the control-plane exercise editor to match the

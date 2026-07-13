@@ -298,9 +298,20 @@ When `runtime.prometheusUrl` or `--prometheus-url` is set, deploy mode captures
 CPU usage, and restart counter queries for the chamber namespace. This evidence
 is supplied to agents and reports alongside k6 and Kubernetes command output.
 
+Prometheus evidence satisfies the required metrics gate only when all three
+queries complete with `ok: true` and each returns at least one target series.
+A successful query with zero series proves that Prometheus was reachable, but
+does not prove that target telemetry was collected; the assessment is therefore
+inconclusive, cannot be `ready`, and reports less than 100% evidence coverage.
+Query failures and zero-series responses remain registered as diagnostic
+artifacts, with their distinct reasons rendered in offline Markdown and HTML
+reports.
+
 Attach mode uses the same evidence file, but narrows Prometheus queries to the
-configured namespace and discovered target pods. Kubernetes logs and events are
-also collected for discovered pods only, not the whole namespace.
+configured namespace and the exact discovered target pod names. Prometheus
+metrics are not Kubernetes logs: logs and events are collected separately in
+`evidence/kubernetes-commands.json` for discovered pods only, not the whole
+namespace.
 
 ## Attach Faults
 
