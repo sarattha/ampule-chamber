@@ -2,6 +2,21 @@
 
 All notable changes to Ampule Chamber are documented in this file.
 
+## 1.5.3 - 2026-07-13
+
+### Fixed
+
+- Prometheus verification now distinguishes reachable queries from queries that
+  return usable time-series evidence. Required zero-series or failed queries
+  keep the assessment inconclusive instead of awarding an unsupported score.
+- Multi-pod PromQL selectors now preserve regex alternation and escape pod names
+  safely, so evidence is collected for every selected workload pod.
+
+### Documentation
+
+- Documented the Prometheus query artifact schema, evidence sufficiency rules,
+  failure diagnostics, and a real Prometheus validation run.
+
 ## 1.5.2 - 2026-07-12
 
 ### Added

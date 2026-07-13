@@ -1,6 +1,6 @@
 # Ampule Chamber
 
-Version: 1.5.2
+Version: 1.5.3
 
 Production-ready release for agent-driven reliability testing of Kubernetes
 services before production.
@@ -15,14 +15,12 @@ teams that need to answer:
 
 ## Release Status
 
-Ampule Chamber `1.5.2` packages the authenticated control-plane UI for
-in-cluster operation. Helm and raw manifests provide a ServiceAccount,
-namespace-scoped discovery RBAC, Service, and PVC-backed run store. The UI can
-attach to an existing Kubernetes Service and backing Deployment or StatefulSet
-without a local repository, and its exercise editor supports multiple HTTP or
-Relayna journeys with explicit expected response statuses. Release images are
-vulnerability-scanned before publication, and the documentation is deployed
-through GitHub Pages.
+Ampule Chamber `1.5.3` makes Prometheus-backed readiness scoring evidence-safe.
+Required queries must return usable time series before metrics can contribute
+to a readiness score; failed or empty queries remain available as diagnostics
+and keep the result inconclusive. Multi-pod selectors now collect evidence from
+every selected workload pod, and reports expose the exact query, labels, value,
+timestamp, and artifact reference used for verification.
 
 ## What It Tests
 
