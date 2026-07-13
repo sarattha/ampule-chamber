@@ -380,6 +380,24 @@ def validate_config(
         source=f"{source}.agents.exclude",
     )
     _validate_runtime(runtime, source=f"{source}.runtime")
+    scenario_id = config.get("scenarioId")
+    scenario = config.get("scenario")
+    if scenario_id is not None:
+        _non_empty(scenario_id, f"{source}.scenarioId")
+    if scenario is not None:
+        scenario_doc = _mapping(scenario, f"{source}.scenario")
+        nested_id = _non_empty(scenario_doc.get("id"), f"{source}.scenario.id")
+        _non_empty(scenario_doc.get("name"), f"{source}.scenario.name")
+        _non_empty(scenario_doc.get("source"), f"{source}.scenario.source")
+        _non_empty(scenario_doc.get("revision"), f"{source}.scenario.revision")
+        _string_list(scenario_doc.get("tags", []), f"{source}.scenario.tags")
+        _string_list(scenario_doc.get("requiredSignals", []), f"{source}.scenario.requiredSignals")
+        if scenario_doc.get("origin") is not None:
+            origin = _mapping(scenario_doc["origin"], f"{source}.scenario.origin")
+            _non_empty(origin.get("source"), f"{source}.scenario.origin.source")
+            _non_empty(origin.get("revision"), f"{source}.scenario.origin.revision")
+        if scenario_id is not None and nested_id != scenario_id:
+            raise WorkflowError(f"{source}.scenario.id must match scenarioId")
 
 
 def config_to_onboarding_spec(config: dict[str, Any]) -> OnboardingSpec:
@@ -3253,13 +3271,29 @@ def _ensure_run_subdirs(run_dir: Path) -> None:
 
 
 def _write_metadata(run_dir: Path, payload: dict[str, Any]) -> None:
-    if "service_name" not in payload and (run_dir / "chamber.yaml").exists():
+    if (run_dir / "chamber.yaml").exists():
         try:
             config = yaml.safe_load((run_dir / "chamber.yaml").read_text(encoding="utf-8"))
         except (OSError, yaml.YAMLError):
             config = None
-        if isinstance(config, dict) and isinstance(config.get("service"), dict):
-            payload = {**payload, "service_name": str(config["service"].get("name", "unknown"))}
+        if isinstance(config, dict):
+            additions: dict[str, Any] = {}
+            if "service_name" not in payload and isinstance(config.get("service"), dict):
+                additions["service_name"] = str(config["service"].get("name", "unknown"))
+            scenario = config.get("scenario")
+            if isinstance(scenario, dict):
+                additions["scenario"] = {
+                    key: scenario[key]
+                    for key in ("id", "name", "source", "revision", "origin")
+                    if key in scenario
+                }
+            elif config.get("scenarioId"):
+                additions["scenario"] = {
+                    "id": str(config["scenarioId"]),
+                    "source": "legacy",
+                    "revision": "unrecorded",
+                }
+            payload = {**payload, **additions}
     _write_json(run_dir / "run-metadata.json", payload)
     sync_run_record(run_dir, payload)
 

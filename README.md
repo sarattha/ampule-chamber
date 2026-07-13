@@ -1,6 +1,6 @@
 # Ampule Chamber
 
-Version: 1.5.3
+Version: 1.6.0
 
 Production-ready release for agent-driven reliability testing of Kubernetes
 services before production.
@@ -15,12 +15,12 @@ teams that need to answer:
 
 ## Release Status
 
-Ampule Chamber `1.5.3` makes Prometheus-backed readiness scoring evidence-safe.
-Required queries must return usable time series before metrics can contribute
-to a readiness score; failed or empty queries remain available as diagnostics
-and keep the result inconclusive. Multi-pod selectors now collect evidence from
-every selected workload pod, and reports expose the exact query, labels, value,
-timestamp, and artifact reference used for verification.
+Ampule Chamber `1.6.0` adds reusable, editable scenarios to the control plane.
+Operators can choose bundled or durable workspace scenarios, import supported
+YAML/JSON, review compatibility metadata, adjust every resolved exercise field,
+and save custom definitions without accidental replacement. Generated configs
+and durable run records preserve scenario ID, source, and revision. Imported
+faults remain disabled until an operator explicitly selects them.
 
 ## What It Tests
 

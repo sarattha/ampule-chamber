@@ -818,6 +818,297 @@ class ControlPlaneTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "limited to 128 MiB"):
                     asyncio.run(_persist_journey_files(root, empty_file, [uploaded(b"data")]))
 
+    def test_saved_multipart_paths_survive_ui_planning_without_reupload(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workspace = root / ".chamber"
+            repo = _fixture_repo(root)
+            managed_uploads = workspace / "uploads" / "fixture"
+            managed_uploads.mkdir(parents=True)
+            invoice = managed_uploads / "invoice.pdf"
+            mask = managed_uploads / "mask.png"
+            outside = root / "outside.pdf"
+            invoice.write_bytes(b"%PDF")
+            mask.write_bytes(b"PNG")
+            outside.write_bytes(b"outside")
+            config = infer_config(repo)
+            config["scenarioId"] = "saved-multipart"
+            config["scenario"] = {
+                "id": "saved-multipart",
+                "name": "Saved multipart",
+                "description": "Reusable local multipart fixture.",
+                "tags": ["multipart"],
+                "source": "custom",
+                "revision": "draft",
+                "requiredSignals": ["logs"],
+            }
+            config["traffic"]["journeys"] = [
+                {
+                    "name": "ocr",
+                    "method": "POST",
+                    "path": "/ocr",
+                    "expectedStatus": 202,
+                    "requestEncoding": "multipart",
+                    "multipart": {
+                        "fields": {"mode": "layout"},
+                        "files": [
+                            {"field": "file", "path": str(invoice)},
+                            {"field": "mask", "path": str(mask)},
+                        ],
+                    },
+                    "vus": 1,
+                    "iterations": 1,
+                    "durationSeconds": 1,
+                }
+            ]
+
+            with TestClient(create_app(workspace)) as client:
+                new_page = client.get("/new")
+                self.assertIn("data-existing-file", new_page.text)
+                csrf = str(client.cookies["ampule_csrf"])
+                headers = {"X-CSRF-Token": csrf}
+                imported = client.post(
+                    "/api/v1/scenarios/validate",
+                    json={"content": yaml.safe_dump(config), "service_name": "target-service"},
+                    headers=headers,
+                )
+                self.assertEqual(imported.status_code, 200, imported.text)
+                imported_files = imported.json()["journeys"][0]["multipart"]["files"]
+                self.assertTrue(all(item.get("pathToken") for item in imported_files))
+
+                traversal = workspace / "uploads" / ".." / ".." / outside.name
+                symlink_escape = workspace / "uploads" / "escape.pdf"
+                untrusted_paths = [outside, traversal]
+                try:
+                    symlink_escape.symlink_to(outside)
+                    untrusted_paths.append(symlink_escape)
+                except OSError:
+                    pass
+                for untrusted_path in untrusted_paths:
+                    untrusted = json.loads(json.dumps(config))
+                    untrusted["traffic"]["journeys"][0]["multipart"]["files"] = [
+                        {
+                            "field": "file",
+                            "path": str(untrusted_path),
+                            "pathToken": "attacker-supplied",
+                        }
+                    ]
+                    validated = client.post(
+                        "/api/v1/scenarios/validate",
+                        json={"content": yaml.safe_dump(untrusted)},
+                        headers=headers,
+                    )
+                    self.assertEqual(validated.status_code, 200, validated.text)
+                    validated_file = validated.json()["journeys"][0]["multipart"]["files"][0]
+                    self.assertNotIn("pathToken", validated_file)
+                    rejected_untrusted = client.post(
+                        "/ui/plan",
+                        data={
+                            "_csrf": csrf,
+                            "repo": str(repo),
+                            "journeys_json": json.dumps(validated.json()["journeys"]),
+                        },
+                    )
+                    self.assertEqual(rejected_untrusted.status_code, 400)
+                    self.assertIn("require a browser upload", rejected_untrusted.text)
+
+                saved = client.post(
+                    "/api/v1/scenarios",
+                    json={"document": config},
+                    headers=headers,
+                )
+                self.assertEqual(saved.status_code, 201, saved.text)
+                projection = client.get("/api/v1/scenarios/user/saved-multipart")
+                self.assertEqual(projection.status_code, 200, projection.text)
+                journeys = projection.json()["journeys"]
+                saved_files = journeys[0]["multipart"]["files"]
+                self.assertTrue(all(item.get("pathToken") for item in saved_files))
+
+                planned = client.post(
+                    "/ui/plan",
+                    data={
+                        "_csrf": csrf,
+                        "repo": str(repo),
+                        "service_name": "target-service",
+                        "journeys_json": json.dumps(journeys),
+                    },
+                    follow_redirects=False,
+                )
+                self.assertEqual(planned.status_code, 303, planned.text)
+                run_id = planned.headers["location"].split("/")[2].split("?")[0]
+                planned_config = yaml.safe_load(
+                    (workspace / "runs" / run_id / "chamber.yaml").read_text(encoding="utf-8")
+                )
+                planned_files = planned_config["traffic"]["journeys"][0]["multipart"]["files"]
+                self.assertEqual(
+                    planned_files,
+                    [
+                        {"field": "file", "path": str(invoice.resolve())},
+                        {"field": "mask", "path": str(mask.resolve())},
+                    ],
+                )
+
+                forged = json.loads(json.dumps(journeys))
+                forged[0]["multipart"]["files"][0]["path"] = "/etc/hosts"
+                rejected = client.post(
+                    "/ui/plan",
+                    data={
+                        "_csrf": csrf,
+                        "repo": str(repo),
+                        "journeys_json": json.dumps(forged),
+                    },
+                )
+                self.assertEqual(rejected.status_code, 400)
+                self.assertIn("require a browser upload", rejected.text)
+
+            script = (Path(__file__).parents[1] / "chamber/control_plane/static/app.js").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("card.dataset.multipartFiles = JSON.stringify(retainedFiles);", script)
+            self.assertIn("pathToken: item.pathToken", script)
+            self.assertIn(
+                'files = [{field: field(card, "fileField").value.trim(), uploadIndex}]', script
+            )
+
+    def test_failed_plan_does_not_save_scenario_or_retain_uploaded_file(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workspace = root / ".chamber"
+            repo = _fixture_repo(root)
+            app = create_app(workspace)
+            with TestClient(app) as client:
+                client.get("/new")
+                csrf = str(client.cookies["ampule_csrf"])
+                journey = {
+                    "name": "failed-upload",
+                    "method": "POST",
+                    "path": "/upload",
+                    "expectedStatus": 202,
+                    "requestEncoding": "multipart",
+                    "multipart": {
+                        "fields": {"mode": "layout"},
+                        "files": [{"field": "file", "uploadIndex": 0}],
+                    },
+                    "vus": 1,
+                    "iterations": 1,
+                    "durationSeconds": 1,
+                }
+                with patch.object(app.state.chamber, "plan", side_effect=RuntimeError("forced")):
+                    failed = client.post(
+                        "/ui/plan",
+                        data={
+                            "_csrf": csrf,
+                            "repo": str(repo),
+                            "scenario_id": "failed-upload-save",
+                            "scenario_name": "Failed upload save",
+                            "save_scenario": "new",
+                            "journeys_json": json.dumps([journey]),
+                        },
+                        files={
+                            "journey_files": (
+                                "invoice.pdf",
+                                b"%PDF-1.7 test",
+                                "application/pdf",
+                            )
+                        },
+                    )
+                self.assertEqual(failed.status_code, 400)
+                self.assertIn("forced", failed.text)
+                self.assertEqual(
+                    client.get("/api/v1/scenarios/user/failed-upload-save").status_code,
+                    404,
+                )
+
+                with patch.object(
+                    app.state.scenarios,
+                    "save",
+                    side_effect=FileExistsError("simulated publish collision"),
+                ):
+                    publish_failed = client.post(
+                        "/ui/plan",
+                        data={
+                            "_csrf": csrf,
+                            "repo": str(repo),
+                            "scenario_id": "publish-collision",
+                            "scenario_name": "Publish collision",
+                            "save_scenario": "new",
+                        },
+                    )
+                self.assertEqual(publish_failed.status_code, 400)
+                self.assertIn("simulated publish collision", publish_failed.text)
+
+                existing = infer_config(repo)
+                existing["scenarioId"] = "existing-save"
+                existing["scenario"] = {
+                    "id": "existing-save",
+                    "name": "Existing save",
+                    "description": "Already published.",
+                    "tags": [],
+                    "source": "custom",
+                    "revision": "draft",
+                    "requiredSignals": [],
+                }
+                app.state.scenarios.save(
+                    existing,
+                    replace=False,
+                    validate_journeys=_ui_journeys,
+                )
+                with patch.object(app.state.chamber, "plan") as plan:
+                    existing_collision = client.post(
+                        "/ui/plan",
+                        data={
+                            "_csrf": csrf,
+                            "repo": str(repo),
+                            "scenario_id": "existing-save",
+                            "scenario_name": "Existing save",
+                            "save_scenario": "new",
+                        },
+                    )
+                self.assertEqual(existing_collision.status_code, 400)
+                self.assertIn("confirm replacement explicitly", existing_collision.text)
+                plan.assert_not_called()
+
+            self.assertFalse((workspace / "scenarios/failed-upload-save.yaml").exists())
+            self.assertFalse(list((workspace / "scenarios").glob("*.tmp")))
+            self.assertFalse(list((workspace / "uploads").glob("**/*")))
+            self.assertFalse(list((workspace / "drafts").glob("*.yaml")))
+            self.assertFalse(list((workspace / "runs").glob("*")))
+
+    def test_wizard_preserves_optional_json_body_and_initializes_skipped_identity(self) -> None:
+        script = (Path(__file__).parents[1] / "chamber/control_plane/static/app.js").read_text(
+            encoding="utf-8"
+        )
+        populate_start = script.index("const populateJourney = (card, journey) =>")
+        populate_end = script.index("const selectedServiceName", populate_start)
+        populate_source = script[populate_start:populate_end]
+        self.assertIn('Object.hasOwn(journey, "body")', populate_source)
+        self.assertIn("? JSON.stringify(journey.body, null, 2)", populate_source)
+        self.assertIn(': "";', populate_source)
+
+        serialize_start = script.index("const serializeJourneys = () =>")
+        serialize_end = script.index("const selectModeCard", serialize_start)
+        serialize_source = script[serialize_start:serialize_end]
+        self.assertIn('const bodyControl = field(card, "body");', serialize_source)
+        self.assertIn("if (bodyControl.value.trim()) journey.body = body;", serialize_source)
+        self.assertNotIn("if (body !== null) journey.body = body;", serialize_source)
+
+        identity_start = script.index("const ensureScenarioIdentity = () =>")
+        render_start = script.index("const render = () =>", identity_start)
+        review_start = script.index("if (current === panels.length - 1) updateReview(form)")
+        self.assertLess(identity_start, render_start)
+        self.assertIn(
+            "if (current >= 2) ensureScenarioIdentity();",
+            script[render_start:review_start],
+        )
+        self.assertIn(
+            "if (!form.elements.scenario_id.value.trim()) {", script[identity_start:render_start]
+        )
+        self.assertIn(
+            "if (!form.elements.scenario_name.value.trim()) {",
+            script[identity_start:render_start],
+        )
+        self.assertIn('submit.addEventListener("click", ensureScenarioIdentity);', script)
+
     def test_json_plan_start_job_cancel_and_event_endpoints(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

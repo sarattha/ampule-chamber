@@ -1,0 +1,121 @@
+apiVersion: chamber.ampule.dev/v1alpha1
+kind: Scenario
+metadata:
+  id: external-text-translation-001
+  name: External text translation through OpenAI
+  description: Onboard an external direct-text translation service with Redis, RabbitMQ, worker, and OpenAI.
+  owner: platform-reliability
+  tags:
+    - external-service
+    - onboarding
+    - openai
+target:
+  service:
+    name: translation-service
+    image: ampule/external-translation-api:local
+    ports:
+      - name: http
+        port: 8887
+    healthEndpoint: /health
+    readinessEndpoint: /health
+  runtime:
+    provider: docker
+    composeFile: /path/to/external-translation-service/docker/Dockerfile.api
+environment:
+  provider: docker
+  namespace: chamber-external-translation
+  replicas: 1
+  resources:
+    cpuRequest: 250m
+    cpuLimit: "1"
+    memoryRequest: 256Mi
+    memoryLimit: 768Mi
+  dependencies:
+    - name: rabbitmq
+      type: message_broker
+      protocol: amqp
+      endpoint: amqp://rabbitmq:5672
+      criticality: required
+      timeout: 5s
+      retryExpectation: bounded
+      fallbackBehavior: reject translation submission
+    - name: redis-master
+      type: cache
+      protocol: redis
+      endpoint: redis://redis-master:6379
+      criticality: required
+      timeout: 5s
+      retryExpectation: bounded
+      fallbackBehavior: report status store unavailable
+topology:
+  services:
+    - name: translation-service
+      role: target
+    - name: translation-worker
+      role: worker
+    - name: rabbitmq
+      role: dependency
+    - name: redis-master
+      role: dependency
+  edges:
+    - from: translation-service
+      to: rabbitmq
+    - from: translation-service
+      to: redis-master
+    - from: translation-worker
+      to: rabbitmq
+    - from: translation-worker
+      to: redis-master
+    - from: translation-worker
+      to: openai
+baseline:
+  checks:
+    - type: readiness_http_200
+      description: Translation API /health returns HTTP 200 after Redis and RabbitMQ are ready.
+    - type: dependency_probe
+      description: RabbitMQ and Redis endpoints are available before text traffic starts.
+traffic:
+  tool: k6
+  method: POST
+  entrypoint: /translations
+  expectedStatus: 202
+  body:
+    task_id: ampule-phase10-text
+    text: Hello from Ampule Chamber.
+    language_target: Thai
+    priority: 5
+  stages:
+    - duration: 30s
+      targetVus: 1
+    - duration: 30s
+      targetVus: 0
+observability:
+  signals:
+    - pod_status
+    - kubernetes_events
+    - dependency_health
+    - queue_depth
+    - request_latency
+    - error_rate
+    - logs
+failureConditions:
+  - type: baseline_check_failed
+    description: API, RabbitMQ, Redis, or worker readiness does not pass.
+  - type: queue_backlog_not_draining
+    description: Translation tasks remain in RabbitMQ without worker progress.
+  - type: error_rate_above_percent
+    description: POST /translations failure rate is above 1 percent.
+    threshold: 1
+successConditions:
+  - type: baseline_checks_pass
+    description: API, worker, RabbitMQ, and Redis readiness checks pass.
+  - type: queue_backlog_drains_within
+    description: The submitted text task reaches terminal status or worker evidence within 2 minutes.
+    threshold: 2m
+  - type: error_rate_below_percent
+    description: POST /translations failure rate remains below 1 percent.
+    threshold: 1
+safety:
+  maxDuration: 5m
+  maxVirtualUsers: "1"
+  productionContextAllowed: false

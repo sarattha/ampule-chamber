@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import json
 import secrets
 import shutil
@@ -29,6 +31,13 @@ from chamber.control_plane.discovery import (
     KubernetesDiscovery,
 )
 from chamber.control_plane.jobs import TERMINAL_JOB_STATES, AssessmentJobManager
+from chamber.control_plane.scenarios import (
+    ScenarioCatalog,
+    ScenarioCatalogError,
+    compatibility_warnings,
+    normalize_document,
+    parse_scenario_document,
+)
 from chamber.control_plane.security import (
     SESSION_COOKIE,
     load_admin_auth,
@@ -64,6 +73,16 @@ class CompareRequest(BaseModel):
     candidate_run_id: str
 
 
+class ScenarioValidateRequest(BaseModel):
+    content: str
+    service_name: str = ""
+
+
+class ScenarioSaveRequest(BaseModel):
+    document: dict[str, Any]
+    replace: bool = False
+
+
 def create_app(
     workspace: Path = Path(".chamber"),
     *,
@@ -77,6 +96,9 @@ def create_app(
     application = ChamberApplication(workspace)
     application.initialize()
     jobs = AssessmentJobManager(workspace)
+    scenarios = ScenarioCatalog(workspace, PACKAGE_DIR / "bundled_scenarios")
+    multipart_path_secret = secrets.token_bytes(32)
+    multipart_upload_root = workspace.resolve() / "uploads"
     templates = Jinja2Templates(directory=TEMPLATE_DIR)
     app = FastAPI(title="Ampule Chamber Control Plane", version="1")
     app.state.chamber = application
@@ -85,6 +107,7 @@ def create_app(
     app.state.workspace = workspace
     app.state.auth = auth
     app.state.discovery = kubernetes_discovery
+    app.state.scenarios = scenarios
     cast(dict[str, Any], templates.env.globals)["auth_enabled"] = auth.enabled
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -231,6 +254,15 @@ def create_app(
         fault_type: Annotated[str, Form()] = "none",
         prometheus_url: Annotated[str, Form()] = "",
         agents_mode: Annotated[str, Form()] = "offline",
+        scenario_id: Annotated[str, Form()] = "",
+        scenario_name: Annotated[str, Form()] = "",
+        scenario_description: Annotated[str, Form()] = "",
+        scenario_tags: Annotated[str, Form()] = "",
+        scenario_source: Annotated[str, Form()] = "custom",
+        scenario_revision: Annotated[str, Form()] = "",
+        required_signals_json: Annotated[str, Form()] = "[]",
+        save_scenario: Annotated[str, Form()] = "none",
+        replace_scenario: Annotated[str, Form()] = "",
     ) -> Response:
         _check_csrf(request, csrf)
         upload_dir: Path | None = None
@@ -239,6 +271,7 @@ def create_app(
                 workspace,
                 journeys_json,
                 journey_files or [],
+                path_secret=multipart_path_secret,
             )
             run_dir = _plan_from_values(
                 application,
@@ -263,6 +296,16 @@ def create_app(
                 fault_type=fault_type,
                 prometheus_url=prometheus_url,
                 agents_mode=agents_mode,
+                scenario_id=scenario_id,
+                scenario_name=scenario_name,
+                scenario_description=scenario_description,
+                scenario_tags=scenario_tags,
+                scenario_source=scenario_source,
+                scenario_revision=scenario_revision,
+                required_signals_json=required_signals_json,
+                save_scenario=save_scenario,
+                replace_scenario=replace_scenario,
+                catalog=scenarios,
             )
         except (OSError, ValueError, RuntimeError) as exc:
             if upload_dir is not None:
@@ -386,6 +429,55 @@ def create_app(
     @app.get("/api/v1/capabilities")
     async def capabilities_api() -> dict[str, Any]:
         return _capabilities(kubernetes_discovery.settings)
+
+    @app.get("/api/v1/scenarios")
+    async def scenarios_api() -> dict[str, Any]:
+        return {"scenarios": scenarios.list(_ui_journeys)}
+
+    @app.get("/api/v1/scenarios/{source}/{scenario_id}")
+    async def scenario_api(source: str, scenario_id: str, service_name: str = "") -> dict[str, Any]:
+        try:
+            normalized = scenarios.read(source, scenario_id, _ui_journeys)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="scenario not found") from None
+        except (ScenarioCatalogError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        normalized["warnings"] = compatibility_warnings(normalized, service_name=service_name)
+        _authorize_multipart_paths(normalized, multipart_path_secret, multipart_upload_root)
+        return normalized
+
+    @app.post("/api/v1/scenarios/validate")
+    async def validate_scenario_api(
+        request: Request, payload: ScenarioValidateRequest
+    ) -> dict[str, Any]:
+        _check_csrf(request, request.headers.get("X-CSRF-Token"))
+        try:
+            normalized = normalize_document(
+                parse_scenario_document(payload.content),
+                source="imported",
+                validate_journeys=_ui_journeys,
+            )
+        except (ScenarioCatalogError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        normalized["warnings"] = compatibility_warnings(
+            normalized, service_name=payload.service_name
+        )
+        _authorize_multipart_paths(normalized, multipart_path_secret, multipart_upload_root)
+        return normalized
+
+    @app.post("/api/v1/scenarios", status_code=201)
+    async def create_scenario_api(request: Request, payload: ScenarioSaveRequest) -> dict[str, Any]:
+        _check_csrf(request, request.headers.get("X-CSRF-Token"))
+        try:
+            return scenarios.save(
+                payload.document,
+                replace=payload.replace,
+                validate_journeys=_ui_journeys,
+            )
+        except FileExistsError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (ScenarioCatalogError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/api/v1/kubernetes/discovery")
     async def kubernetes_discovery_api(context: str, namespace: str) -> dict[str, Any]:
@@ -568,6 +660,16 @@ def _plan_from_values(
     fault_type: str,
     prometheus_url: str,
     agents_mode: str,
+    scenario_id: str = "",
+    scenario_name: str = "",
+    scenario_description: str = "",
+    scenario_tags: str = "",
+    scenario_source: str = "custom",
+    scenario_revision: str = "",
+    required_signals_json: str = "[]",
+    save_scenario: str = "none",
+    replace_scenario: str = "",
+    catalog: ScenarioCatalog | None = None,
 ) -> Path:
     config: dict[str, Any]
     if repo is not None and not repo.is_dir():
@@ -717,8 +819,145 @@ def _plan_from_values(
             "prometheusUrl",
         ):
             runtime.pop(key, None)
+    selected_scenario_id = scenario_id.strip() or f"{name}-assessment"
+    tags = [value.strip() for value in scenario_tags.split(",") if value.strip()]
+    try:
+        signals = json.loads(required_signals_json or "[]")
+    except json.JSONDecodeError as exc:
+        raise ValueError("Required signals must be valid JSON") from exc
+    if not isinstance(signals, list) or not all(
+        isinstance(value, str) and value.strip() for value in signals
+    ):
+        raise ValueError("Required signals must be a JSON array of non-empty strings")
+    origin_source = (
+        scenario_source
+        if scenario_source in {"custom", "bundled", "user", "imported"}
+        else "custom"
+    )
+    matching_user_scenario = (
+        _matching_user_scenario(
+            catalog,
+            scenario_id=selected_scenario_id,
+            revision=scenario_revision.strip(),
+            name=scenario_name.strip() or selected_scenario_id,
+            description=scenario_description.strip(),
+            tags=tags,
+            target_service=name,
+            target_service_port=service_port,
+            journeys=cast(list[dict[str, Any]], traffic["journeys"]),
+            required_signals=signals,
+            agent_mode=agents_mode,
+            fault_type=fault_type,
+        )
+        if origin_source == "user"
+        else None
+    )
+    if origin_source == "custom":
+        resolved_source = "custom"
+    elif matching_user_scenario is not None:
+        resolved_source = "user"
+    else:
+        resolved_source = "derived"
+    config["scenarioId"] = selected_scenario_id
+    scenario_metadata: dict[str, Any] = {
+        "id": selected_scenario_id,
+        "name": scenario_name.strip() or selected_scenario_id,
+        "description": scenario_description.strip(),
+        "tags": tags,
+        "source": resolved_source,
+        "revision": "draft",
+        "requiredSignals": signals,
+    }
+    if origin_source != resolved_source:
+        scenario_metadata["origin"] = {
+            "source": origin_source,
+            "revision": scenario_revision.strip() or "unrecorded",
+        }
+    elif matching_user_scenario is not None and isinstance(
+        matching_user_scenario.get("origin"), dict
+    ):
+        scenario_metadata["origin"] = dict(matching_user_scenario["origin"])
+    config["scenario"] = scenario_metadata
+    normalized = normalize_document(config, source="custom", validate_journeys=_ui_journeys)
+    if matching_user_scenario is not None and normalized["revision"] != scenario_revision.strip():
+        scenario_metadata["source"] = "derived"
+        scenario_metadata["origin"] = {
+            "source": "user",
+            "revision": scenario_revision.strip(),
+        }
+        normalized = normalize_document(config, source="custom", validate_journeys=_ui_journeys)
+    config["scenario"]["revision"] = normalized["revision"]
+    if save_scenario not in {"none", "new", "replace"}:
+        raise ValueError("Save scenario mode must be none, new, or replace")
+    if save_scenario != "none":
+        if catalog is None:
+            raise ValueError("Scenario catalog is unavailable")
+        if save_scenario == "replace" and replace_scenario != "confirmed":
+            raise ValueError("Replacing a saved scenario requires explicit confirmation")
+        prepared = catalog.prepare_save(
+            config,
+            replace=save_scenario == "replace",
+            validate_journeys=_ui_journeys,
+        )
+        config["scenario"].update({"source": "user", "revision": prepared["revision"]})
     config_path = _write_draft(workspace, config)
-    return application.plan(config_path)
+    try:
+        run_dir = application.plan(config_path)
+    except Exception:
+        config_path.unlink(missing_ok=True)
+        raise
+    if save_scenario != "none":
+        assert catalog is not None
+        try:
+            catalog.save(
+                config,
+                replace=save_scenario == "replace",
+                validate_journeys=_ui_journeys,
+            )
+        except Exception:
+            shutil.rmtree(run_dir, ignore_errors=True)
+            config_path.unlink(missing_ok=True)
+            raise
+    return run_dir
+
+
+def _matching_user_scenario(
+    catalog: ScenarioCatalog | None,
+    *,
+    scenario_id: str,
+    revision: str,
+    name: str,
+    description: str,
+    tags: list[str],
+    target_service: str,
+    target_service_port: int,
+    journeys: list[dict[str, Any]],
+    required_signals: list[str],
+    agent_mode: str,
+    fault_type: str,
+) -> dict[str, Any] | None:
+    if catalog is None or not revision:
+        return None
+    try:
+        selected = catalog.read("user", scenario_id, _ui_journeys)
+    except (FileNotFoundError, ScenarioCatalogError, ValueError):
+        return None
+    expected_faults = [] if fault_type == "none" else [fault_type]
+    identity = selected["identity"]
+    matches = (
+        selected["revision"] == revision
+        and identity["id"] == scenario_id
+        and identity["name"] == name
+        and identity["description"] == description
+        and identity["tags"] == tags
+        and selected["targetService"] == target_service
+        and selected["targetServicePort"] in {None, target_service_port}
+        and selected["journeys"] == journeys
+        and selected["requiredSignals"] == required_signals
+        and selected["agentMode"] == agent_mode
+        and selected["configuredFaults"] == expected_faults
+    )
+    return selected if matches else None
 
 
 def _ui_journeys(raw: str) -> list[dict[str, Any]]:
@@ -783,6 +1022,8 @@ async def _persist_journey_files(
     workspace: Path,
     raw: str,
     uploads: list[UploadFile],
+    *,
+    path_secret: bytes | None = None,
 ) -> tuple[str, Path | None]:
     if not raw.strip():
         return raw, None
@@ -792,6 +1033,7 @@ async def _persist_journey_files(
         raise ValueError("Traffic journeys must be valid JSON") from exc
     if not isinstance(journeys, list):
         raise ValueError("Traffic journeys must be a JSON array")
+    upload_root = workspace.resolve() / "uploads"
     file_entries: list[dict[str, Any]] = []
     for journey in journeys:
         if not isinstance(journey, dict):
@@ -804,18 +1046,31 @@ async def _persist_journey_files(
             continue
         file_entries.extend(item for item in files if isinstance(item, dict))
     if not uploads:
-        if file_entries:
-            raise ValueError("UI multipart files require a browser upload")
-        return raw, None
-    upload_dir = workspace.resolve() / "uploads" / uuid.uuid4().hex
+        for item in file_entries:
+            token = item.pop("pathToken", None)
+            managed_path = _redeem_multipart_path(item.get("path"), token, path_secret, upload_root)
+            if managed_path is None:
+                raise ValueError("UI multipart files require a browser upload")
+            item["path"] = str(managed_path)
+        return json.dumps(journeys) if file_entries else raw, None
+    upload_dir = upload_root / uuid.uuid4().hex
     upload_dir.mkdir(parents=True, exist_ok=False)
     referenced: set[int] = set()
     try:
         for item in file_entries:
+            token = item.pop("pathToken", None)
+            upload_index = item.pop("uploadIndex", None)
+            if upload_index is None:
+                managed_path = _redeem_multipart_path(
+                    item.get("path"), token, path_secret, upload_root
+                )
+                if managed_path is not None:
+                    item["path"] = str(managed_path)
+                    continue
+                raise ValueError("Multipart file is missing its browser upload reference")
             item.pop("path", None)
             item.pop("filename", None)
             item.pop("contentType", None)
-            upload_index = item.pop("uploadIndex", None)
             if not isinstance(upload_index, int) or isinstance(upload_index, bool):
                 raise ValueError("Multipart file is missing its browser upload reference")
             if upload_index < 0 or upload_index >= len(uploads):
@@ -850,6 +1105,57 @@ async def _persist_journey_files(
         shutil.rmtree(upload_dir, ignore_errors=True)
         raise
     return json.dumps(journeys), upload_dir
+
+
+def _authorize_multipart_paths(
+    projection: dict[str, Any], secret: bytes, upload_root: Path
+) -> None:
+    for journey in projection.get("journeys", []):
+        if not isinstance(journey, dict):
+            continue
+        multipart = journey.get("multipart")
+        if not isinstance(multipart, dict):
+            continue
+        files = multipart.get("files")
+        if not isinstance(files, list):
+            continue
+        for item in files:
+            if not isinstance(item, dict):
+                continue
+            item.pop("pathToken", None)
+            managed_path = _managed_multipart_path(item.get("path"), upload_root)
+            if managed_path is not None:
+                item["pathToken"] = _multipart_path_token(managed_path, secret)
+
+
+def _redeem_multipart_path(
+    path: Any, token: Any, secret: bytes | None, upload_root: Path
+) -> Path | None:
+    if not isinstance(path, str) or not isinstance(token, str) or secret is None:
+        return None
+    managed_path = _managed_multipart_path(path, upload_root)
+    if managed_path is None:
+        return None
+    if not secrets.compare_digest(token, _multipart_path_token(managed_path, secret)):
+        return None
+    return managed_path
+
+
+def _managed_multipart_path(path: Any, upload_root: Path) -> Path | None:
+    if not isinstance(path, str):
+        return None
+    try:
+        resolved = Path(path).resolve(strict=True)
+        root = upload_root.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None
+    if not root.is_dir() or not resolved.is_relative_to(root) or not resolved.is_file():
+        return None
+    return resolved
+
+
+def _multipart_path_token(path: Path, secret: bytes) -> str:
+    return hmac.new(secret, str(path).encode(), hashlib.sha256).hexdigest()
 
 
 def _validate_request_encoding(journey: dict[str, Any], *, index: int) -> None:

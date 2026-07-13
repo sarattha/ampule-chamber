@@ -26,7 +26,15 @@
     const discoveryResults = form.querySelector("[data-discovery-results]");
     const discoveredService = form.querySelector("[data-discovered-service]");
     const discoveredWorkload = form.querySelector("[data-discovered-workload]");
+    const scenarioStatus = form.querySelector("[data-scenario-status]");
+    const savedScenarioPanel = form.querySelector("[data-saved-scenario]");
+    const importScenarioPanel = form.querySelector("[data-import-scenario]");
+    const scenarioSelect = form.querySelector("[data-scenario-select]");
+    const scenarioMetadata = form.querySelector("[data-scenario-metadata]");
+    const csrfToken = form.elements._csrf.value;
     let discoveryData = null;
+    let scenarioCatalog = [];
+    let scenarioWarnings = [];
     let current = 0;
 
     const profiles = {
@@ -36,6 +44,12 @@
     };
 
     const field = (card, name) => card.querySelector(`[data-journey-field="${name}"]`);
+    const existingMultipartFiles = card => {
+      try {
+        const files = JSON.parse(card.dataset.multipartFiles || "[]");
+        return Array.isArray(files) ? files : [];
+      } catch (_) { return []; }
+    };
     const parseJson = (control, label, {required = false} = {}) => {
       const raw = control.value.trim();
       control.setCustomValidity("");
@@ -72,7 +86,13 @@
       field(card, "requestEncoding").disabled = relayna;
       field(card, "body").required = relayna;
       field(card, "file").disabled = requestEncoding !== "multipart";
-      field(card, "file").required = requestEncoding === "multipart";
+      const retainedFiles = existingMultipartFiles(card);
+      field(card, "file").required = requestEncoding === "multipart" && !retainedFiles.length;
+      const existingFileStatus = card.querySelector("[data-existing-file]");
+      existingFileStatus.hidden = requestEncoding !== "multipart" || !retainedFiles.length;
+      existingFileStatus.textContent = retainedFiles.length
+        ? `Using validated file: ${retainedFiles.map(item => item.filename || item.path).join(", ")}. Select a new upload to replace it.`
+        : "";
       field(card, "multipartFields").required = requestEncoding === "multipart";
       field(card, "form").required = requestEncoding === "form";
       field(card, "rawBody").required = requestEncoding === "raw";
@@ -93,7 +113,7 @@
       card.querySelector("[data-journey-title]").textContent = `${relayna ? "Relayna" : "HTTP"} · ${field(card, "name").value || "unnamed"}`;
     };
 
-    const addJourney = ({adapter = "http"} = {}) => {
+    const addJourney = ({adapter = "http", journey = null} = {}) => {
       const fragment = journeyTemplate.content.cloneNode(true);
       const card = fragment.querySelector("[data-journey]");
       const count = journeyList.querySelectorAll("[data-journey]").length + 1;
@@ -109,8 +129,138 @@
       });
       journeyList.appendChild(fragment);
       syncJourney(card, {resetDefaults: adapter === "relayna"});
+      if (journey) populateJourney(card, journey);
       renumberJourneys();
       return card;
+    };
+
+    const populateJourney = (card, journey) => {
+      const adapter = journey.adapter || "http";
+      field(card, "adapter").value = adapter;
+      field(card, "name").value = journey.name || "traffic";
+      field(card, "method").value = (journey.method || "GET").toUpperCase();
+      field(card, "path").value = journey.path || "/health";
+      field(card, "expectedStatus").value = journey.expectedStatus || 200;
+      field(card, "tool").value = journey.tool || "k6";
+      const encoding = journey.requestEncoding || (Object.hasOwn(journey, "body") ? "json" : "none");
+      field(card, "requestEncoding").value = encoding;
+      if (encoding === "json") {
+        field(card, "body").value = Object.hasOwn(journey, "body")
+          ? JSON.stringify(journey.body, null, 2)
+          : "";
+      }
+      if (encoding === "multipart") {
+        const files = Array.isArray(journey.multipart?.files) ? journey.multipart.files : [];
+        const retainedFiles = files.filter(item => item?.path && item?.pathToken);
+        card.dataset.multipartFiles = JSON.stringify(retainedFiles);
+        field(card, "multipartFields").value = JSON.stringify(journey.multipart?.fields || {}, null, 2);
+        field(card, "fileField").value = files[0]?.field || "file";
+      }
+      if (encoding === "form") field(card, "form").value = JSON.stringify(journey.form || {}, null, 2);
+      if (encoding === "raw") {
+        field(card, "rawBody").value = journey.body || "";
+        field(card, "contentType").value = journey.contentType || "text/plain";
+      }
+      field(card, "textBytes").value = journey.textBytes || 0;
+      if (Array.isArray(journey.stages)) {
+        field(card, "loadModel").value = "stages";
+        field(card, "stages").value = JSON.stringify(journey.stages, null, 2);
+      } else {
+        field(card, "loadModel").value = "iterations";
+        field(card, "vus").value = journey.vus || 1;
+        field(card, "iterations").value = journey.iterations || 1;
+        field(card, "durationSeconds").value = journey.durationSeconds || 1;
+      }
+      if (adapter === "relayna") {
+        const lifecycle = journey.relayna || {};
+        field(card, "taskIdPath").value = lifecycle.taskIdPath || "task_id";
+        field(card, "eventsPath").value = lifecycle.eventsPath || "/events/{task_id}";
+        field(card, "terminalStatuses").value = (lifecycle.terminalStatuses || ["completed", "failed"]).join(", ");
+        field(card, "successStatuses").value = (lifecycle.successStatuses || ["completed"]).join(", ");
+        field(card, "timeoutSeconds").value = lifecycle.timeoutSeconds || 300;
+      }
+      field(card, "followUps").value = journey.followUps ? JSON.stringify(journey.followUps, null, 2) : "";
+      syncJourney(card);
+    };
+
+    const selectedServiceName = () => serviceName.value.trim();
+    const setScenarioStatus = (message, tone = "") => {
+      scenarioStatus.textContent = message;
+      scenarioStatus.classList.toggle("error", tone === "error");
+      scenarioStatus.classList.toggle("warning", tone === "warning");
+    };
+    const applyScenario = projection => {
+      const identity = projection.identity;
+      form.elements.scenario_id.value = identity.id;
+      form.elements.scenario_name.value = identity.name;
+      form.elements.scenario_description.value = identity.description || "";
+      form.elements.scenario_tags.value = (identity.tags || []).join(", ");
+      form.elements.scenario_source.value = projection.source;
+      form.elements.scenario_revision.value = projection.revision;
+      form.elements.required_signals_json.value = JSON.stringify(projection.requiredSignals || []);
+      form.elements.agents_mode.value = projection.agentMode || "offline";
+      if (Number.isInteger(projection.targetServicePort)) {
+        form.elements.service_port.value = projection.targetServicePort;
+      }
+      form.elements.fault_type.value = "none";
+      journeyList.replaceChildren();
+      projection.journeys.forEach(journey => addJourney({adapter: journey.adapter || "http", journey}));
+      scenarioWarnings = projection.warnings || [];
+      form.dataset.scenarioWarnings = JSON.stringify(scenarioWarnings);
+      const faultMessage = projection.recommendedFault && projection.recommendedFault !== "none"
+        ? ` ${projection.recommendedFault} is recommended but remains disabled; choose it explicitly below.` : "";
+      const warningMessage = scenarioWarnings.length ? ` ${scenarioWarnings.join(" ")}` : "";
+      setScenarioStatus(`Loaded ${identity.id} into the editable exercise.${faultMessage}${warningMessage}`, faultMessage || warningMessage ? "warning" : "");
+    };
+
+    const filteredScenarios = () => {
+      const query = form.querySelector("[data-scenario-search]").value.trim().toLowerCase();
+      const adapter = form.querySelector("[data-scenario-adapter]").value;
+      const fault = form.querySelector("[data-scenario-fault]").value;
+      return scenarioCatalog.filter(item => {
+        const searchable = [item.id, item.name, item.description, ...(item.tags || [])].join(" ").toLowerCase();
+        const adapterMatch = !adapter || item.trafficAdapters.includes(adapter);
+        const hasFault = (item.faults || []).length > 0;
+        const faultMatch = !fault || (fault === "configured" ? hasFault : !hasFault);
+        return (!query || searchable.includes(query)) && adapterMatch && faultMatch;
+      });
+    };
+    const renderScenarioCatalog = () => {
+      const selected = scenarioSelect.value;
+      const options = filteredScenarios().map(item => new Option(`${item.source === "bundled" ? "Bundled" : "Workspace"} · ${item.name} (${item.id})`, `${item.source}/${item.id}`));
+      options.unshift(new Option(options.length ? "Select a saved scenario…" : "No matching scenarios", ""));
+      scenarioSelect.replaceChildren(...options);
+      if ([...scenarioSelect.options].some(option => option.value === selected)) scenarioSelect.value = selected;
+      renderScenarioMetadata();
+    };
+    const selectedScenarioMetadata = () => scenarioCatalog.find(item => `${item.source}/${item.id}` === scenarioSelect.value);
+    const renderScenarioMetadata = () => {
+      const item = selectedScenarioMetadata();
+      if (!item) {
+        scenarioMetadata.textContent = "Select a scenario to inspect its metadata.";
+        return;
+      }
+      scenarioMetadata.textContent = `${item.description || "No description"}\n${item.journeyCount} journey(s) · ${item.trafficAdapters.join(", ")} · max ${item.maxVirtualUsers} VUs · ${item.expectedDuration}\nFaults: ${(item.faults || []).join(", ") || "none"} · Signals: ${(item.requiredSignals || []).join(", ") || "default"}\nTags: ${(item.tags || []).join(", ") || "none"} · revision ${item.revision}`;
+    };
+    const loadScenarioCatalog = async () => {
+      if (scenarioCatalog.length) return;
+      try {
+        const response = await fetch("/api/v1/scenarios");
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.detail || "Could not load scenario catalog");
+        scenarioCatalog = payload.scenarios;
+        renderScenarioCatalog();
+      } catch (error) { setScenarioStatus(error.message, "error"); }
+    };
+    const validateImportedScenario = async content => {
+      const response = await fetch("/api/v1/scenarios/validate", {
+        method: "POST",
+        headers: {"Content-Type": "application/json", "X-CSRF-Token": csrfToken},
+        body: JSON.stringify({content, service_name: selectedServiceName()}),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || "Scenario validation failed");
+      applyScenario(payload);
     };
 
     const serializeJourneys = () => {
@@ -134,8 +284,9 @@
         if (tool) journey.tool = tool;
         if (adapter === "relayna") journey.adapter = "relayna";
         if (requestEncoding === "json") {
-          const body = parseJson(field(card, "body"), `Journey ${index + 1} request body`, {required: adapter === "relayna"});
-          if (body !== null) journey.body = body;
+          const bodyControl = field(card, "body");
+          const body = parseJson(bodyControl, `Journey ${index + 1} request body`, {required: adapter === "relayna"});
+          if (bodyControl.value.trim()) journey.body = body;
           const textBytes = Number(field(card, "textBytes").value);
           if (textBytes > 0) journey.textBytes = textBytes;
         } else if (requestEncoding === "multipart") {
@@ -145,12 +296,30 @@
             throw new Error("Multipart fields must be a JSON object.");
           }
           const upload = field(card, "file").files[0];
-          if (!upload) throw new Error(`Journey ${index + 1} requires an uploaded file.`);
+          const existingFiles = existingMultipartFiles(card);
+          if (!upload && !existingFiles.length) {
+            throw new Error(`Journey ${index + 1} requires an uploaded file.`);
+          }
+          let files;
+          if (upload) {
+            files = [{field: field(card, "fileField").value.trim(), uploadIndex}];
+            uploadIndex += 1;
+          } else {
+            files = existingFiles.map((item, fileIndex) => {
+              const retained = {
+                field: fileIndex === 0 ? field(card, "fileField").value.trim() : item.field,
+                path: item.path,
+                pathToken: item.pathToken,
+              };
+              if (item.filename) retained.filename = item.filename;
+              if (item.contentType) retained.contentType = item.contentType;
+              return retained;
+            });
+          }
           journey.multipart = {
             fields,
-            files: [{field: field(card, "fileField").value.trim(), uploadIndex}],
+            files,
           };
-          uploadIndex += 1;
         } else if (requestEncoding === "form") {
           const formFields = parseJson(field(card, "form"), `Journey ${index + 1} form fields`, {required: true});
           if (!formFields || Array.isArray(formFields) || typeof formFields !== "object") {
@@ -254,6 +423,18 @@
       }
     };
 
+    const ensureScenarioIdentity = () => {
+      const label = serviceName.value.trim() || "Service";
+      if (!form.elements.scenario_id.value.trim()) {
+        const base = (serviceName.value.trim() || repo.value.split("/").filter(Boolean).at(-1) || "service")
+          .toLowerCase().replaceAll("_", "-").replace(/[^a-z0-9.-]+/g, "-").replace(/^-+|-+$/g, "");
+        form.elements.scenario_id.value = `${base || "service"}-assessment`.slice(0, 63).replace(/[-.]$/, "");
+      }
+      if (!form.elements.scenario_name.value.trim()) {
+        form.elements.scenario_name.value = `${label} reliability assessment`;
+      }
+    };
+
     const render = () => {
       panels.forEach((panel, index) => panel.hidden = index !== current);
       stepButtons.forEach((button, index) => {
@@ -264,6 +445,7 @@
       back.disabled = current === 0;
       next.hidden = current === panels.length - 1;
       submit.hidden = current !== panels.length - 1;
+      if (current >= 2) ensureScenarioIdentity();
       if (current === panels.length - 1) updateReview(form);
       panels[current].querySelector("h1")?.focus({preventScroll: true});
     };
@@ -296,6 +478,48 @@
       selectAttachedTarget(input.checked && input.value === "kubernetes");
     }));
     form.elements.runtime_mode.addEventListener("change", updateDiscoveryVisibility);
+    form.querySelectorAll('input[name="scenario_source_mode"]').forEach(input => input.addEventListener("change", () => {
+      selectModeCard(input);
+      savedScenarioPanel.hidden = input.value !== "saved";
+      importScenarioPanel.hidden = input.value !== "imported";
+      if (input.value === "saved") loadScenarioCatalog();
+      if (input.value === "custom") {
+        form.elements.scenario_source.value = "custom";
+        form.elements.scenario_revision.value = "";
+        scenarioWarnings = [];
+        form.dataset.scenarioWarnings = "[]";
+        setScenarioStatus("Custom exercise selected. Faults remain disabled unless you choose one below.");
+      }
+    }));
+    form.querySelectorAll("[data-scenario-search],[data-scenario-adapter],[data-scenario-fault]").forEach(control => control.addEventListener("input", renderScenarioCatalog));
+    scenarioSelect.addEventListener("change", renderScenarioMetadata);
+    form.querySelector("[data-apply-scenario]").addEventListener("click", async () => {
+      if (!scenarioSelect.value) return setScenarioStatus("Select a saved scenario first.", "error");
+      try {
+        const response = await fetch(`/api/v1/scenarios/${scenarioSelect.value}?${new URLSearchParams({service_name: selectedServiceName()})}`);
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.detail || "Could not load scenario");
+        applyScenario(payload);
+      } catch (error) { setScenarioStatus(error.message, "error"); }
+    });
+    form.querySelector("[data-scenario-import-file]").addEventListener("change", async event => {
+      const file = event.target.files[0];
+      if (!file) return;
+      if (file.size > 256 * 1024) return setScenarioStatus("Scenario document exceeds the 256 KiB limit.", "error");
+      form.querySelector("[data-scenario-import]").value = await file.text();
+    });
+    form.querySelector("[data-validate-scenario]").addEventListener("click", async () => {
+      const content = form.querySelector("[data-scenario-import]").value.trim();
+      if (!content) return setScenarioStatus("Paste or upload a scenario document first.", "error");
+      try { await validateImportedScenario(content); }
+      catch (error) { setScenarioStatus(error.message, "error"); }
+    });
+    form.elements.save_scenario.addEventListener("change", () => {
+      const replacing = form.elements.save_scenario.value === "replace";
+      form.querySelector("[data-replace-confirm]").hidden = !replacing;
+      form.elements.replace_scenario.required = replacing;
+      if (!replacing) form.elements.replace_scenario.checked = false;
+    });
     discoveredService.addEventListener("change", applyService);
     discoveredWorkload.addEventListener("change", applyWorkload);
     discoveryButton.addEventListener("click", async () => {
@@ -335,6 +559,7 @@
       const first = journeyList.querySelector("[data-journey]");
       addJourney({adapter: first ? field(first, "adapter").value : "http"});
     });
+    submit.addEventListener("click", ensureScenarioIdentity);
     form.addEventListener("submit", event => {
       try { serializeJourneys(); }
       catch (error) { event.preventDefault(); window.alert(error.message); }
@@ -352,9 +577,11 @@
     const data = new FormData(form);
     form.querySelectorAll("[data-review]").forEach(node => {
       const key = node.dataset.review;
-      const value = data.get(key);
+      const kubernetes = data.get("execution_mode") === "kubernetes";
+      const value = !kubernetes && ["kubernetes_context", "namespace"].includes(key) ? "" : data.get(key);
       const fallback = key === "service_name" ? "Inferred"
-        : key === "kubernetes_context" ? "Not applicable"
+        : key === "workload_name" ? "Inferred during planning"
+        : ["kubernetes_context", "namespace"].includes(key) ? "Not applicable"
         : key === "repo" && data.get("target_source") === "kubernetes" ? "Not required"
         : "—";
       node.textContent = value || fallback;
@@ -363,6 +590,35 @@
     const adapters = new Set([...journeys].map(card => card.querySelector('[data-journey-field="adapter"]').value));
     const summary = form.querySelector("[data-review-journeys]");
     if (summary) summary.textContent = `${journeys.length} ${[...adapters].join(" + ").toUpperCase()} journey${journeys.length === 1 ? "" : "s"}`;
+    let serialized = [];
+    try { serialized = JSON.parse(form.querySelector("[data-journeys-json]").value || "[]"); }
+    catch (_) { serialized = []; }
+    let maxVus = 0;
+    let durationSeconds = 0;
+    const durationValue = value => {
+      const match = String(value).match(/^(\d+)(ms|s|m|h)$/);
+      if (!match) return 0;
+      const unit = {ms: .001, s: 1, m: 60, h: 3600}[match[2]];
+      return Number(match[1]) * unit;
+    };
+    serialized.forEach(journey => {
+      maxVus = Math.max(maxVus, Number(journey.vus || 0));
+      durationSeconds += Number(journey.durationSeconds || 0);
+      (journey.stages || []).forEach(stage => {
+        maxVus = Math.max(maxVus, Number(stage.targetVus || 0));
+        durationSeconds += durationValue(stage.duration);
+      });
+    });
+    form.querySelector("[data-review-vus]").textContent = `${maxVus} VUs`;
+    form.querySelector("[data-review-duration]").textContent = durationSeconds ? `${durationSeconds}s` : "Not specified";
+    const fault = data.get("fault_type");
+    form.querySelector("[data-review-rollback]").textContent = fault === "none" ? "Not required" : "Required and verified after injection";
+    let signals = [];
+    let warnings = [];
+    try { signals = JSON.parse(data.get("required_signals_json") || "[]"); } catch (_) { signals = []; }
+    try { warnings = JSON.parse(form.dataset.scenarioWarnings || "[]"); } catch (_) { warnings = []; }
+    form.querySelector("[data-review-signals]").textContent = signals.join(", ") || "default Chamber evidence";
+    form.querySelector("[data-review-limitations]").textContent = warnings.join(" ") || "none";
   }
 
   function initializeLivePage(page) {

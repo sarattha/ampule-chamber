@@ -1,0 +1,90 @@
+apiVersion: chamber.ampule.dev/v1alpha1
+kind: Scenario
+metadata:
+  id: dependency-failure-001
+  name: Downstream dependency unavailable
+  description: Remove a required downstream dependency while baseline traffic continues and validate graceful degradation.
+  owner: platform-reliability
+  tags:
+    - dependency
+    - chaos
+    - recovery
+target:
+  service:
+    name: sample-service
+    image: ampule/sample-service:local
+    ports:
+      - name: http
+        port: 8080
+    healthEndpoint: /healthz
+    readinessEndpoint: /readyz
+  runtime:
+    provider: docker
+    composeFile: examples/sample-service/docker-compose.yml
+environment:
+  provider: docker
+  namespace: chamber-local
+  replicas: 1
+  resources:
+    cpuRequest: 100m
+    cpuLimit: "1"
+    memoryRequest: 128Mi
+    memoryLimit: 256Mi
+  dependencies:
+    - name: downstream-api
+      type: http
+      required: true
+      endpoint: http://downstream-api:8081
+baseline:
+  checks:
+    - type: readiness_http_200
+      description: Target readiness endpoint returns HTTP 200 before fault injection.
+    - type: dependency_probe
+      description: Target can call downstream-api successfully before the fault.
+traffic:
+  tool: k6
+  entrypoint: /dependency
+  stages:
+    - duration: 2m
+      targetVus: 10
+    - duration: 3m
+      targetVus: 25
+    - duration: 2m
+      targetVus: 10
+faults:
+  - type: dependency_unavailable
+    description: downstream-api is unavailable for 60 seconds while target traffic continues.
+    target: downstream-api
+    startAfter: 2m
+    duration: 60s
+observability:
+  signals:
+    - pod_status
+    - kubernetes_events
+    - dependency_health
+    - request_latency
+    - error_rate
+    - logs
+    - traces
+failureConditions:
+  - type: dependency_unavailable
+    description: Target service becomes unavailable because downstream-api is unavailable.
+  - type: error_rate_above_percent
+    description: Target service error rate remains above 5 percent after dependency recovery.
+    threshold: 5
+  - type: recovery_time_above
+    description: Target service takes more than 2 minutes to return to baseline after the fault is removed.
+    threshold: 2m
+successConditions:
+  - type: dependency_recovers
+    description: Target service returns to a healthy dependency state after downstream-api is restored.
+  - type: recovery_time_below
+    description: Error rate and latency return to baseline within 2 minutes.
+    threshold: 2m
+  - type: error_rate_below_percent
+    description: Recovered error rate remains below 1 percent.
+    threshold: 1
+safety:
+  maxDuration: 12m
+  maxVirtualUsers: "25"
+  productionContextAllowed: false
