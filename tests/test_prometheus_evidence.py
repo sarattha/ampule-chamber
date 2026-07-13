@@ -4,6 +4,7 @@ import json
 import socket
 import unittest
 from email.message import Message
+from html import unescape
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
@@ -125,6 +126,30 @@ class PrometheusEvidenceGateTests(unittest.TestCase):
             any("failed: connection refused" in item for item in result["evidence_limitations"])
         )
 
+    def test_report_regeneration_recomputes_changed_prometheus_evidence(self) -> None:
+        changed_queries = (
+            {"failed_query": REQUIRED_QUERIES[1]},
+            {"zero_query": REQUIRED_QUERIES[0]},
+        )
+        for change in changed_queries:
+            with self.subTest(change=change), TemporaryDirectory() as tmp:
+                run_dir = _reportable_result_run(Path(tmp))
+                workflow.render_report_from_run(run_dir)
+                ready = json.loads((run_dir / "result.json").read_text(encoding="utf-8"))
+                self.assertEqual(ready["status"], "ready")
+                self.assertTrue(ready["conclusive"])
+                self.assertEqual(ready["evidence_coverage_percent"], 100)
+
+                _write_prometheus_artifact(run_dir, **change)
+                workflow.render_report_from_run(run_dir)
+                recomputed = json.loads((run_dir / "result.json").read_text(encoding="utf-8"))
+
+                self.assertEqual(recomputed["status"], "inconclusive")
+                self.assertFalse(recomputed["conclusive"])
+                self.assertIsNone(recomputed["readiness_score"])
+                self.assertEqual(recomputed["evidence_coverage_percent"], 75)
+                self.assertIn("prometheus-memory", recomputed["missing_evidence_ids"])
+
     def test_cli_selected_prometheus_is_required_from_run_metadata(self) -> None:
         with TemporaryDirectory() as tmp:
             run_dir = _result_run(Path(tmp), failed_query=REQUIRED_QUERIES[1])
@@ -174,6 +199,8 @@ class PrometheusReportTests(unittest.TestCase):
             self.assertIn("series_count=unavailable", output)
             self.assertIn("error=connection refused", output)
             self.assertIn("Kubernetes logs are separate", output)
+        self.assertIn(_stored_promql(REQUIRED_QUERIES[1]), markdown)
+        self.assertIn(_stored_promql(REQUIRED_QUERIES[1]), unescape(html))
 
     def test_successful_metrics_show_labels_value_timestamp_and_artifact(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -190,6 +217,8 @@ class PrometheusReportTests(unittest.TestCase):
             self.assertIn("sample_value=42", output)
             self.assertIn("sample_timestamp=1710000000", output)
             self.assertIn("evidence/prometheus-memory.json", output)
+        self.assertIn(_stored_promql(REQUIRED_QUERIES[0]), markdown)
+        self.assertIn(_stored_promql(REQUIRED_QUERIES[0]), unescape(html))
 
     def test_agent_summaries_and_details_preserve_error_without_zero_default(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -222,6 +251,80 @@ def _result_run(
         zero_query=zero_query,
     )
     refresh_evidence_manifest(run_dir)
+    return run_dir
+
+
+def _reportable_result_run(root: Path) -> Path:
+    run_dir = _result_run(root)
+    config = {
+        "apiVersion": "chamber.ampule.dev/v1alpha1",
+        "kind": "ChamberConfig",
+        "service": {"name": "example-service", "repo": "."},
+        "deployment": {
+            "manifests": ["kubernetes.yaml"],
+            "workloads": [{"name": "example-service", "kind": "Deployment", "role": "target"}],
+        },
+        "traffic": {
+            "entrypoint": "example-service",
+            "journeys": [
+                {
+                    "name": "health",
+                    "method": "GET",
+                    "path": "/healthz",
+                    "expectedStatus": 200,
+                    "stages": [{"duration": "1s", "targetVus": 1}],
+                }
+            ],
+        },
+        "dependencies": {"internal": [], "external": []},
+        "runtime": {
+            "provider": "kubernetes",
+            "mode": "deploy",
+            "kubernetesContext": "kind-issue24-test",
+            "prometheusUrl": "http://prometheus.example",
+            "cleanup": True,
+            "trafficAccess": {
+                "mode": "port-forward",
+                "service": "example-service",
+                "servicePort": 8080,
+            },
+        },
+        "agents": {"mode": "off"},
+    }
+    workflow.save_config(config, run_dir / "chamber.yaml")
+    (run_dir / "plan.json").write_text(
+        json.dumps(
+            {
+                "namespace": "chamber-test",
+                "runtime": {"provider": "kubernetes"},
+                "workloads": [],
+                "limitations": [],
+                "redacted_config": [],
+                "external_dependencies": [],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (run_dir / "run-metadata.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_dir.name,
+                "stage": "assessed",
+                "mode": "kubernetes",
+                "provider": "kubernetes",
+                "namespace": "chamber-test",
+                "success": True,
+                "traffic_result": {"success": True},
+                "cleanup_performed": True,
+                "cleanup_notes": ["Cleanup verified."],
+                "rollback": {"verified": True},
+                "runtime": {"prometheus_url": "http://prometheus.example"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     return run_dir
 
 
@@ -261,7 +364,7 @@ def _write_prometheus_artifact(
         if name == failed_query:
             queries[name] = {
                 "ok": False,
-                "query": name,
+                "query": _stored_promql(name),
                 "series_count": None,
                 "error": "connection refused",
                 "series": [],
@@ -269,13 +372,13 @@ def _write_prometheus_artifact(
         elif name == zero_query:
             queries[name] = {
                 "ok": True,
-                "query": name,
+                "query": _stored_promql(name),
                 "series_count": 0,
                 "error": None,
                 "series": [],
             }
         else:
-            queries[name] = _successful_query(name)
+            queries[name] = _successful_query(_stored_promql(name))
     path = run_dir / "evidence/prometheus-memory.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"queries": queries}) + "\n", encoding="utf-8")
@@ -289,6 +392,12 @@ def _successful_query(query: str = "up") -> dict[str, object]:
         "error": None,
         "series": [_series()],
     }
+
+
+def _stored_promql(name: str) -> str:
+    return (
+        f'{name}{{namespace="chamber-test",pod=~"example-service-abc123|example-service-def456"}}'
+    )
 
 
 def _series() -> dict[str, object]:

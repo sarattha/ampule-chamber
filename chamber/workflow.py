@@ -916,9 +916,7 @@ def render_report_from_run(run_dir: Path) -> Path:
     config = load_config(run_dir / "chamber.yaml", require_repo=False)
     plan = _read_json(run_dir / "plan.json")
     metadata = _read_json(run_dir / "run-metadata.json")
-    refresh_evidence_manifest(run_dir)
-    if not (run_dir / "result.json").exists() or not (run_dir / "findings.json").exists():
-        _finalize_guided_result(run_dir, config=config, metadata=metadata)
+    _finalize_guided_result(run_dir, config=config, metadata=metadata)
     report = _report_input(run_dir, config=config, plan=plan, metadata=metadata)
     report_path = run_dir / "report.md"
     report_path.write_text(render_markdown_report(report), encoding="utf-8")
@@ -3064,6 +3062,9 @@ def _prometheus_report_sections(run_dir: Path) -> tuple[ReportSection, ...]:
         series_count = query.get("series_count")
         count_text = str(series_count) if isinstance(series_count, int) else "unavailable"
         line = f"{name}: ok={str(ok).lower()}; series_count={count_text}"
+        query_text = query.get("query")
+        if isinstance(query_text, str) and query_text:
+            line += f"; query={query_text}"
         error = query.get("error")
         if not ok:
             line += f"; error={error or 'unknown Prometheus query failure'}"
