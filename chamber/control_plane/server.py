@@ -490,6 +490,7 @@ def create_app(
     async def report_api(request: Request, run_id: str, format: str = "markdown") -> Response:
         try:
             run_dir = application.run_path(run_id)
+            report_path = application.report(run_dir)
             run = application.get_run(run_id)
         except (FileNotFoundError, ValueError):
             raise HTTPException(status_code=404, detail="run not found") from None
@@ -506,7 +507,6 @@ def create_app(
                     "csrf_token": request.state.csrf_token,
                 },
             )
-        report_path = application.report(run_dir)
         return Response(report_path.read_text(encoding="utf-8"), media_type="text/markdown")
 
     @app.post("/api/v1/compare")
