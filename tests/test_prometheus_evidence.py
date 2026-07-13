@@ -261,6 +261,37 @@ class PrometheusEvidenceGateTests(unittest.TestCase):
 
 
 class PrometheusReportTests(unittest.TestCase):
+    def test_report_cli_tolerates_unreadable_prometheus_artifacts(self) -> None:
+        malformed_artifacts = (
+            ("{not-json", "Prometheus evidence is unreadable:"),
+            ("[]", "Prometheus evidence does not contain required queries."),
+        )
+        for artifact_text, expected_limitation in malformed_artifacts:
+            with self.subTest(artifact_text=artifact_text), TemporaryDirectory() as tmp:
+                run_dir = _reportable_result_run(Path(tmp))
+                artifact = run_dir / "evidence/prometheus-memory.json"
+                artifact.write_text(artifact_text, encoding="utf-8")
+
+                with patch("builtins.print"):
+                    exit_code = workflow.main(["report", "--run", str(run_dir)])
+
+                result = json.loads((run_dir / "result.json").read_text(encoding="utf-8"))
+                report = (run_dir / "report.md").read_text(encoding="utf-8")
+
+                self.assertEqual(exit_code, 0)
+                self.assertEqual(result["status"], "inconclusive")
+                self.assertFalse(result["conclusive"])
+                self.assertIn("prometheus-memory", result["missing_evidence_ids"])
+                self.assertTrue(
+                    any(
+                        expected_limitation in limitation
+                        for limitation in result["evidence_limitations"]
+                    )
+                )
+                self.assertIn("Prometheus Metrics", report)
+                self.assertIn("Prometheus evidence unavailable:", report)
+                self.assertIn(expected_limitation, report)
+
     def test_offline_markdown_and_html_show_query_failure(self) -> None:
         with TemporaryDirectory() as tmp:
             run_dir = Path(tmp) / "runs/prometheus-failed"

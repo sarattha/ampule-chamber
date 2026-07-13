@@ -3066,16 +3066,6 @@ def _prometheus_report_sections(run_dir: Path) -> tuple[ReportSection, ...]:
     path = run_dir / "evidence/prometheus-memory.json"
     if not path.exists():
         return ()
-    payload = _read_json(path)
-    queries = payload.get("queries")
-    if not isinstance(queries, dict):
-        return ()
-    pod_names_value = payload.get("pod_names")
-    expected_pod_names = (
-        tuple(item for item in pod_names_value if isinstance(item, str) and item)
-        if isinstance(pod_names_value, list)
-        else ()
-    )
     artifact = str(path)
     lines = [
         f"Evidence artifact: {artifact}",
@@ -3084,6 +3074,24 @@ def _prometheus_report_sections(run_dir: Path) -> tuple[ReportSection, ...]:
             "Kubernetes command evidence."
         ),
     ]
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        lines.append(f"Prometheus evidence unavailable: {exc}")
+        return (ReportSection(heading="Prometheus Metrics", lines=tuple(lines)),)
+    if not isinstance(payload, dict):
+        lines.append("Prometheus evidence unavailable: expected a JSON object.")
+        return (ReportSection(heading="Prometheus Metrics", lines=tuple(lines)),)
+    queries = payload.get("queries")
+    if not isinstance(queries, dict):
+        lines.append("Prometheus evidence unavailable: required queries are missing.")
+        return (ReportSection(heading="Prometheus Metrics", lines=tuple(lines)),)
+    pod_names_value = payload.get("pod_names")
+    expected_pod_names = (
+        tuple(item for item in pod_names_value if isinstance(item, str) and item)
+        if isinstance(pod_names_value, list)
+        else ()
+    )
     for name, query in queries.items():
         if not isinstance(query, dict):
             continue
