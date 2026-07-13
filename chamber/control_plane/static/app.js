@@ -144,7 +144,11 @@
       field(card, "tool").value = journey.tool || "k6";
       const encoding = journey.requestEncoding || (Object.hasOwn(journey, "body") ? "json" : "none");
       field(card, "requestEncoding").value = encoding;
-      if (encoding === "json") field(card, "body").value = JSON.stringify(journey.body ?? {}, null, 2);
+      if (encoding === "json") {
+        field(card, "body").value = Object.hasOwn(journey, "body")
+          ? JSON.stringify(journey.body, null, 2)
+          : "";
+      }
       if (encoding === "multipart") {
         const files = Array.isArray(journey.multipart?.files) ? journey.multipart.files : [];
         const retainedFiles = files.filter(item => item?.path && item?.pathToken);
@@ -277,8 +281,9 @@
         if (tool) journey.tool = tool;
         if (adapter === "relayna") journey.adapter = "relayna";
         if (requestEncoding === "json") {
-          const body = parseJson(field(card, "body"), `Journey ${index + 1} request body`, {required: adapter === "relayna"});
-          if (body !== null) journey.body = body;
+          const bodyControl = field(card, "body");
+          const body = parseJson(bodyControl, `Journey ${index + 1} request body`, {required: adapter === "relayna"});
+          if (bodyControl.value.trim()) journey.body = body;
           const textBytes = Number(field(card, "textBytes").value);
           if (textBytes > 0) journey.textBytes = textBytes;
         } else if (requestEncoding === "multipart") {
@@ -415,6 +420,18 @@
       }
     };
 
+    const ensureScenarioIdentity = () => {
+      const label = serviceName.value.trim() || "Service";
+      if (!form.elements.scenario_id.value.trim()) {
+        const base = (serviceName.value.trim() || repo.value.split("/").filter(Boolean).at(-1) || "service")
+          .toLowerCase().replaceAll("_", "-").replace(/[^a-z0-9.-]+/g, "-").replace(/^-+|-+$/g, "");
+        form.elements.scenario_id.value = `${base || "service"}-assessment`.slice(0, 63).replace(/[-.]$/, "");
+      }
+      if (!form.elements.scenario_name.value.trim()) {
+        form.elements.scenario_name.value = `${label} reliability assessment`;
+      }
+    };
+
     const render = () => {
       panels.forEach((panel, index) => panel.hidden = index !== current);
       stepButtons.forEach((button, index) => {
@@ -425,12 +442,7 @@
       back.disabled = current === 0;
       next.hidden = current === panels.length - 1;
       submit.hidden = current !== panels.length - 1;
-      if (current === 2 && !form.elements.scenario_id.value.trim()) {
-        const base = (serviceName.value.trim() || repo.value.split("/").filter(Boolean).at(-1) || "service")
-          .toLowerCase().replaceAll("_", "-").replace(/[^a-z0-9.-]+/g, "-").replace(/^-+|-+$/g, "");
-        form.elements.scenario_id.value = `${base || "service"}-assessment`.slice(0, 63).replace(/[-.]$/, "");
-        form.elements.scenario_name.value = `${serviceName.value.trim() || "Service"} reliability assessment`;
-      }
+      if (current >= 2) ensureScenarioIdentity();
       if (current === panels.length - 1) updateReview(form);
       panels[current].querySelector("h1")?.focus({preventScroll: true});
     };
@@ -544,6 +556,7 @@
       const first = journeyList.querySelector("[data-journey]");
       addJourney({adapter: first ? field(first, "adapter").value : "http"});
     });
+    submit.addEventListener("click", ensureScenarioIdentity);
     form.addEventListener("submit", event => {
       try { serializeJourneys(); }
       catch (error) { event.preventDefault(); window.alert(error.message); }

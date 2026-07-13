@@ -930,6 +930,41 @@ class ControlPlaneTests(unittest.TestCase):
                 'files = [{field: field(card, "fileField").value.trim(), uploadIndex}]', script
             )
 
+    def test_wizard_preserves_optional_json_body_and_initializes_skipped_identity(self) -> None:
+        script = (Path(__file__).parents[1] / "chamber/control_plane/static/app.js").read_text(
+            encoding="utf-8"
+        )
+        populate_start = script.index("const populateJourney = (card, journey) =>")
+        populate_end = script.index("const selectedServiceName", populate_start)
+        populate_source = script[populate_start:populate_end]
+        self.assertIn('Object.hasOwn(journey, "body")', populate_source)
+        self.assertIn("? JSON.stringify(journey.body, null, 2)", populate_source)
+        self.assertIn(': "";', populate_source)
+
+        serialize_start = script.index("const serializeJourneys = () =>")
+        serialize_end = script.index("const selectModeCard", serialize_start)
+        serialize_source = script[serialize_start:serialize_end]
+        self.assertIn('const bodyControl = field(card, "body");', serialize_source)
+        self.assertIn("if (bodyControl.value.trim()) journey.body = body;", serialize_source)
+        self.assertNotIn("if (body !== null) journey.body = body;", serialize_source)
+
+        identity_start = script.index("const ensureScenarioIdentity = () =>")
+        render_start = script.index("const render = () =>", identity_start)
+        review_start = script.index("if (current === panels.length - 1) updateReview(form)")
+        self.assertLess(identity_start, render_start)
+        self.assertIn(
+            "if (current >= 2) ensureScenarioIdentity();",
+            script[render_start:review_start],
+        )
+        self.assertIn(
+            "if (!form.elements.scenario_id.value.trim()) {", script[identity_start:render_start]
+        )
+        self.assertIn(
+            "if (!form.elements.scenario_name.value.trim()) {",
+            script[identity_start:render_start],
+        )
+        self.assertIn('submit.addEventListener("click", ensureScenarioIdentity);', script)
+
     def test_json_plan_start_job_cancel_and_event_endpoints(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
