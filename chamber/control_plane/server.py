@@ -834,7 +834,29 @@ def _plan_from_values(
         if scenario_source in {"custom", "bundled", "user", "imported"}
         else "custom"
     )
-    resolved_source = "custom" if origin_source == "custom" else "derived"
+    matching_user_scenario = (
+        _matching_user_scenario(
+            catalog,
+            scenario_id=selected_scenario_id,
+            revision=scenario_revision.strip(),
+            name=scenario_name.strip() or selected_scenario_id,
+            description=scenario_description.strip(),
+            tags=tags,
+            target_service=name,
+            journeys=cast(list[dict[str, Any]], traffic["journeys"]),
+            required_signals=signals,
+            agent_mode=agents_mode,
+            fault_type=fault_type,
+        )
+        if origin_source == "user"
+        else None
+    )
+    if origin_source == "custom":
+        resolved_source = "custom"
+    elif matching_user_scenario is not None:
+        resolved_source = "user"
+    else:
+        resolved_source = "derived"
     config["scenarioId"] = selected_scenario_id
     scenario_metadata: dict[str, Any] = {
         "id": selected_scenario_id,
@@ -845,13 +867,24 @@ def _plan_from_values(
         "revision": "draft",
         "requiredSignals": signals,
     }
-    if origin_source != "custom":
+    if origin_source != resolved_source:
         scenario_metadata["origin"] = {
             "source": origin_source,
             "revision": scenario_revision.strip() or "unrecorded",
         }
+    elif matching_user_scenario is not None and isinstance(
+        matching_user_scenario.get("origin"), dict
+    ):
+        scenario_metadata["origin"] = dict(matching_user_scenario["origin"])
     config["scenario"] = scenario_metadata
     normalized = normalize_document(config, source="custom", validate_journeys=_ui_journeys)
+    if matching_user_scenario is not None and normalized["revision"] != scenario_revision.strip():
+        scenario_metadata["source"] = "derived"
+        scenario_metadata["origin"] = {
+            "source": "user",
+            "revision": scenario_revision.strip(),
+        }
+        normalized = normalize_document(config, source="custom", validate_journeys=_ui_journeys)
     config["scenario"]["revision"] = normalized["revision"]
     if save_scenario not in {"none", "new", "replace"}:
         raise ValueError("Save scenario mode must be none, new, or replace")
@@ -868,6 +901,43 @@ def _plan_from_values(
         config["scenario"].update({"source": "user", "revision": saved["revision"]})
     config_path = _write_draft(workspace, config)
     return application.plan(config_path)
+
+
+def _matching_user_scenario(
+    catalog: ScenarioCatalog | None,
+    *,
+    scenario_id: str,
+    revision: str,
+    name: str,
+    description: str,
+    tags: list[str],
+    target_service: str,
+    journeys: list[dict[str, Any]],
+    required_signals: list[str],
+    agent_mode: str,
+    fault_type: str,
+) -> dict[str, Any] | None:
+    if catalog is None or not revision:
+        return None
+    try:
+        selected = catalog.read("user", scenario_id, _ui_journeys)
+    except (FileNotFoundError, ScenarioCatalogError, ValueError):
+        return None
+    expected_faults = [] if fault_type == "none" else [fault_type]
+    identity = selected["identity"]
+    matches = (
+        selected["revision"] == revision
+        and identity["id"] == scenario_id
+        and identity["name"] == name
+        and identity["description"] == description
+        and identity["tags"] == tags
+        and selected["targetService"] == target_service
+        and selected["journeys"] == journeys
+        and selected["requiredSignals"] == required_signals
+        and selected["agentMode"] == agent_mode
+        and selected["configuredFaults"] == expected_faults
+    )
+    return selected if matches else None
 
 
 def _ui_journeys(raw: str) -> list[dict[str, Any]]:

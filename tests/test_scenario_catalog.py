@@ -407,6 +407,73 @@ class ScenarioControlPlaneTests(unittest.TestCase):
                     200,
                 )
 
+                user_projection = client.get("/api/v1/scenarios/user/ui-health").json()
+                user_plan_data = {
+                    "_csrf": csrf,
+                    "repo": str(EXAMPLE_REPO),
+                    "service_name": user_projection["targetService"],
+                    "scenario_id": user_projection["identity"]["id"],
+                    "scenario_name": user_projection["identity"]["name"],
+                    "scenario_description": user_projection["identity"]["description"],
+                    "scenario_tags": ", ".join(user_projection["identity"]["tags"]),
+                    "scenario_source": "user",
+                    "scenario_revision": user_projection["revision"],
+                    "required_signals_json": json.dumps(user_projection["requiredSignals"]),
+                    "agents_mode": user_projection["agentMode"],
+                    "journeys_json": json.dumps(user_projection["journeys"]),
+                }
+                direct_user = client.post(
+                    "/ui/plan",
+                    data=user_plan_data,
+                    follow_redirects=False,
+                )
+                self.assertEqual(direct_user.status_code, 303, direct_user.text)
+                direct_user_id = direct_user.headers["location"].split("/")[2].split("?")[0]
+                direct_user_config = yaml.safe_load(
+                    (workspace / "runs" / direct_user_id / "chamber.yaml").read_text(
+                        encoding="utf-8"
+                    )
+                )
+                direct_user_metadata = json.loads(
+                    (workspace / "runs" / direct_user_id / "run-metadata.json").read_text(
+                        encoding="utf-8"
+                    )
+                )
+                direct_user_run = json.loads(
+                    (workspace / "runs" / direct_user_id / "run.json").read_text(encoding="utf-8")
+                )
+                self.assertEqual(direct_user_config["scenario"]["source"], "user")
+                self.assertEqual(
+                    direct_user_config["scenario"].get("origin"), user_projection.get("origin")
+                )
+                self.assertEqual(
+                    direct_user_config["scenario"]["revision"], user_projection["revision"]
+                )
+                self.assertEqual(direct_user_metadata["scenario"]["source"], "user")
+                self.assertEqual(direct_user_run["scenario_source"], "user")
+
+                edited_user_data = dict(user_plan_data)
+                edited_user_journeys = json.loads(user_plan_data["journeys_json"])
+                edited_user_journeys[0]["path"] = "/edited-healthz"
+                edited_user_data["journeys_json"] = json.dumps(edited_user_journeys)
+                edited_user = client.post(
+                    "/ui/plan",
+                    data=edited_user_data,
+                    follow_redirects=False,
+                )
+                self.assertEqual(edited_user.status_code, 303, edited_user.text)
+                edited_user_id = edited_user.headers["location"].split("/")[2].split("?")[0]
+                edited_user_config = yaml.safe_load(
+                    (workspace / "runs" / edited_user_id / "chamber.yaml").read_text(
+                        encoding="utf-8"
+                    )
+                )
+                self.assertEqual(edited_user_config["scenario"]["source"], "derived")
+                self.assertEqual(
+                    edited_user_config["scenario"]["origin"],
+                    {"source": "user", "revision": user_projection["revision"]},
+                )
+
                 no_confirmation = client.post(
                     "/ui/plan",
                     data={
