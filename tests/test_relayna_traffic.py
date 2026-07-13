@@ -71,6 +71,11 @@ class RelaynaTrafficTests(unittest.TestCase):
         self.assertEqual(summary["tasks"][0]["task_id"], "task/123")
         self.assertEqual(summary["tasks"][0]["statuses"], ("queued", "completed"))
         self.assertEqual(
+            [event["task_id"] for event in summary["tasks"][0]["events"]],
+            ["task/123", "task/123", "task/123"],
+        )
+        self.assertEqual(summary["tasks"][0]["events"][-1]["status"], "completed")
+        self.assertEqual(
             requested_urls,
             [
                 "http://127.0.0.1:8080/translations",
@@ -190,9 +195,9 @@ class RelaynaTrafficTests(unittest.TestCase):
                 return _Response(
                     json.dumps({"data": {"task_id": body["task_id"]}}).encode(), status=202
                 )
-            task_id = request.full_url.rsplit("/", 1)[-1]
             return _Response(
-                f'event: status\ndata: {{"task_id":"{task_id}","status":"completed"}}\n\n'.encode()
+                b'event: status\ndata: {"task_id":"reported-by-worker",'
+                b'"status":"completed","message":"sensitive OCR output"}\n\n'
             )
 
         journey = _journey()
@@ -207,6 +212,11 @@ class RelaynaTrafficTests(unittest.TestCase):
         self.assertEqual(summary["task_count"], 2)
         self.assertEqual(len({item["task_id"] for item in submitted_bodies}), 2)
         self.assertTrue(all(item["task_id"].startswith("ampule-") for item in submitted_bodies))
+        for task in summary["tasks"]:
+            self.assertTrue(all(event["task_id"] == task["task_id"] for event in task["events"]))
+            self.assertEqual(task["events"][0]["reported_task_id"], "reported-by-worker")
+            self.assertFalse(task["events"][0]["task_id_match"])
+            self.assertNotIn("message", task["events"][0])
 
     def test_multipart_submit_serializes_fields_files_and_safe_evidence(self) -> None:
         with TemporaryDirectory() as tmp:

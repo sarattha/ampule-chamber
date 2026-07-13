@@ -22,6 +22,7 @@ MAX_RELAYNA_VUS = 32
 MAX_RELAYNA_ITERATIONS = 1000
 MAX_RELAYNA_TIMEOUT_SECONDS = 3600
 MAX_RELAYNA_DURATION_SECONDS = 86400
+MAX_RELAYNA_EVENTS_PER_TASK = 200
 MAX_MULTIPART_FILE_BYTES = 128 * 1024 * 1024
 MAX_MULTIPART_TOTAL_BYTES = 256 * 1024 * 1024
 SUPPORTED_MULTIPART_CONTENT_TYPES = {
@@ -59,6 +60,7 @@ class RelaynaTaskResult:
     total_duration_ms: float
     event_count: int
     statuses: tuple[str, ...]
+    events: tuple[dict[str, Any], ...]
     failure_stage: str | None
     uploads: tuple[dict[str, Any], ...]
     error: str | None
@@ -214,6 +216,7 @@ def _execute_task(
     submit_status: int | None = None
     terminal_status: str | None = None
     statuses: tuple[str, ...] = ()
+    events: tuple[dict[str, Any], ...] = ()
     event_count = 0
     journey_name = str(journey.get("name") or journey.get("path") or "relayna")
     failure_stage: str | None = "admission"
@@ -260,8 +263,9 @@ def _execute_task(
             with opener(stream_request, timeout=contract["timeout_seconds"]) as response:
                 if int(response.status) != 200:
                     raise RelaynaJourneyError(f"event stream returned HTTP {response.status}")
-                terminal_status, statuses, event_count = _consume_sse(
+                terminal_status, statuses, event_count, events = _consume_sse(
                     response,
+                    task_id=task_id,
                     terminal_statuses=contract["terminal_statuses"],
                     timeout_seconds=contract["timeout_seconds"],
                     started=stream_started,
@@ -295,6 +299,7 @@ def _execute_task(
         total_duration_ms=total_duration_ms,
         event_count=event_count,
         statuses=statuses,
+        events=events,
         failure_stage=failure_stage,
         uploads=upload_metadata,
         error=error,
@@ -662,12 +667,14 @@ def _request_body(journey: dict[str, Any], *, iteration: int) -> dict[str, Any]:
 def _consume_sse(
     response: HttpResponse,
     *,
+    task_id: str,
     terminal_statuses: tuple[str, ...],
     timeout_seconds: int,
     started: float,
-) -> tuple[str | None, tuple[str, ...], int]:
+) -> tuple[str | None, tuple[str, ...], int, tuple[dict[str, Any], ...]]:
     data_lines: list[str] = []
     statuses: list[str] = []
+    events: list[dict[str, Any]] = []
     event_count = 0
     for raw_line in response:
         if time.monotonic() - started > timeout_seconds:
@@ -676,15 +683,18 @@ def _consume_sse(
         if not line:
             if data_lines:
                 event_count += 1
-                status = _event_status("\n".join(data_lines))
+                data = "\n".join(data_lines)
+                status = _event_status(data)
+                if len(events) < MAX_RELAYNA_EVENTS_PER_TASK:
+                    events.append(_safe_event(data, task_id=task_id, sequence=event_count))
                 if status:
                     statuses.append(status)
                     if status in terminal_statuses:
-                        return status, tuple(statuses), event_count
+                        return status, tuple(statuses), event_count, tuple(events)
             data_lines = []
         elif line.startswith("data:"):
             data_lines.append(line[5:].lstrip())
-    return None, tuple(statuses), event_count
+    return None, tuple(statuses), event_count, tuple(events)
 
 
 def _event_status(data: str) -> str | None:
@@ -695,6 +705,33 @@ def _event_status(data: str) -> str | None:
     if not isinstance(payload, dict) or payload.get("status") is None:
         return None
     return str(payload["status"]).lower()
+
+
+def _safe_event(data: str, *, task_id: str, sequence: int) -> dict[str, Any]:
+    """Return an evidence-safe event keyed to the task whose stream was requested."""
+
+    event: dict[str, Any] = {"sequence": sequence, "task_id": task_id}
+    try:
+        payload = json.loads(data)
+    except json.JSONDecodeError:
+        event["kind"] = "unparseable"
+        return event
+    if not isinstance(payload, dict):
+        event["kind"] = "unstructured"
+        return event
+    for key in ("status", "stage", "event", "type", "timestamp", "progress", "worker_id"):
+        value = payload.get(key)
+        if isinstance(value, str | int | bool) or (
+            isinstance(value, float)
+            and value == value
+            and value not in {float("inf"), float("-inf")}
+        ):
+            event[key] = str(value)[:160] if isinstance(value, str) else value
+    reported_task_id = payload.get("task_id")
+    if isinstance(reported_task_id, str) and reported_task_id != task_id:
+        event["reported_task_id"] = reported_task_id[:160]
+        event["task_id_match"] = False
+    return event
 
 
 def _json_path(payload: Any, path: str) -> Any:

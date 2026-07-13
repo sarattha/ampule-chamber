@@ -40,8 +40,10 @@ def main(argv: list[str] | None = None) -> int:
     if args:
         rendered = list(yaml.safe_load_all(Path(args[0]).read_text(encoding="utf-8")))
         _require_resources(rendered, label="rendered Helm manifest", require_namespace=False)
+        _require_target_metrics_access(rendered, label="rendered Helm manifest")
 
     _require_resources(manifests, label="raw manifest", require_namespace=True)
+    _require_target_metrics_access(manifests, label="raw manifest")
 
     deployment = next(
         item for item in manifests if isinstance(item, dict) and item.get("kind") == "Deployment"
@@ -92,6 +94,31 @@ def _require_resources(manifests: list[Any], *, label: str, require_namespace: b
     missing = sorted(required - resources)
     if missing:
         raise SystemExit(f"{label} is missing required resources: {missing}")
+
+
+def _require_target_metrics_access(manifests: list[Any], *, label: str) -> None:
+    roles = [
+        item
+        for item in manifests
+        if isinstance(item, dict)
+        and item.get("kind") == "Role"
+        and str(_mapping(item, "metadata").get("name", "")).endswith("-target-reader")
+    ]
+    if not roles:
+        raise SystemExit(f"{label} is missing a target-reader Role")
+    for role in roles:
+        rules = role.get("rules")
+        if not isinstance(rules, list) or not any(
+            isinstance(rule, dict)
+            and "metrics.k8s.io" in rule.get("apiGroups", [])
+            and "pods" in rule.get("resources", [])
+            and {"get", "list"}.issubset(rule.get("verbs", []))
+            for rule in rules
+        ):
+            namespace = _mapping(role, "metadata").get("namespace", "unknown")
+            raise SystemExit(
+                f"{label} target-reader Role in {namespace} must read pods.metrics.k8s.io"
+            )
 
 
 def _project_version() -> str:
