@@ -2,6 +2,29 @@
 
 All notable changes to Ampule Chamber are documented in this file.
 
+## 1.7.0 - 2026-07-13
+
+### Added
+
+- Added per-pod Prometheus run-window summaries for peak CPU, peak memory,
+  restarts, and sample coverage in the assessment Evidence tab.
+- Added post-traffic discovery and evidence for short-lived Relayna Job workers
+  so worker metrics appear beside the selected API pods.
+- Added bounded, content-safe Relayna event feeds grouped under each admission
+  task ID, including concurrent multi-VU journeys.
+
+### Changed
+
+- Relayna worker-to-task correlation now distinguishes exact Kubernetes task
+  labels from run-window, Job-owner, and service-label inference.
+- Target namespace RBAC now grants read-only pod access through
+  `metrics.k8s.io` for `kubectl top` evidence collection.
+
+### Documentation
+
+- Documented the runtime metrics cards, per-task event feeds, legacy artifact
+  fallback, worker correlation limits, and real AKS validation evidence.
+
 ## 1.6.0 - 2026-07-13
 
 ### Added

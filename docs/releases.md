@@ -1,5 +1,24 @@
 # Releases
 
+## 1.7.0 - 2026-07-13
+
+Ampule Chamber `1.7.0` turns Relayna runtime artifacts into a digestible
+assessment view.
+
+Highlights:
+
+- Show API and short-lived Relayna worker pod metrics side by side.
+- Derive peak CPU, peak memory, restarts, and sample counts across the complete
+  traffic window.
+- Keep every concurrent SSE feed grouped by the task ID returned from its own
+  admission response.
+- Retain only bounded operational event fields, excluding arbitrary messages
+  and OCR content.
+- Mark worker-to-task links as exact only when a Kubernetes task label matches;
+  otherwise show honest run-level correlation.
+- Allow namespace-scoped read access to pod metrics for optional `kubectl top`
+  evidence.
+
 ## 1.6.0 - 2026-07-13
 
 Ampule Chamber `1.6.0` adds reusable, editable control-plane scenarios and

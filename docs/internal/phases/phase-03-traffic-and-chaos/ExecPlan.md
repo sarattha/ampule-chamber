@@ -22,6 +22,13 @@ through SSE, and produce content-safe lifecycle evidence.
 - [x] Validate in a real environment and record acceptance evidence.
 - [x] Reconcile the feature with the reusable scenario catalog and Prometheus
       evidence changes merged to `main` before final integration.
+- [x] Retain bounded, content-safe Relayna event feeds under their admitted
+      task IDs, including concurrent VU coverage.
+- [x] Discover Relayna Job workers created during attach traffic and collect
+      Prometheus run-window CPU, memory, and restart summaries for API and
+      worker pods.
+- [x] Present per-pod runtime metrics and per-task Relayna feeds in the
+      assessment Evidence tab.
 
 ## Evaluation Metrics
 
@@ -46,12 +53,32 @@ through SSE, and produce content-safe lifecycle evidence.
 - Preserve the scenario catalog's signed managed-upload tokens per multipart
   row so reusable scenarios can retain trusted files without weakening the
   browser-upload boundary or collapsing the multi-file model.
+- Grant declared target namespaces read-only `get` and `list` access to
+  `pods.metrics.k8s.io` so attach runs can collect `kubectl top` evidence
+  without broadening fault, Secret, or cluster-wide target permissions.
+- Treat the admission response task ID as the authoritative feed key. A task ID
+  reported inside an SSE payload is diagnostic only and cannot move an event
+  into another concurrent task's feed.
+- Retain at most 200 safe operational events per task and exclude arbitrary
+  message or OCR content from lifecycle evidence.
+- Correlate Relayna worker pods exactly only when Kubernetes metadata contains
+  an admitted task ID. Otherwise retain the honest run-window, Job-owner, and
+  service-label correlation and show that limitation in the UI.
+- Preserve the existing point-in-time Prometheus queries as the readiness gate,
+  while adding bounded range queries and derived pod summaries for the UI. This
+  keeps completed workers visible without making their expected absence from an
+  instant query invalidate target-pod readiness evidence.
 
 ## Surprises And Blockers
 
 - The phase tree required by `AGENTS.md` was removed from `main` in commit
   `df05094`. Only the active Phase 03 planning files are restored here; removed
   historical artifacts remain untouched.
+- The first real AKS OCR run completed successfully and collected Prometheus
+  metrics, but its optional `kubectl top` command exposed a missing
+  `pods.metrics.k8s.io` permission for the Ampule service account. The Helm and
+  raw-manifest target-reader Roles now include the namespace-scoped read rule,
+  and deployment validation rejects a regression.
 
 ## Acceptance Evidence
 
@@ -84,3 +111,32 @@ through SSE, and produce content-safe lifecycle evidence.
   signed reusable file paths, Prometheus report sections, and the complete
   required/optional multipart row lifecycle. The combined focused suite passed
   91 control-plane, catalog, Relayna, and workflow tests.
+- A real AKS attach run against `ocr-service-api` in `common`, initiated from
+  Ampule Chamber in `ampule-system`, completed as run
+  `chamber-ocr-service-api-20260713162721087-aa89ea48`. The service accepted the
+  multipart request with HTTP 202 in 103 ms, emitted `planning`, `running`, and
+  `completed` SSE statuses, and finished one parent task successfully in 99.5
+  seconds with no failed tasks.
+- The AKS run used a 50,626-byte JPEG with SHA-256
+  `70c0367340c11ca23ee2e3424a4908e58230cfbe5c35f432af38fe2533d95632`;
+  lifecycle evidence retained only filename, field, content type, size, and
+  digest. The generated report scored readiness 100/100 with seven registered
+  evidence artifacts and container CPU, memory, and restart series for the
+  selected OCR API pod.
+- After applying the namespace-scoped metrics RBAC rule, the Ampule service
+  account returned `yes` for `get pods.metrics.k8s.io`, and the exact previously
+  failing `kubectl top pods ocr-service-api-59f5b54bc6-6zvln --containers`
+  command returned CPU and memory values successfully.
+- The `1.7.0` implementation test fixture rendered an API pod and a completed
+  Relayna worker with 64.0/114.0 MiB memory and 25.0/89.0m peak CPU cards, plus
+  two independent `task-a` and `task-b` event feeds whose projected events all
+  retained the correct admission task ID even when the fixture payload supplied
+  an untrusted different ID.
+- `make check` passed on 2026-07-13 with 221 tests and 90% combined branch/line
+  coverage, followed by scenario, deployment, `1.7.0` release metadata, strict
+  documentation, source-distribution, and wheel validation.
+- Chrome rendered the completed Evidence tab at desktop width with the API and
+  Relayna worker cards side by side, correct 64.0/114.0 MiB and 25.0/89.0m
+  values, the explicit run-level worker-correlation limitation, and separate
+  three-event `task-a` and `task-b` feeds. The DOM snapshot and full-page visual
+  inspection agreed with the projection assertions.

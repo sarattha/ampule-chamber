@@ -3,12 +3,13 @@ from __future__ import annotations
 import json
 import socket
 import unittest
+from datetime import UTC, datetime
 from email.message import Message
 from html import unescape
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any
+from typing import Any, cast
 from unittest.mock import patch
 from urllib.error import HTTPError
 
@@ -175,6 +176,230 @@ class PrometheusQueryTests(unittest.TestCase):
             result["observed_pod_names"],
             ["example-service-abc123", "example-service-def456"],
         )
+
+    def test_range_query_and_summary_preserve_worker_peaks(self) -> None:
+        with patch(
+            "chamber.workflow._read_prometheus_payload",
+            return_value={
+                "status": "success",
+                "data": {
+                    "result": [
+                        {
+                            "metric": {"pod": "ocr-worker-abc", "container": "worker"},
+                            "values": [[1, "40"], [2, "70"]],
+                        },
+                        {
+                            "metric": {"pod": "ocr-worker-abc", "container": "sidecar"},
+                            "values": [[1, "2"], [2, "3"]],
+                        },
+                    ]
+                },
+            },
+        ):
+            result = workflow._prometheus_query_range(
+                "http://prometheus.example",
+                "memory query",
+                start=datetime(2026, 7, 13, tzinfo=UTC),
+                end=datetime(2026, 7, 13, 0, 1, tzinfo=UTC),
+                step_seconds=15,
+            )
+        summaries = workflow._prometheus_range_summaries(
+            {
+                "container_memory_working_set_bytes": result,
+                "container_cpu_usage_cores": {
+                    **result,
+                    "series": [
+                        {
+                            "metric": {"pod": "ocr-worker-abc", "container": "worker"},
+                            "values": [[1, "0.02"], [2, "0.089"]],
+                        }
+                    ],
+                },
+                "kube_pod_container_status_restarts_total": {
+                    **result,
+                    "series": [
+                        {
+                            "metric": {"pod": "ocr-worker-abc", "container": "worker"},
+                            "values": [[1, "0"], [2, "0"]],
+                        }
+                    ],
+                },
+            },
+            workloads=[
+                {
+                    "pod_name": "ocr-worker-abc",
+                    "role": "relayna_worker",
+                    "task_ids": [],
+                }
+            ],
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["observed_pod_names"], ["ocr-worker-abc"])
+        self.assertEqual(summaries[0]["peak_memory_bytes"], 73)
+        self.assertEqual(summaries[0]["peak_cpu_cores"], 0.089)
+        self.assertEqual(summaries[0]["max_restarts"], 0)
+        self.assertEqual(summaries[0]["sample_count"], 2)
+
+    def test_collector_writes_bounded_run_window_for_api_and_worker(self) -> None:
+        def range_query(
+            prometheus_url: str,
+            query: str,
+            *,
+            start: datetime,
+            end: datetime,
+            step_seconds: int,
+        ) -> dict[str, Any]:
+            del prometheus_url, start, end
+            self.assertEqual(step_seconds, 15)
+            value = "104857600" if "memory" in query else "0.05" if "rate(" in query else "0"
+            return {
+                "ok": True,
+                "query": query,
+                "series_count": 2,
+                "error": None,
+                "observed_pod_names": ["ocr-api-123", "ocr-worker-abc"],
+                "series": [
+                    {
+                        "metric": {"pod": pod_name, "container": "app"},
+                        "values": [[1, value], [2, value]],
+                    }
+                    for pod_name in ("ocr-api-123", "ocr-worker-abc")
+                ],
+            }
+
+        with TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            with (
+                patch("chamber.workflow._prometheus_query", return_value=_successful_query()),
+                patch("chamber.workflow._prometheus_query_range", side_effect=range_query),
+            ):
+                workflow._collect_prometheus_memory_evidence(
+                    run_dir,
+                    prometheus_url="http://prometheus.example",
+                    namespace="common",
+                    pod_names=("ocr-api-123",),
+                    observed_pods=(
+                        {"name": "ocr-api-123", "role": "api", "phase": "Running"},
+                        {
+                            "name": "ocr-worker-abc",
+                            "role": "relayna_worker",
+                            "phase": "Succeeded",
+                            "correlation": "run_window_and_service_labels",
+                            "task_ids": [],
+                        },
+                    ),
+                    range_start=datetime(2026, 7, 13, tzinfo=UTC),
+                    range_end=datetime(2026, 7, 13, 0, 1, tzinfo=UTC),
+                )
+            artifact = json.loads(
+                (run_dir / "evidence/prometheus-memory.json").read_text(encoding="utf-8")
+            )
+
+        self.assertEqual(artifact["schema_version"], 2)
+        self.assertEqual(artifact["window"]["step_seconds"], 15)
+        self.assertEqual(
+            [item["pod_name"] for item in artifact["summaries"]],
+            ["ocr-api-123", "ocr-worker-abc"],
+        )
+        self.assertEqual(artifact["summaries"][1]["peak_memory_bytes"], 104857600)
+        self.assertEqual(artifact["summaries"][1]["peak_cpu_cores"], 0.05)
+
+    def test_relayna_worker_discovery_distinguishes_exact_and_run_window_correlation(self) -> None:
+        pod_payload = {
+            "items": [
+                _worker_pod("ocr-worker-exact", task_id="task-1"),
+                _worker_pod("ocr-worker-window"),
+                _worker_pod("another-worker", service="another-service"),
+            ]
+        }
+        with patch("chamber.workflow._kubectl_json", return_value=pod_payload):
+            workers = workflow._discover_relayna_worker_pods(
+                context="aks",
+                namespace="common",
+                service_name="ocr-service-api",
+                selected_pod_names=("ocr-service-api-123",),
+                task_ids=("task-1", "task-2"),
+                traffic_started_at=datetime(2026, 7, 13, tzinfo=UTC),
+                runner=cast(Any, object()),
+                commands=[],
+            )
+
+        self.assertEqual(
+            [item["name"] for item in workers], ["ocr-worker-exact", "ocr-worker-window"]
+        )
+        self.assertEqual(workers[0]["task_ids"], ["task-1"])
+        self.assertEqual(workers[0]["correlation"], "task_label")
+        self.assertEqual(workers[1]["task_ids"], [])
+        self.assertEqual(workers[1]["correlation"], "run_window_and_service_labels")
+
+
+class PrometheusUiProjectionTests(unittest.TestCase):
+    def test_assessment_ui_shows_api_worker_metrics_and_task_keyed_feeds(self) -> None:
+        with TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            run_dir = workspace / "runs/relayna-ui"
+            evidence = run_dir / "evidence"
+            evidence.mkdir(parents=True)
+            (run_dir / "run.json").write_text(
+                json.dumps({"run_id": run_dir.name, "state": "completed"}),
+                encoding="utf-8",
+            )
+            (run_dir / "run-metadata.json").write_text(
+                json.dumps({"service_name": "ocr-service-api"}), encoding="utf-8"
+            )
+            (evidence / "prometheus-memory.json").write_text(
+                json.dumps(
+                    {
+                        "namespace": "common",
+                        "window": {"start": "start", "end": "end", "step_seconds": 15},
+                        "summaries": [
+                            _metric_summary("ocr-service-api-123", "api", 64, 0.025),
+                            _metric_summary("ocr-worker-abc", "relayna_worker", 114, 0.089),
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (evidence / "relayna-summary.json").write_text(
+                json.dumps(
+                    {
+                        "success": True,
+                        "task_count": 2,
+                        "tasks": [
+                            _relayna_task("task-a", "processing", "completed"),
+                            _relayna_task("task-b", "queued", "completed"),
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            projection = ChamberApplication(workspace).get_run(run_dir.name)
+            with TestClient(create_app(workspace)) as client:
+                response = client.get(f"/runs/{run_dir.name}?tab=evidence")
+
+        self.assertEqual(projection["prometheus"]["workloads"][1]["role"], "Relayna worker")
+        self.assertEqual(
+            [event["task_id"] for event in projection["relayna"]["tasks"][0]["events"]],
+            ["task-a", "task-a"],
+        )
+        self.assertEqual(
+            [event["task_id"] for event in projection["relayna"]["tasks"][1]["events"]],
+            ["task-b", "task-b"],
+        )
+        self.assertEqual(response.status_code, 200)
+        for text in (
+            "Runtime metrics",
+            "ocr-service-api-123",
+            "ocr-worker-abc",
+            "114.0 MiB",
+            "89.0m",
+            "Relayna task feed",
+            "task-a",
+            "task-b",
+        ):
+            self.assertIn(text, response.text)
 
 
 class PrometheusEvidenceGateTests(unittest.TestCase):
@@ -642,6 +867,66 @@ def _series(pod_name: str = "example-service-abc123") -> dict[str, object]:
     return {
         "metric": {"pod": pod_name, "container": "app"},
         "value": [1710000000, "42"],
+    }
+
+
+def _worker_pod(
+    name: str,
+    *,
+    service: str = "ocr-service",
+    task_id: str | None = None,
+) -> dict[str, Any]:
+    labels = {
+        "app": f"{service.removesuffix('-service')}-worker",
+        "service": service,
+        "scaledjob.keda.sh/name": f"{service.removesuffix('-service')}-worker",
+    }
+    if task_id:
+        labels["relayna.ampule.dev/task-id"] = task_id
+    return {
+        "metadata": {
+            "name": name,
+            "labels": labels,
+            "ownerReferences": [{"kind": "Job", "name": f"{name}-job"}],
+        },
+        "status": {
+            "phase": "Succeeded",
+            "startTime": "2026-07-13T00:00:05Z",
+            "containerStatuses": [
+                {"state": {"terminated": {"finishedAt": "2026-07-13T00:00:40Z"}}}
+            ],
+        },
+    }
+
+
+def _metric_summary(pod_name: str, role: str, memory_mib: int, cpu_cores: float) -> dict[str, Any]:
+    return {
+        "pod_name": pod_name,
+        "role": role,
+        "phase": "Succeeded" if role == "relayna_worker" else "Running",
+        "peak_memory_bytes": memory_mib * 1024 * 1024,
+        "peak_cpu_cores": cpu_cores,
+        "max_restarts": 0,
+        "sample_count": 8,
+        "task_ids": [],
+        "correlation": "run_window_and_service_labels",
+        "errors": [],
+    }
+
+
+def _relayna_task(task_id: str, *statuses: str) -> dict[str, Any]:
+    return {
+        "iteration": 1,
+        "journey": "document-lifecycle",
+        "task_id": task_id,
+        "terminal_status": statuses[-1],
+        "success": True,
+        "total_duration_ms": 1250,
+        "event_count": len(statuses),
+        "events": [
+            {"sequence": index, "task_id": "untrusted-payload-id", "status": status}
+            for index, status in enumerate(statuses, 1)
+        ],
     }
 
 

@@ -11,7 +11,7 @@ import subprocess
 import sys
 import time
 from dataclasses import asdict, is_dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 from urllib.error import HTTPError
@@ -846,6 +846,8 @@ def _assess_kubernetes_attach_config(
     success = False
     failure: BaseException | None = None
     discovery: dict[str, Any] = {}
+    traffic_started_at: datetime | None = None
+    relayna_workers: tuple[dict[str, Any], ...] = ()
     try:
         discovery = _discover_attach_target(
             context=selected_context,
@@ -867,6 +869,7 @@ def _assess_kubernetes_attach_config(
                 runner=runner,
                 commands=commands,
             )
+        traffic_started_at = datetime.now(UTC)
         traffic_result = _execute_kubernetes_traffic(
             config=config,
             run_dir=run_dir,
@@ -874,6 +877,25 @@ def _assess_kubernetes_attach_config(
             namespace=namespace,
             runner=runner,
         )
+        if traffic_result.get("evidence_id") == "relayna-summary":
+            relayna_workers = _discover_relayna_worker_pods(
+                context=selected_context,
+                namespace=namespace,
+                service_name=str(config["service"]["name"]),
+                selected_pod_names=tuple(str(item["name"]) for item in discovery.get("pods", ())),
+                task_ids=_relayna_task_ids(run_dir),
+                traffic_started_at=traffic_started_at,
+                runner=runner,
+                commands=commands,
+            )
+            _write_json(
+                run_dir / "evidence/relayna-workers.json",
+                {
+                    "namespace": namespace,
+                    "traffic_started_at": traffic_started_at.isoformat(),
+                    "workers": list(relayna_workers),
+                },
+            )
         _collect_attach_kubernetes_evidence(
             discovery,
             context=selected_context,
@@ -887,6 +909,18 @@ def _assess_kubernetes_attach_config(
                 prometheus_url=str(selected_prometheus),
                 namespace=namespace,
                 pod_names=tuple(str(item["name"]) for item in discovery.get("pods", ())),
+                observed_pods=tuple(
+                    {
+                        **item,
+                        "role": "api",
+                        "correlation": "selected_target",
+                    }
+                    for item in discovery.get("pods", ())
+                    if isinstance(item, dict)
+                )
+                + relayna_workers,
+                range_start=traffic_started_at,
+                range_end=datetime.now(UTC),
             )
         success = bool(traffic_result.get("success"))
     except (Exception, KeyboardInterrupt) as exc:
@@ -1276,6 +1310,184 @@ def _discover_attach_pods(
                 "container_statuses": pod.get("status", {}).get("containerStatuses", []),
             }
     return list(pods_by_name.values())
+
+
+def _discover_relayna_worker_pods(
+    *,
+    context: str,
+    namespace: str,
+    service_name: str,
+    selected_pod_names: tuple[str, ...],
+    task_ids: tuple[str, ...],
+    traffic_started_at: datetime,
+    runner: KubernetesCommandRunner,
+    commands: list[dict[str, object]],
+) -> tuple[dict[str, Any], ...]:
+    """Discover short-lived Relayna Job pods created during the traffic window."""
+
+    payload = _kubectl_json(
+        runner,
+        (
+            "kubectl",
+            "--context",
+            context,
+            "-n",
+            namespace,
+            "get",
+            "pods",
+            "-o",
+            "json",
+        ),
+        commands,
+        "discover Relayna worker pods",
+    )
+    aliases = _service_name_aliases(service_name)
+    selected = set(selected_pod_names)
+    workers: list[dict[str, Any]] = []
+    for pod in payload.get("items", []):
+        if not isinstance(pod, dict):
+            continue
+        metadata = pod.get("metadata", {})
+        status = pod.get("status", {})
+        if not isinstance(metadata, dict) or not isinstance(status, dict):
+            continue
+        name = str(metadata.get("name", ""))
+        if not name or name in selected:
+            continue
+        labels = metadata.get("labels", {})
+        annotations = metadata.get("annotations", {})
+        labels = labels if isinstance(labels, dict) else {}
+        annotations = annotations if isinstance(annotations, dict) else {}
+        owners = metadata.get("ownerReferences", [])
+        owners = owners if isinstance(owners, list) else []
+        has_job_owner = any(
+            isinstance(owner, dict) and str(owner.get("kind", "")).lower() == "job"
+            for owner in owners
+        )
+        has_scaled_job = bool(labels.get("scaledjob.keda.sh/name"))
+        worker_values = [name.lower(), *(str(value).lower() for value in labels.values())]
+        worker_text = " ".join(worker_values)
+        if "worker" not in worker_text or not (has_job_owner or has_scaled_job):
+            continue
+        if not any(
+            _service_alias_matches(alias, value) for alias in aliases for value in worker_values
+        ):
+            continue
+        started_at = _kubernetes_datetime(status.get("startTime"))
+        if started_at is None or started_at < traffic_started_at - timedelta(seconds=10):
+            continue
+        matched_task_ids = _pod_task_ids(labels, annotations, task_ids=task_ids)
+        workers.append(
+            {
+                "name": name,
+                "role": "relayna_worker",
+                "phase": status.get("phase"),
+                "start_time": started_at.isoformat(),
+                "finished_at": _pod_finished_at(status),
+                "labels": _worker_labels(labels),
+                "owner_references": [
+                    {"kind": owner.get("kind"), "name": owner.get("name")}
+                    for owner in owners
+                    if isinstance(owner, dict)
+                ],
+                "task_ids": list(matched_task_ids),
+                "correlation": (
+                    "task_label" if matched_task_ids else "run_window_and_service_labels"
+                ),
+                "correlation_note": (
+                    "Worker metadata matched an admitted Relayna task id."
+                    if matched_task_ids
+                    else "No task-id label was present; this worker is associated with the "
+                    "assessment run by start time, Job ownership, and service labels."
+                ),
+            }
+        )
+    return tuple(sorted(workers, key=lambda item: str(item["name"])))
+
+
+def _relayna_task_ids(run_dir: Path) -> tuple[str, ...]:
+    summary = _read_json(run_dir / "evidence/relayna-summary.json")
+    tasks = summary.get("tasks", []) if isinstance(summary, dict) else []
+    return tuple(
+        str(task["task_id"]) for task in tasks if isinstance(task, dict) and task.get("task_id")
+    )
+
+
+def _service_name_aliases(service_name: str) -> tuple[str, ...]:
+    normalized = service_name.lower().replace("_", "-")
+    aliases = {normalized}
+    for suffix in ("-api", "-service"):
+        if normalized.endswith(suffix):
+            aliases.add(normalized.removesuffix(suffix))
+    if normalized.endswith("-service-api"):
+        aliases.add(normalized.removesuffix("-api"))
+        aliases.add(normalized.removesuffix("-service-api"))
+    return tuple(sorted((alias for alias in aliases if len(alias) >= 3), key=len, reverse=True))
+
+
+def _service_alias_matches(alias: str, value: str) -> bool:
+    normalized = value.replace("_", "-")
+    return (
+        normalized == alias
+        or normalized.startswith(f"{alias}-")
+        or normalized.endswith(f"-{alias}")
+        or f"-{alias}-" in normalized
+    )
+
+
+def _pod_task_ids(
+    labels: dict[str, Any],
+    annotations: dict[str, Any],
+    *,
+    task_ids: tuple[str, ...],
+) -> tuple[str, ...]:
+    task_values = set(task_ids)
+    matched: set[str] = set()
+    for values in (labels, annotations):
+        for key, value in values.items():
+            normalized_key = str(key).lower().replace("_", "-")
+            if "task" not in normalized_key:
+                continue
+            text = str(value)
+            if text in task_values:
+                matched.add(text)
+    return tuple(sorted(matched))
+
+
+def _worker_labels(labels: dict[str, Any]) -> dict[str, str]:
+    allowed = {
+        "app",
+        "app.kubernetes.io/component",
+        "app.kubernetes.io/name",
+        "service",
+        "scaledjob.keda.sh/name",
+    }
+    return {str(key): str(value) for key, value in labels.items() if str(key) in allowed}
+
+
+def _kubernetes_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
+def _pod_finished_at(status: dict[str, Any]) -> str | None:
+    finished: list[datetime] = []
+    statuses = status.get("containerStatuses", [])
+    for item in statuses if isinstance(statuses, list) else []:
+        if not isinstance(item, dict):
+            continue
+        state = item.get("state", {})
+        terminated = state.get("terminated", {}) if isinstance(state, dict) else {}
+        value = terminated.get("finishedAt") if isinstance(terminated, dict) else None
+        parsed = _kubernetes_datetime(value)
+        if parsed is not None:
+            finished.append(parsed)
+    return max(finished).isoformat() if finished else None
 
 
 def _kubectl_json(
@@ -2066,15 +2278,20 @@ def _collect_prometheus_memory_evidence(
     prometheus_url: str,
     namespace: str,
     pod_names: tuple[str, ...] = (),
+    observed_pods: tuple[dict[str, Any], ...] = (),
+    range_start: datetime | None = None,
+    range_end: datetime | None = None,
 ) -> None:
     pod_filter = ""
     if pod_names:
         pod_filter = f',pod=~"{_promql_pod_regex(pod_names)}"'
     namespace_matcher = _promql_string(namespace)
-    evidence = {
+    evidence: dict[str, Any] = {
+        "schema_version": 2,
         "prometheus_url": prometheus_url,
         "namespace": namespace,
         "pod_names": list(pod_names),
+        "workloads": _prometheus_workloads(pod_names, observed_pods),
         "queries": {
             "container_memory_working_set_bytes": _prometheus_query(
                 prometheus_url,
@@ -2102,7 +2319,104 @@ def _collect_prometheus_memory_evidence(
             ),
         },
     }
+    if range_start is not None and range_end is not None:
+        end = max(range_end, range_start + timedelta(seconds=1))
+        duration_seconds = max(1, int((end - range_start).total_seconds()))
+        step_seconds = max(15, (duration_seconds + 239) // 240)
+        observed_names = tuple(
+            dict.fromkeys(
+                (
+                    *pod_names,
+                    *(
+                        str(item["name"])
+                        for item in observed_pods
+                        if isinstance(item, dict) and item.get("name")
+                    ),
+                )
+            )
+        )
+        range_pod_filter = ""
+        if observed_names:
+            range_pod_filter = f',pod=~"{_promql_pod_regex(observed_names)}"'
+        range_queries = {
+            "container_memory_working_set_bytes": _prometheus_query_range(
+                prometheus_url,
+                (
+                    "container_memory_working_set_bytes{"
+                    f'namespace="{namespace_matcher}",container!="",pod!=""'
+                    f"{range_pod_filter}"
+                    "}"
+                ),
+                start=range_start,
+                end=end,
+                step_seconds=step_seconds,
+            ),
+            "container_cpu_usage_cores": _prometheus_query_range(
+                prometheus_url,
+                (
+                    "rate(container_cpu_usage_seconds_total{"
+                    f'namespace="{namespace_matcher}",container!="",pod!=""'
+                    f"{range_pod_filter}"
+                    "}[30s])"
+                ),
+                start=range_start,
+                end=end,
+                step_seconds=step_seconds,
+            ),
+            "kube_pod_container_status_restarts_total": _prometheus_query_range(
+                prometheus_url,
+                (
+                    "kube_pod_container_status_restarts_total{"
+                    f'namespace="{namespace_matcher}"{range_pod_filter}'
+                    "}"
+                ),
+                start=range_start,
+                end=end,
+                step_seconds=step_seconds,
+            ),
+        }
+        evidence["window"] = {
+            "start": range_start.isoformat(),
+            "end": end.isoformat(),
+            "step_seconds": step_seconds,
+        }
+        evidence["range_queries"] = range_queries
+        evidence["summaries"] = _prometheus_range_summaries(
+            range_queries,
+            workloads=evidence["workloads"],
+        )
     _write_json(run_dir / "evidence/prometheus-memory.json", evidence)
+
+
+def _prometheus_workloads(
+    pod_names: tuple[str, ...], observed_pods: tuple[dict[str, Any], ...]
+) -> list[dict[str, Any]]:
+    workloads: dict[str, dict[str, Any]] = {}
+    for item in observed_pods:
+        if not isinstance(item, dict) or not item.get("name"):
+            continue
+        name = str(item["name"])
+        workloads[name] = {
+            "pod_name": name,
+            "role": str(item.get("role", "api")),
+            "phase": item.get("phase"),
+            "correlation": item.get("correlation"),
+            "correlation_note": item.get("correlation_note"),
+            "task_ids": list(item.get("task_ids", [])),
+        }
+    for name in pod_names:
+        workloads.setdefault(
+            name,
+            {
+                "pod_name": name,
+                "role": "api",
+                "phase": None,
+                "correlation": "selected_target",
+                "correlation_note": None,
+                "task_ids": [],
+            },
+        )
+    return list(workloads.values())
 
 
 def _promql_pod_regex(pod_names: tuple[str, ...]) -> str:
@@ -2183,6 +2497,150 @@ def _prometheus_query(prometheus_url: str, query: str) -> dict[str, Any]:
     }
 
 
+def _prometheus_query_range(
+    prometheus_url: str,
+    query: str,
+    *,
+    start: datetime,
+    end: datetime,
+    step_seconds: int,
+) -> dict[str, Any]:
+    try:
+        url = _prometheus_query_range_url(
+            prometheus_url,
+            query,
+            start=start,
+            end=end,
+            step_seconds=step_seconds,
+        )
+        payload = _read_prometheus_payload(url)
+    except Exception as exc:
+        return _prometheus_range_failure(query, str(exc))
+    if not isinstance(payload, dict) or payload.get("status") != "success":
+        return _prometheus_range_failure(query, _prometheus_response_error(payload))
+    data = payload.get("data")
+    result = data.get("result") if isinstance(data, dict) else None
+    if not isinstance(result, list):
+        return _prometheus_range_failure(
+            query, "Prometheus success response did not contain data.result"
+        )
+    observed_pod_names = sorted(
+        {
+            str(metric["pod"])
+            for item in result
+            if isinstance(item, dict)
+            and isinstance((metric := item.get("metric")), dict)
+            and isinstance(metric.get("pod"), str)
+            and metric["pod"]
+        }
+    )
+    return {
+        "ok": True,
+        "query": query,
+        "series_count": len(result),
+        "error": None,
+        "observed_pod_names": observed_pod_names,
+        "series": result[:100],
+    }
+
+
+def _prometheus_range_failure(query: str, error: str) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "query": query,
+        "series_count": None,
+        "error": error,
+        "observed_pod_names": [],
+        "series": [],
+    }
+
+
+def _prometheus_range_summaries(
+    range_queries: dict[str, Any],
+    *,
+    workloads: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    summaries: dict[str, dict[str, Any]] = {}
+    for workload in workloads:
+        pod_name = str(workload.get("pod_name", ""))
+        if not pod_name:
+            continue
+        summaries[pod_name] = {
+            **workload,
+            "peak_memory_bytes": None,
+            "peak_cpu_cores": None,
+            "max_restarts": None,
+            "sample_count": 0,
+            "errors": [],
+        }
+    fields = {
+        "container_memory_working_set_bytes": "peak_memory_bytes",
+        "container_cpu_usage_cores": "peak_cpu_cores",
+        "kube_pod_container_status_restarts_total": "max_restarts",
+    }
+    for query_name, field in fields.items():
+        query = range_queries.get(query_name, {})
+        if not isinstance(query, dict):
+            continue
+        if not query.get("ok"):
+            error = str(query.get("error") or "query failed")
+            for summary in summaries.values():
+                cast(list[str], summary["errors"]).append(f"{query_name}: {error}")
+            continue
+        peaks, counts = _prometheus_pod_peaks(query.get("series", []))
+        for pod_name, peak in peaks.items():
+            summary = summaries.setdefault(
+                pod_name,
+                {
+                    "pod_name": pod_name,
+                    "role": "observed",
+                    "phase": None,
+                    "correlation": "prometheus_range",
+                    "correlation_note": None,
+                    "task_ids": [],
+                    "peak_memory_bytes": None,
+                    "peak_cpu_cores": None,
+                    "max_restarts": None,
+                    "sample_count": 0,
+                    "errors": [],
+                },
+            )
+            summary[field] = peak
+            summary["sample_count"] = max(int(summary["sample_count"]), counts[pod_name])
+    return list(summaries.values())
+
+
+def _prometheus_pod_peaks(series: Any) -> tuple[dict[str, float], dict[str, int]]:
+    values_by_pod: dict[str, dict[float, float]] = {}
+    if not isinstance(series, list):
+        return {}, {}
+    for item in series:
+        if not isinstance(item, dict):
+            continue
+        metric = item.get("metric", {})
+        pod_name = metric.get("pod") if isinstance(metric, dict) else None
+        values = item.get("values", [])
+        if not isinstance(pod_name, str) or not pod_name or not isinstance(values, list):
+            continue
+        pod_values = values_by_pod.setdefault(pod_name, {})
+        for sample in values:
+            if not isinstance(sample, list | tuple) or len(sample) < 2:
+                continue
+            try:
+                timestamp = float(sample[0])
+                value = float(sample[1])
+            except (TypeError, ValueError):
+                continue
+            if value != value or value in {float("inf"), float("-inf")}:
+                continue
+            pod_values[timestamp] = pod_values.get(timestamp, 0.0) + value
+    peaks = {
+        pod_name: max(samples.values()) for pod_name, samples in values_by_pod.items() if samples
+    }
+    counts = {pod_name: len(samples) for pod_name, samples in values_by_pod.items()}
+    return peaks, counts
+
+
 def _prometheus_response_error(payload: object) -> str:
     if not isinstance(payload, dict):
         return "Prometheus returned a non-object response"
@@ -2200,6 +2658,29 @@ def _prometheus_query_url(prometheus_url: str, query: str) -> str:
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ValueError("Prometheus URL must be an HTTP(S) URL")
     path = f"{parsed.path.rstrip('/')}/api/v1/query?{urlencode({'query': query})}"
+    return f"{parsed.scheme}://{parsed.netloc}{path}"
+
+
+def _prometheus_query_range_url(
+    prometheus_url: str,
+    query: str,
+    *,
+    start: datetime,
+    end: datetime,
+    step_seconds: int,
+) -> str:
+    parsed = urlparse(prometheus_url.rstrip("/"))
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("Prometheus URL must be an HTTP(S) URL")
+    parameters = urlencode(
+        {
+            "query": query,
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "step": step_seconds,
+        }
+    )
+    path = f"{parsed.path.rstrip('/')}/api/v1/query_range?{parameters}"
     return f"{parsed.scheme}://{parsed.netloc}{path}"
 
 
@@ -2396,6 +2877,8 @@ def _kubernetes_assess_evidence_ids(
         evidence_ids.append("pre-test-state")
     if run_dir is not None and (run_dir / "evidence/rollback.json").exists():
         evidence_ids.append("rollback")
+    if run_dir is not None and (run_dir / "evidence/relayna-workers.json").exists():
+        evidence_ids.append("relayna-workers")
     traffic_evidence_id = traffic_result.get("evidence_id")
     if isinstance(traffic_evidence_id, str) and traffic_evidence_id:
         evidence_ids.append(traffic_evidence_id)
@@ -2493,6 +2976,18 @@ def _agent_evidence_summaries(run_dir: Path, evidence_ids: tuple[str, ...]) -> t
                 f"total={relayna.get('task_count', 0)}"
             )
             summaries.append(f"Relayna task failures: {relayna.get('failed_count', 0)}")
+    if "relayna-workers" in evidence_ids:
+        workers_path = run_dir / "evidence/relayna-workers.json"
+        if workers_path.exists():
+            workers = _read_json(workers_path).get("workers")
+            if isinstance(workers, list):
+                exact = sum(
+                    isinstance(item, dict) and item.get("correlation") == "task_label"
+                    for item in workers
+                )
+                summaries.append(
+                    f"Relayna workers: observed={len(workers)} exact_task_labels={exact}"
+                )
     if "prometheus-memory" in evidence_ids:
         path = run_dir / "evidence/prometheus-memory.json"
         if path.exists():
@@ -2549,6 +3044,10 @@ def _agent_evidence_details(run_dir: Path, evidence_ids: tuple[str, ...]) -> tup
         path = run_dir / "evidence/relayna-summary.json"
         if path.exists():
             details.append(_agent_detail("relayna-summary", _read_json(path)))
+    if "relayna-workers" in evidence_ids:
+        path = run_dir / "evidence/relayna-workers.json"
+        if path.exists():
+            details.append(_agent_detail("relayna-workers", _read_json(path)))
     if "prometheus-memory" in evidence_ids:
         path = run_dir / "evidence/prometheus-memory.json"
         if path.exists():

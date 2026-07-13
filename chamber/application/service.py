@@ -130,6 +130,8 @@ class ChamberApplication:
             "plan": _json_or_default(run_dir / "plan.json", {}),
             "agents": _agents(run_dir / "agent"),
             "report_markdown": _text_or_default(run_dir / "report.md"),
+            "prometheus": _prometheus_view(run_dir / "evidence/prometheus-memory.json"),
+            "relayna": _relayna_view(run_dir / "evidence/relayna-summary.json"),
         }
 
     def compare(self, baseline_run_id: str, candidate_run_id: str) -> RunComparison:
@@ -215,6 +217,186 @@ def _agents(agent_dir: Path) -> dict[str, Any]:
     if not agent_dir.exists():
         return {}
     return {path.stem: _json_or_default(path, {}) for path in sorted(agent_dir.glob("*.json"))}
+
+
+def _prometheus_view(path: Path) -> dict[str, Any]:
+    artifact = _json_or_default(path, {})
+    if not isinstance(artifact, dict) or not artifact:
+        return {"available": False, "workloads": []}
+    summaries = artifact.get("summaries")
+    if isinstance(summaries, list) and summaries:
+        workloads = [
+            _prometheus_workload_view(item, memory_kind="Peak")
+            for item in summaries
+            if isinstance(item, dict)
+        ]
+    else:
+        workloads = _legacy_prometheus_workloads(artifact)
+    return {
+        "available": True,
+        "namespace": artifact.get("namespace"),
+        "window": artifact.get("window") if isinstance(artifact.get("window"), dict) else {},
+        "workloads": workloads,
+        "has_range_metrics": isinstance(summaries, list) and bool(summaries),
+    }
+
+
+def _prometheus_workload_view(item: dict[str, Any], *, memory_kind: str) -> dict[str, Any]:
+    memory_bytes = _number(item.get("peak_memory_bytes"))
+    cpu_cores = _number(item.get("peak_cpu_cores"))
+    restarts = _number(item.get("max_restarts"))
+    errors = item.get("errors", [])
+    return {
+        "pod_name": str(item.get("pod_name", "unknown")),
+        "role": _workload_role(str(item.get("role", "observed"))),
+        "phase": item.get("phase"),
+        "memory_kind": memory_kind,
+        "memory_mib": round(memory_bytes / (1024 * 1024), 1) if memory_bytes is not None else None,
+        "cpu_millicores": round(cpu_cores * 1000, 1) if cpu_cores is not None else None,
+        "restarts": int(restarts) if restarts is not None else None,
+        "sample_count": int(_number(item.get("sample_count")) or 0),
+        "task_ids": _string_values(item.get("task_ids")),
+        "correlation": item.get("correlation"),
+        "correlation_note": item.get("correlation_note"),
+        "errors": [str(value) for value in errors] if isinstance(errors, list) else [],
+    }
+
+
+def _legacy_prometheus_workloads(artifact: dict[str, Any]) -> list[dict[str, Any]]:
+    queries = artifact.get("queries", {})
+    queries = queries if isinstance(queries, dict) else {}
+    memory = _instant_query_totals(queries.get("container_memory_working_set_bytes"))
+    restarts = _instant_query_totals(queries.get("kube_pod_container_status_restarts_total"))
+    metadata: dict[str, dict[str, Any]] = {}
+    raw_workloads = artifact.get("workloads", [])
+    for item in raw_workloads if isinstance(raw_workloads, list) else []:
+        if isinstance(item, dict) and item.get("pod_name"):
+            metadata[str(item["pod_name"])] = item
+    pod_names = set(memory) | set(restarts) | set(metadata)
+    pod_names.update(_string_values(artifact.get("pod_names")))
+    workloads = []
+    for pod_name in sorted(pod_names):
+        item = metadata.get(pod_name, {})
+        workloads.append(
+            {
+                "pod_name": pod_name,
+                "role": _workload_role(str(item.get("role", "api"))),
+                "phase": item.get("phase"),
+                "memory_kind": "Current",
+                "memory_mib": (
+                    round(memory[pod_name] / (1024 * 1024), 1) if pod_name in memory else None
+                ),
+                "cpu_millicores": None,
+                "restarts": int(restarts[pod_name]) if pod_name in restarts else None,
+                "sample_count": 1 if pod_name in memory or pod_name in restarts else 0,
+                "task_ids": _string_values(item.get("task_ids")),
+                "correlation": item.get("correlation"),
+                "correlation_note": item.get("correlation_note"),
+                "errors": [],
+            }
+        )
+    return workloads
+
+
+def _instant_query_totals(value: Any) -> dict[str, float]:
+    query = value if isinstance(value, dict) else {}
+    series = query.get("series", [])
+    totals: dict[str, float] = {}
+    for item in series if isinstance(series, list) else []:
+        if not isinstance(item, dict):
+            continue
+        metric = item.get("metric", {})
+        sample = item.get("value", [])
+        pod_name = metric.get("pod") if isinstance(metric, dict) else None
+        if not isinstance(pod_name, str) or not isinstance(sample, list | tuple) or len(sample) < 2:
+            continue
+        number = _number(sample[1])
+        if number is not None:
+            totals[pod_name] = totals.get(pod_name, 0.0) + number
+    return totals
+
+
+def _relayna_view(path: Path) -> dict[str, Any]:
+    artifact = _json_or_default(path, {})
+    if not isinstance(artifact, dict) or not artifact:
+        return {"available": False, "tasks": []}
+    tasks = []
+    raw_tasks = artifact.get("tasks", [])
+    for item in raw_tasks if isinstance(raw_tasks, list) else []:
+        if not isinstance(item, dict):
+            continue
+        task_id = str(item.get("task_id") or "unassigned")
+        raw_events = item.get("events", [])
+        events = [
+            _relayna_event_view(event, task_id=task_id, sequence=index)
+            for index, event in enumerate(raw_events if isinstance(raw_events, list) else [], 1)
+            if isinstance(event, dict)
+        ]
+        if not events:
+            statuses = item.get("statuses", [])
+            events = [
+                {"sequence": index, "task_id": task_id, "status": str(status)}
+                for index, status in enumerate(
+                    statuses if isinstance(statuses, list | tuple) else [], 1
+                )
+            ]
+        tasks.append(
+            {
+                "task_id": task_id,
+                "iteration": item.get("iteration"),
+                "journey": item.get("journey"),
+                "terminal_status": item.get("terminal_status"),
+                "success": bool(item.get("success")),
+                "total_duration_ms": item.get("total_duration_ms"),
+                "event_count": int(_number(item.get("event_count")) or len(events)),
+                "events": events,
+                "error": item.get("error"),
+            }
+        )
+    return {
+        "available": True,
+        "success": bool(artifact.get("success")),
+        "task_count": int(_number(artifact.get("task_count")) or len(tasks)),
+        "tasks": tasks,
+    }
+
+
+def _relayna_event_view(event: dict[str, Any], *, task_id: str, sequence: int) -> dict[str, Any]:
+    safe = {"sequence": int(_number(event.get("sequence")) or sequence), "task_id": task_id}
+    for key in (
+        "status",
+        "stage",
+        "event",
+        "type",
+        "timestamp",
+        "progress",
+        "worker_id",
+        "reported_task_id",
+        "task_id_match",
+        "kind",
+    ):
+        value = event.get(key)
+        if isinstance(value, str | int | float | bool):
+            safe[key] = value
+    return safe
+
+
+def _workload_role(value: str) -> str:
+    return "Relayna worker" if value == "relayna_worker" else "API / target"
+
+
+def _string_values(value: Any) -> list[str]:
+    return [str(item) for item in value] if isinstance(value, list | tuple) else []
+
+
+def _number(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number != number or number in {float("inf"), float("-inf")}:
+        return None
+    return number
 
 
 def _service_name(run: dict[str, Any]) -> str:

@@ -1,6 +1,6 @@
 # Ampule Chamber
 
-Version: 1.6.0
+Version: 1.7.0
 
 Production-ready release for agent-driven reliability testing of Kubernetes
 services before production.
@@ -15,13 +15,11 @@ teams that need to answer:
 
 ## Release Status
 
-Ampule Chamber `1.6.0` adds reusable, editable control-plane scenarios and
-first-class multipart submissions to Relayna lifecycle journeys. Operators can
-import or save scenario definitions, attach multiple required or optional
-files, follow parent tasks through SSE, and retain safe scenario provenance and
-file digests in evidence. Imported faults remain disabled until explicitly
-selected, and existing JSON Relayna and HTTP multipart journeys remain
-compatible.
+Ampule Chamber `1.7.0` makes runtime evidence easier to review. The assessment
+UI shows Prometheus CPU, memory, and restart summaries for API and short-lived
+Relayna worker pods, plus a separate content-safe SSE feed for every admitted
+task. Concurrent VUs stay grouped by their admission task IDs, while worker
+correlation distinguishes exact task labels from run-window inference.
 
 ## What It Tests
 

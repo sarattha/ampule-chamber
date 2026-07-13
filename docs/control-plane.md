@@ -79,11 +79,11 @@ automatic matching is not possible.
 
 ![Discover a Service and its backing workload](assets/screenshots/control-plane-kubernetes/02-namespace-service-discovery.jpg)
 
-The default RBAC can read workloads, endpoints, events, logs, and create the pod
-port-forward subresource needed by traffic execution. It cannot delete pods or
-scale workloads. Set `rbac.allowFaults=true` only when controlled attach-mode
-faults are intended and the target workloads carry the Chamber allow-list label
-or annotation.
+The default RBAC can read workloads, endpoints, events, logs, and pod metrics,
+and create the pod port-forward subresource needed by traffic execution. It
+cannot delete pods or scale workloads. Set `rbac.allowFaults=true` only when
+controlled attach-mode faults are intended and the target workloads carry the
+Chamber allow-list label or annotation.
 
 ### Storage and upgrades
 
@@ -131,6 +131,26 @@ custom security/resource settings are needed.
 6. **Results:** review readiness, coverage, findings, timeline, registered
    evidence, resolved configuration, and agent output. Compare compatible runs
    or export HTML, Markdown, or JSON.
+
+### Runtime evidence in the assessment UI
+
+The Evidence tab turns `prometheus-memory.json` into per-pod cards for memory,
+CPU, restarts, and sample coverage. New attach assessments query the complete
+traffic window, so short-lived Relayna Job pods remain visible beside the API
+pod after they exit. Older point-in-time artifacts remain readable, but display
+CPU as unavailable because a cumulative CPU counter cannot be converted safely
+to a rate without a time range.
+
+Relayna assessments also show a separate feed card for every admitted task.
+Each card is keyed by the task ID returned from that submission and contains
+only the bounded, content-safe operational fields retained from its configured
+`/events/{task_id}` stream. Concurrent VUs therefore accumulate into separate
+task feeds instead of one shared stream.
+
+Worker pods are discovered by Job ownership, run-window start time, and service
+labels. When a worker exposes a task-ID label, the UI shows the exact task link.
+When it does not, the UI explicitly labels the worker as correlated to the run
+rather than claiming an unsupported task-level mapping.
 
 ## Exercise editor reference
 
