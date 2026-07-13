@@ -67,29 +67,14 @@ class ScenarioCatalog:
         replace: bool,
         validate_journeys: JourneyValidator,
     ) -> dict[str, Any]:
-        normalized = normalize_document(
-            document, source="user", validate_journeys=validate_journeys
-        )
-        if normalized["kind"] != "ChamberConfig":
-            raise ScenarioCatalogError("user scenarios must be saved as a ChamberConfig")
-        scenario_id = str(normalized["identity"]["id"])
+        payload, result = self._prepare_save(document, validate_journeys)
+        scenario_id = str(result["identity"]["id"])
         path = self._path("user", scenario_id)
         collision_message = (
             f"scenario {scenario_id!r} already exists; confirm replacement explicitly"
         )
         if path.exists() and not replace:
             raise FileExistsError(collision_message)
-        stored = dict(document)
-        scenario = dict(_mapping(stored.get("scenario")))
-        scenario.update(normalized["identity"])
-        scenario["source"] = "user"
-        scenario.pop("revision", None)
-        stored["scenario"] = scenario
-        revision = _revision(stored)
-        scenario["revision"] = revision
-        payload = yaml.safe_dump(stored, sort_keys=False)
-        if len(payload.encode()) > MAX_SCENARIO_BYTES:
-            raise ScenarioCatalogError("scenario document exceeds the 256 KiB limit")
         temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
         try:
             with temporary.open("x", encoding="utf-8") as stream:
@@ -105,9 +90,49 @@ class ScenarioCatalog:
                     raise FileExistsError(collision_message) from None
         finally:
             temporary.unlink(missing_ok=True)
+        return result
+
+    def prepare_save(
+        self,
+        document: dict[str, Any],
+        *,
+        replace: bool,
+        validate_journeys: JourneyValidator,
+    ) -> dict[str, Any]:
+        """Validate and preview the exact saved result without publishing it."""
+
+        _, result = self._prepare_save(document, validate_journeys)
+        scenario_id = str(result["identity"]["id"])
+        if self._path("user", scenario_id).exists() and not replace:
+            raise FileExistsError(
+                f"scenario {scenario_id!r} already exists; confirm replacement explicitly"
+            )
+        return result
+
+    def _prepare_save(
+        self,
+        document: dict[str, Any],
+        validate_journeys: JourneyValidator,
+    ) -> tuple[str, dict[str, Any]]:
+        normalized = normalize_document(
+            document, source="user", validate_journeys=validate_journeys
+        )
+        if normalized["kind"] != "ChamberConfig":
+            raise ScenarioCatalogError("user scenarios must be saved as a ChamberConfig")
+        stored = dict(document)
+        scenario = dict(_mapping(stored.get("scenario")))
+        scenario.update(normalized["identity"])
+        scenario["source"] = "user"
+        scenario.pop("revision", None)
+        stored["scenario"] = scenario
+        revision = _revision(stored)
+        scenario["revision"] = revision
+        payload = yaml.safe_dump(stored, sort_keys=False)
+        if len(payload.encode()) > MAX_SCENARIO_BYTES:
+            raise ScenarioCatalogError("scenario document exceeds the 256 KiB limit")
         result = normalize_document(stored, source="user", validate_journeys=validate_journeys)
         result["identity"]["revision"] = revision
-        return result
+        return payload, result
 
     def _path(self, source: str, scenario_id: str) -> Path:
         _validate_id(scenario_id)
@@ -220,6 +245,7 @@ def _scenario_projection(document: dict[str, Any]) -> dict[str, Any]:
     metadata = _mapping(document["metadata"])
     target = _mapping(_mapping(document["target"])["service"])
     traffic = _mapping(document["traffic"])
+    target_port = _first_service_port(target.get("ports"))
     body = traffic.get("body")
     journey: dict[str, Any] = {
         "name": str(metadata["id"]),
@@ -250,6 +276,7 @@ def _scenario_projection(document: dict[str, Any]) -> dict[str, Any]:
             "tags": list(metadata.get("tags", [])),
         },
         "targetService": str(target.get("name", "")),
+        "targetServicePort": target_port,
         "journeys": [journey],
         "recommendedFault": recommended,
         "configuredFaults": faults,
@@ -268,6 +295,10 @@ def _config_projection(document: dict[str, Any]) -> dict[str, Any]:
         scenario_id = f"{service['name']}-assessment"
     _validate_id(scenario_id)
     runtime = _mapping(document.get("runtime"))
+    traffic_access = _mapping(runtime.get("trafficAccess"))
+    target_port = traffic_access.get("servicePort")
+    if not isinstance(target_port, int) or isinstance(target_port, bool):
+        target_port = None
     faults = [
         str(item.get("type", "none"))
         for item in runtime.get("faults", [])
@@ -282,6 +313,7 @@ def _config_projection(document: dict[str, Any]) -> dict[str, Any]:
             "tags": list(scenario.get("tags", [])),
         },
         "targetService": str(service["name"]),
+        "targetServicePort": target_port,
         "journeys": list(traffic["journeys"]),
         "recommendedFault": recommended,
         "configuredFaults": faults,
@@ -290,6 +322,18 @@ def _config_projection(document: dict[str, Any]) -> dict[str, Any]:
         "origin": scenario.get("origin"),
         "warnings": [],
     }
+
+
+def _first_service_port(value: Any) -> int | None:
+    if not isinstance(value, list):
+        return None
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        port = item.get("port")
+        if isinstance(port, int) and not isinstance(port, bool) and 1 <= port <= 65535:
+            return port
+    return None
 
 
 def _validate_scenario_safety(document: dict[str, Any], journeys: list[dict[str, Any]]) -> None:

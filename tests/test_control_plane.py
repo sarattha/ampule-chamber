@@ -970,6 +970,110 @@ class ControlPlaneTests(unittest.TestCase):
                 'files = [{field: field(card, "fileField").value.trim(), uploadIndex}]', script
             )
 
+    def test_failed_plan_does_not_save_scenario_or_retain_uploaded_file(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workspace = root / ".chamber"
+            repo = _fixture_repo(root)
+            app = create_app(workspace)
+            with TestClient(app) as client:
+                client.get("/new")
+                csrf = str(client.cookies["ampule_csrf"])
+                journey = {
+                    "name": "failed-upload",
+                    "method": "POST",
+                    "path": "/upload",
+                    "expectedStatus": 202,
+                    "requestEncoding": "multipart",
+                    "multipart": {
+                        "fields": {"mode": "layout"},
+                        "files": [{"field": "file", "uploadIndex": 0}],
+                    },
+                    "vus": 1,
+                    "iterations": 1,
+                    "durationSeconds": 1,
+                }
+                with patch.object(app.state.chamber, "plan", side_effect=RuntimeError("forced")):
+                    failed = client.post(
+                        "/ui/plan",
+                        data={
+                            "_csrf": csrf,
+                            "repo": str(repo),
+                            "scenario_id": "failed-upload-save",
+                            "scenario_name": "Failed upload save",
+                            "save_scenario": "new",
+                            "journeys_json": json.dumps([journey]),
+                        },
+                        files={
+                            "journey_files": (
+                                "invoice.pdf",
+                                b"%PDF-1.7 test",
+                                "application/pdf",
+                            )
+                        },
+                    )
+                self.assertEqual(failed.status_code, 400)
+                self.assertIn("forced", failed.text)
+                self.assertEqual(
+                    client.get("/api/v1/scenarios/user/failed-upload-save").status_code,
+                    404,
+                )
+
+                with patch.object(
+                    app.state.scenarios,
+                    "save",
+                    side_effect=FileExistsError("simulated publish collision"),
+                ):
+                    publish_failed = client.post(
+                        "/ui/plan",
+                        data={
+                            "_csrf": csrf,
+                            "repo": str(repo),
+                            "scenario_id": "publish-collision",
+                            "scenario_name": "Publish collision",
+                            "save_scenario": "new",
+                        },
+                    )
+                self.assertEqual(publish_failed.status_code, 400)
+                self.assertIn("simulated publish collision", publish_failed.text)
+
+                existing = infer_config(repo)
+                existing["scenarioId"] = "existing-save"
+                existing["scenario"] = {
+                    "id": "existing-save",
+                    "name": "Existing save",
+                    "description": "Already published.",
+                    "tags": [],
+                    "source": "custom",
+                    "revision": "draft",
+                    "requiredSignals": [],
+                }
+                app.state.scenarios.save(
+                    existing,
+                    replace=False,
+                    validate_journeys=_ui_journeys,
+                )
+                with patch.object(app.state.chamber, "plan") as plan:
+                    existing_collision = client.post(
+                        "/ui/plan",
+                        data={
+                            "_csrf": csrf,
+                            "repo": str(repo),
+                            "scenario_id": "existing-save",
+                            "scenario_name": "Existing save",
+                            "save_scenario": "new",
+                        },
+                    )
+                self.assertEqual(existing_collision.status_code, 400)
+                self.assertIn("confirm replacement explicitly", existing_collision.text)
+                plan.assert_not_called()
+
+            self.assertFalse((workspace / "scenarios/failed-upload-save.yaml").exists())
+            self.assertFalse(list((workspace / "scenarios").glob("*.tmp")))
+            self.assertFalse(list((workspace / "uploads").glob("**/*")))
+            self.assertFalse(list((workspace / "drafts").glob("*.yaml")))
+            self.assertFalse(list((workspace / "runs").glob("*")))
+
     def test_wizard_preserves_optional_json_body_and_initializes_skipped_identity(self) -> None:
         script = (Path(__file__).parents[1] / "chamber/control_plane/static/app.js").read_text(
             encoding="utf-8"

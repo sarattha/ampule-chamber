@@ -843,6 +843,7 @@ def _plan_from_values(
             description=scenario_description.strip(),
             tags=tags,
             target_service=name,
+            target_service_port=service_port,
             journeys=cast(list[dict[str, Any]], traffic["journeys"]),
             required_signals=signals,
             agent_mode=agents_mode,
@@ -893,14 +894,31 @@ def _plan_from_values(
             raise ValueError("Scenario catalog is unavailable")
         if save_scenario == "replace" and replace_scenario != "confirmed":
             raise ValueError("Replacing a saved scenario requires explicit confirmation")
-        saved = catalog.save(
+        prepared = catalog.prepare_save(
             config,
             replace=save_scenario == "replace",
             validate_journeys=_ui_journeys,
         )
-        config["scenario"].update({"source": "user", "revision": saved["revision"]})
+        config["scenario"].update({"source": "user", "revision": prepared["revision"]})
     config_path = _write_draft(workspace, config)
-    return application.plan(config_path)
+    try:
+        run_dir = application.plan(config_path)
+    except Exception:
+        config_path.unlink(missing_ok=True)
+        raise
+    if save_scenario != "none":
+        assert catalog is not None
+        try:
+            catalog.save(
+                config,
+                replace=save_scenario == "replace",
+                validate_journeys=_ui_journeys,
+            )
+        except Exception:
+            shutil.rmtree(run_dir, ignore_errors=True)
+            config_path.unlink(missing_ok=True)
+            raise
+    return run_dir
 
 
 def _matching_user_scenario(
@@ -912,6 +930,7 @@ def _matching_user_scenario(
     description: str,
     tags: list[str],
     target_service: str,
+    target_service_port: int,
     journeys: list[dict[str, Any]],
     required_signals: list[str],
     agent_mode: str,
@@ -932,6 +951,7 @@ def _matching_user_scenario(
         and identity["description"] == description
         and identity["tags"] == tags
         and selected["targetService"] == target_service
+        and selected["targetServicePort"] in {None, target_service_port}
         and selected["journeys"] == journeys
         and selected["requiredSignals"] == required_signals
         and selected["agentMode"] == agent_mode

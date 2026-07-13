@@ -54,6 +54,7 @@ class ScenarioNormalizationTests(unittest.TestCase):
         self.assertEqual(normalized["identity"]["id"], "external-text-translation-001")
         self.assertEqual(normalized["journeys"][0]["path"], "/translations")
         self.assertEqual(normalized["journeys"][0]["requestEncoding"], "json")
+        self.assertEqual(normalized["targetServicePort"], 8887)
         self.assertEqual(normalized["recommendedFault"], "none")
         self.assertIn("queue_depth", normalized["requiredSignals"])
 
@@ -330,6 +331,10 @@ class ScenarioControlPlaneTests(unittest.TestCase):
                     apply_source.index('form.elements.fault_type.value = "none";'),
                     apply_source.index("projection.recommendedFault"),
                 )
+                self.assertIn(
+                    "form.elements.service_port.value = projection.targetServicePort;",
+                    apply_source,
+                )
                 csrf = str(client.cookies["ampule_csrf"])
                 headers = {"X-CSRF-Token": csrf}
 
@@ -357,6 +362,36 @@ class ScenarioControlPlaneTests(unittest.TestCase):
                     headers=headers,
                 )
                 self.assertEqual(imported.status_code, 200, imported.text)
+                imported_projection = imported.json()
+                self.assertEqual(imported_projection["targetServicePort"], 8887)
+                port_plan = client.post(
+                    "/ui/plan",
+                    data={
+                        "_csrf": csrf,
+                        "repo": str(EXAMPLE_REPO),
+                        "service_name": imported_projection["targetService"],
+                        "execution_mode": "kubernetes",
+                        "runtime_mode": "deploy",
+                        "kubernetes_context": "kind-ampule-chamber",
+                        "service_port": str(imported_projection["targetServicePort"]),
+                        "scenario_id": imported_projection["identity"]["id"],
+                        "scenario_name": imported_projection["identity"]["name"],
+                        "scenario_description": imported_projection["identity"]["description"],
+                        "scenario_tags": ", ".join(imported_projection["identity"]["tags"]),
+                        "scenario_source": "imported",
+                        "scenario_revision": imported_projection["revision"],
+                        "required_signals_json": json.dumps(imported_projection["requiredSignals"]),
+                        "agents_mode": imported_projection["agentMode"],
+                        "journeys_json": json.dumps(imported_projection["journeys"]),
+                    },
+                    follow_redirects=False,
+                )
+                self.assertEqual(port_plan.status_code, 303, port_plan.text)
+                port_run_id = port_plan.headers["location"].split("/")[2].split("?")[0]
+                port_config = yaml.safe_load(
+                    (workspace / "runs" / port_run_id / "chamber.yaml").read_text(encoding="utf-8")
+                )
+                self.assertEqual(port_config["runtime"]["trafficAccess"]["servicePort"], 8887)
                 denied = client.post(
                     "/api/v1/scenarios/validate",
                     json={"content": content},
@@ -407,6 +442,11 @@ class ScenarioControlPlaneTests(unittest.TestCase):
                         "scenario_source": "imported",
                         "scenario_revision": "source-revision",
                         "required_signals_json": json.dumps(["logs", "request_latency"]),
+                        "execution_mode": "kubernetes",
+                        "runtime_mode": "attach",
+                        "kubernetes_context": "kind-ampule-chamber",
+                        "namespace": "qa",
+                        "service_port": "8887",
                         "save_scenario": "new",
                         "journeys_json": json.dumps(
                             [
@@ -465,6 +505,11 @@ class ScenarioControlPlaneTests(unittest.TestCase):
                     "scenario_revision": user_projection["revision"],
                     "required_signals_json": json.dumps(user_projection["requiredSignals"]),
                     "agents_mode": user_projection["agentMode"],
+                    "execution_mode": "kubernetes",
+                    "runtime_mode": "attach",
+                    "kubernetes_context": "kind-ampule-chamber",
+                    "namespace": "qa",
+                    "service_port": str(user_projection["targetServicePort"]),
                     "journeys_json": json.dumps(user_projection["journeys"]),
                 }
                 direct_user = client.post(
@@ -496,6 +541,26 @@ class ScenarioControlPlaneTests(unittest.TestCase):
                 )
                 self.assertEqual(direct_user_metadata["scenario"]["source"], "user")
                 self.assertEqual(direct_user_run["scenario_source"], "user")
+
+                edited_port_data = dict(user_plan_data)
+                edited_port_data["service_port"] = "8888"
+                edited_port = client.post(
+                    "/ui/plan",
+                    data=edited_port_data,
+                    follow_redirects=False,
+                )
+                self.assertEqual(edited_port.status_code, 303, edited_port.text)
+                edited_port_id = edited_port.headers["location"].split("/")[2].split("?")[0]
+                edited_port_config = yaml.safe_load(
+                    (workspace / "runs" / edited_port_id / "chamber.yaml").read_text(
+                        encoding="utf-8"
+                    )
+                )
+                self.assertEqual(edited_port_config["scenario"]["source"], "derived")
+                self.assertEqual(
+                    edited_port_config["scenario"]["origin"],
+                    {"source": "user", "revision": user_projection["revision"]},
+                )
 
                 edited_user_data = dict(user_plan_data)
                 edited_user_journeys = json.loads(user_plan_data["journeys_json"])
