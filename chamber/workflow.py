@@ -14,6 +14,7 @@ from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
+from urllib.error import HTTPError
 from urllib.parse import urlencode, urlparse
 from urllib.request import urlopen
 
@@ -2156,10 +2157,40 @@ def _prometheus_query_url(prometheus_url: str, query: str) -> str:
 
 def _read_prometheus_payload(url: str) -> dict[str, Any]:
     # The URL is built by _prometheus_query_url, which rejects non-HTTP(S) schemes.
-    # fmt: off
-    with urlopen(url, timeout=10) as response:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected  # noqa: E501
-        # fmt: on
-        return json.loads(response.read().decode("utf-8"))
+    try:
+        # fmt: off
+        with urlopen(url, timeout=10) as response:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected  # noqa: E501
+            # fmt: on
+            return json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        try:
+            body = exc.read()
+        except OSError as read_error:
+            raise RuntimeError(
+                _prometheus_http_error_message(exc, "error response body could not be read")
+            ) from read_error
+        finally:
+            exc.close()
+        if not body:
+            raise RuntimeError(
+                _prometheus_http_error_message(exc, "error response body was empty")
+            ) from exc
+        try:
+            payload = json.loads(body)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            raise RuntimeError(
+                _prometheus_http_error_message(exc, "error response was not valid JSON")
+            ) from exc
+        if not isinstance(payload, dict):
+            raise RuntimeError(
+                _prometheus_http_error_message(exc, "error response was not a JSON object")
+            ) from exc
+        return payload
+
+
+def _prometheus_http_error_message(exc: HTTPError, detail: str) -> str:
+    reason = f" {exc.reason}" if exc.reason else ""
+    return f"Prometheus returned HTTP {exc.code}{reason}; {detail}"
 
 
 def _cleanup_kubernetes(

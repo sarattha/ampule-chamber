@@ -5,6 +5,7 @@ import socket
 import unittest
 from email.message import Message
 from html import unescape
+from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
@@ -97,6 +98,55 @@ class PrometheusQueryTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertIsNone(result["series_count"])
         self.assertEqual(result["error"], "bad_data: invalid parameter query")
+
+    def test_http_error_response_preserves_prometheus_backend_error(self) -> None:
+        response_body = BytesIO(
+            json.dumps(
+                {
+                    "status": "error",
+                    "errorType": "bad_data",
+                    "error": "invalid parameter query",
+                }
+            ).encode("utf-8")
+        )
+        error = HTTPError(
+            "http://prometheus.example/api/v1/query",
+            422,
+            "Unprocessable Entity",
+            Message(),
+            response_body,
+        )
+        with patch("chamber.workflow.urlopen", side_effect=error):
+            result = workflow._prometheus_query("http://prometheus.example", "bad query")
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"], "bad_data: invalid parameter query")
+        self.assertTrue(response_body.closed)
+
+    def test_http_error_with_unusable_body_preserves_http_diagnostic(self) -> None:
+        unusable_bodies = (
+            (b"", "error response body was empty"),
+            (b"<html>temporarily unavailable</html>", "error response was not valid JSON"),
+        )
+        for body, expected_detail in unusable_bodies:
+            with self.subTest(body=body):
+                response_body = BytesIO(body)
+                error = HTTPError(
+                    "http://prometheus.example/api/v1/query",
+                    503,
+                    "Service Unavailable",
+                    Message(),
+                    response_body,
+                )
+                with patch("chamber.workflow.urlopen", side_effect=error):
+                    result = workflow._prometheus_query("http://prometheus.example", "up")
+
+                self.assertFalse(result["ok"])
+                self.assertEqual(
+                    result["error"],
+                    f"Prometheus returned HTTP 503 Service Unavailable; {expected_detail}",
+                )
+                self.assertTrue(response_body.closed)
 
     def test_success_response_records_explicit_count_and_no_error(self) -> None:
         with patch(
