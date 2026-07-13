@@ -916,7 +916,12 @@ def render_report_from_run(run_dir: Path) -> Path:
     config = load_config(run_dir / "chamber.yaml", require_repo=False)
     plan = _read_json(run_dir / "plan.json")
     metadata = _read_json(run_dir / "run-metadata.json")
-    _finalize_guided_result(run_dir, config=config, metadata=metadata)
+    _finalize_guided_result(
+        run_dir,
+        config=config,
+        metadata=metadata,
+        record_event=False,
+    )
     report = _report_input(run_dir, config=config, plan=plan, metadata=metadata)
     report_path = run_dir / "report.md"
     report_path.write_text(render_markdown_report(report), encoding="utf-8")
@@ -3209,6 +3214,7 @@ def _finalize_guided_result(
     *,
     config: dict[str, Any],
     metadata: dict[str, Any],
+    record_event: bool = True,
 ) -> dict[str, Any]:
     refresh_evidence_manifest(run_dir)
     findings = analyze_guided_run(run_dir, config=config, metadata=metadata)
@@ -3224,16 +3230,17 @@ def _finalize_guided_result(
     run_record["result_status"] = result["status"]
     run_record["updated_at"] = datetime.now(UTC).isoformat()
     write_json_atomic(run_dir / "run.json", run_record)
-    append_run_event(
-        run_dir,
-        state=str(run_record.get("state", metadata.get("stage", "analyzing"))),
-        event_type="analysis_completed",
-        payload={
-            "result_status": result["status"],
-            "finding_count": result["finding_count"],
-            "evidence_coverage_percent": result["evidence_coverage_percent"],
-        },
-    )
+    if record_event:
+        append_run_event(
+            run_dir,
+            state=str(run_record.get("state", metadata.get("stage", "analyzing"))),
+            event_type="analysis_completed",
+            payload={
+                "result_status": result["status"],
+                "finding_count": result["finding_count"],
+                "evidence_coverage_percent": result["evidence_coverage_percent"],
+            },
+        )
     return result
 
 

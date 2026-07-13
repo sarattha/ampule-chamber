@@ -134,11 +134,21 @@ class PrometheusEvidenceGateTests(unittest.TestCase):
         for change in changed_queries:
             with self.subTest(change=change), TemporaryDirectory() as tmp:
                 run_dir = _reportable_result_run(Path(tmp))
+                config = workflow.load_config(run_dir / "chamber.yaml", require_repo=False)
+                metadata = json.loads((run_dir / "run-metadata.json").read_text(encoding="utf-8"))
+                workflow._finalize_guided_result(run_dir, config=config, metadata=metadata)
+                analysis_event_count = _event_count(run_dir, "analysis_completed")
+                self.assertEqual(analysis_event_count, 1)
+
                 workflow.render_report_from_run(run_dir)
                 ready = json.loads((run_dir / "result.json").read_text(encoding="utf-8"))
                 self.assertEqual(ready["status"], "ready")
                 self.assertTrue(ready["conclusive"])
                 self.assertEqual(ready["evidence_coverage_percent"], 100)
+                self.assertEqual(
+                    _event_count(run_dir, "analysis_completed"),
+                    analysis_event_count,
+                )
 
                 _write_prometheus_artifact(run_dir, **change)
                 workflow.render_report_from_run(run_dir)
@@ -149,6 +159,10 @@ class PrometheusEvidenceGateTests(unittest.TestCase):
                 self.assertIsNone(recomputed["readiness_score"])
                 self.assertEqual(recomputed["evidence_coverage_percent"], 75)
                 self.assertIn("prometheus-memory", recomputed["missing_evidence_ids"])
+                self.assertEqual(
+                    _event_count(run_dir, "analysis_completed"),
+                    analysis_event_count,
+                )
 
     def test_cli_selected_prometheus_is_required_from_run_metadata(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -397,6 +411,14 @@ def _successful_query(query: str = "up") -> dict[str, object]:
 def _stored_promql(name: str) -> str:
     return (
         f'{name}{{namespace="chamber-test",pod=~"example-service-abc123|example-service-def456"}}'
+    )
+
+
+def _event_count(run_dir: Path, event_type: str) -> int:
+    events_path = run_dir / "events.jsonl"
+    return sum(
+        json.loads(line)["event_type"] == event_type
+        for line in events_path.read_text(encoding="utf-8").splitlines()
     )
 
 
