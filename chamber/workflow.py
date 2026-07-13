@@ -1485,15 +1485,20 @@ def _k6_script_for_journeys(journeys: tuple[dict[str, Any], ...], *, base_url: s
                         item,
                         "traffic.journeys[].multipart.files[]",
                     )
+                    path = file_item.get("path")
+                    if not path:
+                        if file_item.get("required", True):
+                            raise WorkflowError(
+                                "required HTTP multipart files must provide a readable path"
+                            )
+                        continue
                     source_key = f"{function_name}_file_{file_index}"
-                    file_sources[source_key] = str(file_item["path"])
+                    file_sources[source_key] = str(path)
                     multipart_files.append(
                         {
                             "field": str(file_item["field"]),
                             "sourceKey": source_key,
-                            "filename": str(
-                                file_item.get("filename") or Path(str(file_item["path"])).name
-                            ),
+                            "filename": str(file_item.get("filename") or Path(str(path)).name),
                             "contentType": str(
                                 file_item.get("contentType") or "application/octet-stream"
                             ),

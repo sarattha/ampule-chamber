@@ -279,7 +279,7 @@ def _execute_task(
         success = False
         error = str(exc)
         if isinstance(exc, RelaynaTimeoutError) or (
-            failure_stage == "sse_connection" and _looks_like_timeout(exc)
+            failure_stage in {"admission", "sse_connection"} and _looks_like_timeout(exc)
         ):
             failure_stage = "timeout"
     total_duration_ms = round((time.monotonic() - started) * 1000, 3)

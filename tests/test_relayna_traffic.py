@@ -569,6 +569,16 @@ class RelaynaTrafficTests(unittest.TestCase):
                 )
                 self.assertEqual(summary["tasks"][0]["failure_stage"], expected_stage)
 
+        def admission_timeout(request: Any, *, timeout: int) -> _Response:
+            del request
+            raise TimeoutError(f"admission timed out after {timeout}s")
+
+        summary = execute_relayna_journeys(
+            (_journey(),), base_url="http://service", opener=admission_timeout
+        )
+        self.assertIn("admission timed out", summary["tasks"][0]["error"])
+        self.assertEqual(summary["tasks"][0]["failure_stage"], "timeout")
+
         def stream_failure(request: Any, *, timeout: int) -> _Response:
             del timeout
             if request.method == "POST":

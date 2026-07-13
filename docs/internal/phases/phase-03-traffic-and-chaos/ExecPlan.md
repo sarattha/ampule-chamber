@@ -71,3 +71,7 @@ through SSE, and produce content-safe lifecycle evidence.
   request paths green while adding success, optional-file, serialization,
   containment, symlink, empty-file, content-type, request-size, timeout, and
   all lifecycle failure-stage cases for multipart Relayna.
+- The first PR review identified two cross-path edge cases. HTTP/k6 generation
+  now omits pathless optional multipart rows, and timeout-like admission POST
+  failures now use the same `timeout` evidence stage as SSE timeouts. Focused
+  regression tests and the complete `make check` gate passed after both fixes.

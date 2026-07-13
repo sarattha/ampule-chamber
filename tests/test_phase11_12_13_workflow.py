@@ -1157,7 +1157,11 @@ class Phase13OneCommandAssessmentTests(unittest.TestCase):
                                     "path": str(upload),
                                     "filename": "invoice.pdf",
                                     "contentType": "application/pdf",
-                                }
+                                },
+                                {
+                                    "field": "roi",
+                                    "required": False,
+                                },
                             ],
                         },
                         "iterations": 1,
@@ -1188,6 +1192,7 @@ class Phase13OneCommandAssessmentTests(unittest.TestCase):
         self.assertIn(f"open({json.dumps(str(upload))}, 'b')", script)
         self.assertIn("http.file(", script)
         self.assertIn('"field": "file"', script)
+        self.assertNotIn('"field": "roi"', script)
         self.assertIn("application/x-www-form-urlencoded", script)
         self.assertIn("'Content-Type': journey.contentType", script)
 
