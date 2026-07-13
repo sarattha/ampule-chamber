@@ -74,10 +74,11 @@ class ScenarioCatalog:
             raise ScenarioCatalogError("user scenarios must be saved as a ChamberConfig")
         scenario_id = str(normalized["identity"]["id"])
         path = self._path("user", scenario_id)
+        collision_message = (
+            f"scenario {scenario_id!r} already exists; confirm replacement explicitly"
+        )
         if path.exists() and not replace:
-            raise FileExistsError(
-                f"scenario {scenario_id!r} already exists; confirm replacement explicitly"
-            )
+            raise FileExistsError(collision_message)
         stored = dict(document)
         scenario = dict(_mapping(stored.get("scenario")))
         scenario.update(normalized["identity"])
@@ -90,8 +91,20 @@ class ScenarioCatalog:
         if len(payload.encode()) > MAX_SCENARIO_BYTES:
             raise ScenarioCatalogError("scenario document exceeds the 256 KiB limit")
         temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
-        temporary.write_text(payload, encoding="utf-8")
-        os.replace(temporary, path)
+        try:
+            with temporary.open("x", encoding="utf-8") as stream:
+                stream.write(payload)
+                stream.flush()
+                os.fsync(stream.fileno())
+            if replace:
+                os.replace(temporary, path)
+            else:
+                try:
+                    os.link(temporary, path)
+                except FileExistsError:
+                    raise FileExistsError(collision_message) from None
+        finally:
+            temporary.unlink(missing_ok=True)
         result = normalize_document(stored, source="user", validate_journeys=validate_journeys)
         result["identity"]["revision"] = revision
         return result

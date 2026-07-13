@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from threading import Barrier
 from typing import Any
+from unittest.mock import patch
 
 import yaml
 from fastapi.testclient import TestClient
@@ -224,6 +228,47 @@ class ScenarioCatalogPersistenceTests(unittest.TestCase):
             self.assertEqual(sources, {"bundled", "user"})
             with self.assertRaises(ScenarioCatalogError):
                 restarted.read("user", "../escape", _ui_journeys)
+
+    def test_concurrent_non_replacing_saves_publish_exactly_one_document(self) -> None:
+        with TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            catalog = ScenarioCatalog(workspace, BUNDLED)
+            first = _config("concurrent-health")
+            first["scenario"]["description"] = "First contender"
+            second = _config("concurrent-health")
+            second["scenario"]["description"] = "Second contender"
+            publish_barrier = Barrier(2)
+            real_link = os.link
+
+            def synchronized_link(source: str | Path, destination: str | Path) -> None:
+                publish_barrier.wait(timeout=5)
+                real_link(source, destination)
+
+            def save(document: dict[str, Any]) -> tuple[str, str]:
+                try:
+                    result = catalog.save(
+                        document,
+                        replace=False,
+                        validate_journeys=_ui_journeys,
+                    )
+                except FileExistsError as exc:
+                    return "collision", str(exc)
+                return "saved", str(result["identity"]["description"])
+
+            with (
+                patch("chamber.control_plane.scenarios.os.link", side_effect=synchronized_link),
+                ThreadPoolExecutor(max_workers=2) as executor,
+            ):
+                outcomes = list(executor.map(save, (first, second)))
+
+            saved = [value for status, value in outcomes if status == "saved"]
+            collisions = [value for status, value in outcomes if status == "collision"]
+            self.assertEqual(len(saved), 1)
+            self.assertEqual(len(collisions), 1)
+            self.assertIn("confirm replacement explicitly", collisions[0])
+            loaded = catalog.read("user", "concurrent-health", _ui_journeys)
+            self.assertEqual(loaded["identity"]["description"], saved[0])
+            self.assertFalse(list((workspace / "scenarios").glob("*.tmp")))
 
     def test_catalog_skips_invalid_documents_and_rejects_invalid_operations(self) -> None:
         with TemporaryDirectory() as tmp:
