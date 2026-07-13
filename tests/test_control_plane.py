@@ -823,10 +823,14 @@ class ControlPlaneTests(unittest.TestCase):
             root = Path(tmp)
             workspace = root / ".chamber"
             repo = _fixture_repo(root)
-            invoice = root / "invoice.pdf"
-            mask = root / "mask.png"
+            managed_uploads = workspace / "uploads" / "fixture"
+            managed_uploads.mkdir(parents=True)
+            invoice = managed_uploads / "invoice.pdf"
+            mask = managed_uploads / "mask.png"
+            outside = root / "outside.pdf"
             invoice.write_bytes(b"%PDF")
             mask.write_bytes(b"PNG")
+            outside.write_bytes(b"outside")
             config = infer_config(repo)
             config["scenarioId"] = "saved-multipart"
             config["scenario"] = {
@@ -872,6 +876,42 @@ class ControlPlaneTests(unittest.TestCase):
                 imported_files = imported.json()["journeys"][0]["multipart"]["files"]
                 self.assertTrue(all(item.get("pathToken") for item in imported_files))
 
+                traversal = workspace / "uploads" / ".." / ".." / outside.name
+                symlink_escape = workspace / "uploads" / "escape.pdf"
+                untrusted_paths = [outside, traversal]
+                try:
+                    symlink_escape.symlink_to(outside)
+                    untrusted_paths.append(symlink_escape)
+                except OSError:
+                    pass
+                for untrusted_path in untrusted_paths:
+                    untrusted = json.loads(json.dumps(config))
+                    untrusted["traffic"]["journeys"][0]["multipart"]["files"] = [
+                        {
+                            "field": "file",
+                            "path": str(untrusted_path),
+                            "pathToken": "attacker-supplied",
+                        }
+                    ]
+                    validated = client.post(
+                        "/api/v1/scenarios/validate",
+                        json={"content": yaml.safe_dump(untrusted)},
+                        headers=headers,
+                    )
+                    self.assertEqual(validated.status_code, 200, validated.text)
+                    validated_file = validated.json()["journeys"][0]["multipart"]["files"][0]
+                    self.assertNotIn("pathToken", validated_file)
+                    rejected_untrusted = client.post(
+                        "/ui/plan",
+                        data={
+                            "_csrf": csrf,
+                            "repo": str(repo),
+                            "journeys_json": json.dumps(validated.json()["journeys"]),
+                        },
+                    )
+                    self.assertEqual(rejected_untrusted.status_code, 400)
+                    self.assertIn("require a browser upload", rejected_untrusted.text)
+
                 saved = client.post(
                     "/api/v1/scenarios",
                     json={"document": config},
@@ -903,8 +943,8 @@ class ControlPlaneTests(unittest.TestCase):
                 self.assertEqual(
                     planned_files,
                     [
-                        {"field": "file", "path": str(invoice)},
-                        {"field": "mask", "path": str(mask)},
+                        {"field": "file", "path": str(invoice.resolve())},
+                        {"field": "mask", "path": str(mask.resolve())},
                     ],
                 )
 
