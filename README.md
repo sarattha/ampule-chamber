@@ -15,11 +15,12 @@ teams that need to answer:
 
 ## Release Status
 
-Ampule Chamber `1.6.0` adds first-class multipart submissions to Relayna
-lifecycle journeys. Operators can attach multiple required or optional files,
-serialize scalar and explicit JSON form fields, follow the configured parent
-task through its SSE terminal state, and retain only safe file metadata and
-digests in evidence. Existing JSON Relayna and HTTP multipart journeys remain
+Ampule Chamber `1.6.0` adds reusable, editable control-plane scenarios and
+first-class multipart submissions to Relayna lifecycle journeys. Operators can
+import or save scenario definitions, attach multiple required or optional
+files, follow parent tasks through SSE, and retain safe scenario provenance and
+file digests in evidence. Imported faults remain disabled until explicitly
+selected, and existing JSON Relayna and HTTP multipart journeys remain
 compatible.
 
 ## What It Tests

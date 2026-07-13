@@ -1,0 +1,99 @@
+apiVersion: chamber.ampule.dev/v1alpha1
+kind: Scenario
+metadata:
+  id: retry-storm-001
+  name: Retry storm during dependency errors
+  description: Inject downstream 500 and 429 responses to detect retry amplification, worker saturation, and queue growth.
+  owner: platform-reliability
+  tags:
+    - dependency
+    - retry
+    - cascade
+target:
+  service:
+    name: sample-service
+    image: ampule/sample-service:local
+    ports:
+      - name: http
+        port: 8080
+    healthEndpoint: /healthz
+    readinessEndpoint: /readyz
+  runtime:
+    provider: docker
+    composeFile: examples/sample-service/docker-compose.yml
+environment:
+  provider: docker
+  namespace: chamber-local
+  replicas: 1
+  resources:
+    cpuRequest: 250m
+    cpuLimit: "1"
+    memoryRequest: 128Mi
+    memoryLimit: 512Mi
+  dependencies:
+    - name: downstream-api
+      type: http
+      required: true
+      endpoint: http://downstream-api:8081
+baseline:
+  checks:
+    - type: readiness_http_200
+      description: Target readiness endpoint returns HTTP 200 before retry stress.
+    - type: dependency_probe
+      description: Downstream dependency accepts normal requests before injected errors.
+traffic:
+  tool: k6
+  entrypoint: /dependency
+  stages:
+    - duration: 2m
+      targetVus: 25
+    - duration: 5m
+      targetVus: 75
+    - duration: 3m
+      targetVus: 25
+faults:
+  - type: dependency_errors
+    description: downstream-api returns HTTP 500 for half of requests during active load.
+    target: downstream-api
+    startAfter: 2m
+    duration: 90s
+    errorRatePercent: 50
+  - type: dependency_rate_limit
+    description: downstream-api returns HTTP 429 for one minute after the 500 burst.
+    target: downstream-api
+    startAfter: 4m
+    duration: 60s
+    errorRatePercent: 50
+observability:
+  signals:
+    - dependency_health
+    - request_latency
+    - error_rate
+    - queue_depth
+    - memory_usage
+    - cpu_usage
+    - logs
+    - traces
+failureConditions:
+  - type: retry_amplification
+    description: Target emits more downstream attempts than inbound requests by an unsafe factor.
+    thresholdRatio: 3
+  - type: queue_backlog_not_draining
+    description: Queue depth does not return to baseline after dependency errors stop.
+  - type: error_rate_above_percent
+    description: Target service error rate remains above 5 percent after dependency recovery.
+    threshold: 5
+successConditions:
+  - type: queue_backlog_drains_within
+    description: Queue backlog returns to baseline within 2 minutes after injected errors stop.
+    threshold: 2m
+  - type: error_rate_below_percent
+    description: Recovered error rate remains below 1 percent.
+    threshold: 1
+  - type: recovery_time_below
+    description: Retry volume returns to normal within 2 minutes.
+    threshold: 2m
+safety:
+  maxDuration: 15m
+  maxVirtualUsers: "75"
+  productionContextAllowed: false

@@ -2,8 +2,8 @@
 
 ## 1.6.0 - 2026-07-13
 
-Ampule Chamber `1.6.0` brings file and image submissions into the Relayna
-task-lifecycle adapter.
+Ampule Chamber `1.6.0` adds reusable, editable control-plane scenarios and
+brings file and image submissions into the Relayna task-lifecycle adapter.
 
 Highlights:
 
@@ -15,6 +15,28 @@ Highlights:
 - Record only filenames, content types, sizes, field names, and SHA-256 digests
   in evidence and reports.
 - Configure and review multi-file Relayna journeys in the control-plane UI.
+- Choose bundled or durable workspace scenarios with metadata, compatibility
+  warnings, search, and adapter or fault filtering.
+- Import validated `Scenario` or `ChamberConfig` YAML/JSON and resolve it into
+  the existing editable exercise fields before planning.
+- Create custom scenario identities and safely save or explicitly replace user
+  scenarios on the configured workspace/PVC.
+- Preserve scenario ID, source, and content revision in run metadata while
+  keeping all imported faults disabled until an operator selects them.
+
+## 1.5.3 - 2026-07-13
+
+Ampule Chamber `1.5.3` makes Prometheus-backed readiness scoring evidence-safe.
+
+Highlights:
+
+- Require non-empty series from every required Prometheus query before metrics
+  can contribute to a readiness score.
+- Keep failed and empty queries available as diagnostic artifacts while marking
+  the related evidence inconclusive.
+- Query every selected workload pod with a safely escaped PromQL alternation.
+- Show query text, labels, values, timestamps, and artifact references in the
+  generated reliability report.
 
 ## 1.5.2 - 2026-07-12
 

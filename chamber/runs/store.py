@@ -89,6 +89,10 @@ def sync_run_record(run_dir: Path, metadata: dict[str, Any]) -> dict[str, Any]:
             "success": metadata.get("success"),
             "cleanup_performed": metadata.get("cleanup_performed"),
             "error": metadata.get("error"),
+            "scenario_id": _mapping(metadata.get("scenario")).get("id"),
+            "scenario_source": _mapping(metadata.get("scenario")).get("source"),
+            "scenario_revision": _mapping(metadata.get("scenario")).get("revision"),
+            "scenario_origin": _mapping(metadata.get("scenario")).get("origin"),
         }
     )
     write_json_atomic(run_dir / "run.json", current)
@@ -213,6 +217,10 @@ def read_json_value(path: Path) -> Any:
     """Read any JSON value from disk."""
 
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _mapping(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
 
 
 class RunIndex:

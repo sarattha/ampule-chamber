@@ -87,8 +87,8 @@ or annotation.
 
 ### Storage and upgrades
 
-The PVC stores `runs.db`, plans, run metadata, logs, evidence, reports, and
-exports under `/data/.chamber`. The Deployment deliberately uses one replica
+The PVC stores `runs.db`, plans, run metadata, logs, evidence, reports, exports,
+and user-created scenarios under `/data/.chamber`. The Deployment deliberately uses one replica
 and a `Recreate` strategy because the current job manager is in-memory and the
 SQLite index is PVC-backed. Configure `persistence.storageClass`,
 `persistence.size`, or `persistence.existingClaim` to fit the cluster. Database
@@ -114,7 +114,9 @@ custom security/resource settings are needed.
 2. **Environment:** choose a local artifact assessment, isolated Kubernetes
    deploy, or attach to an existing non-production namespace. Live runs require
    an explicit context.
-3. **Exercise:** add one or more HTTP or Relayna traffic journeys. Each journey
+3. **Exercise:** build a custom scenario, select a bundled or workspace
+   scenario, or import supported YAML/JSON. Every selection populates the same
+   editable fields before review. Add one or more HTTP or Relayna traffic journeys. Each journey
    has its own method, path, expected HTTP status, body, and load model. HTTP
    journeys support reusable profiles, custom stages, or fixed iterations;
    Relayna journeys additionally configure task ID extraction, SSE terminal
@@ -137,6 +139,35 @@ above the journey list apply to the whole assessment; each Traffic journey card
 becomes one entry in `traffic.journeys`. Use **Add traffic** to add another
 journey. Journeys execute sequentially and retain separate k6 tags, request
 configuration, expected response, and load schedule.
+
+### Scenario source and identity
+
+**Build custom** preserves the original guided workflow. **Select saved
+scenario** searches bundled examples and durable workspace scenarios, with
+adapter and fault-profile filters plus metadata for journeys, maximum VUs,
+duration, faults, signals, tags, and revision. **Import scenario** accepts YAML
+or JSON as either the existing `Scenario` contract or a complete
+`ChamberConfig`. See [Scenario Contracts](scenarios.md) for the exact
+normalization, validation, storage, and provenance rules.
+
+Selection or import replaces the current journey cards with editable resolved
+values. Review the target compatibility warning, paths, bodies, load model,
+Relayna lifecycle settings, follow-up checks, required telemetry, and agent
+mode. A configured fault remains disabled until it is explicitly chosen in the
+fault template field.
+
+Scenario ID, name, description, and comma-separated tags are editable for every
+source. Choose **Save as new** to add the resolved full `ChamberConfig` to the
+workspace catalog. Replacement is limited to user scenarios and requires the
+confirmation checkbox; bundled examples are never overwritten.
+
+The versioned API exposes:
+
+- `GET /api/v1/scenarios` for catalog metadata;
+- `GET /api/v1/scenarios/{source}/{id}` for one normalized editable scenario;
+- `POST /api/v1/scenarios/validate` for bounded YAML/JSON validation;
+- `POST /api/v1/scenarios` for atomic creation or explicitly confirmed
+  replacement.
 
 ### Assessment settings
 

@@ -14,6 +14,14 @@ All notable changes to Ampule Chamber are documented in this file.
   reports without persisting file bytes or paths in lifecycle summaries.
 - Added multi-file Relayna controls and Review-step metadata to the control
   plane, backed by workspace-contained durable uploads.
+- Added a reusable scenario catalog to the control-plane Exercise step with
+  bundled and durable workspace scenarios, metadata previews, search, adapter
+  and fault filters, editable loading, and custom scenario identity fields.
+- Added server-validated YAML/JSON import for supported `Scenario` and
+  `ChamberConfig` documents plus save-as-new and explicitly confirmed user
+  scenario replacement.
+- Recorded scenario ID, source, and content revision in generated configs and
+  durable run metadata.
 
 ### Changed
 
@@ -21,11 +29,30 @@ All notable changes to Ampule Chamber are documented in this file.
   existing JSON Relayna and HTTP multipart behavior.
 - Multipart lifecycle failures now identify admission, task-ID extraction, SSE
   connection, timeout, or terminal-status stages.
+- Selected and imported scenarios now populate the existing journey editor and
+  safety review; configured faults remain disabled until explicitly selected.
 
 ### Documentation
 
 - Added single-file OCR and multi-file extraction ChamberConfig examples,
   serialization rules, supported content types, limits, and evidence behavior.
+- Documented supported scenario formats, catalog storage, import validation,
+  persistence, provenance, and the reviewed control-plane workflow.
+
+## 1.5.3 - 2026-07-13
+
+### Fixed
+
+- Prometheus verification now distinguishes reachable queries from queries that
+  return usable time-series evidence. Required zero-series or failed queries
+  keep the assessment inconclusive instead of awarding an unsupported score.
+- Multi-pod PromQL selectors now preserve regex alternation and escape pod names
+  safely, so evidence is collected for every selected workload pod.
+
+### Documentation
+
+- Documented the Prometheus query artifact schema, evidence sufficiency rules,
+  failure diagnostics, and a real Prometheus validation run.
 
 ## 1.5.2 - 2026-07-12
 

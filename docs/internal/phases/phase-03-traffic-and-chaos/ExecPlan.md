@@ -20,6 +20,8 @@ through SSE, and produce content-safe lifecycle evidence.
       coverage.
 - [x] Document single-file OCR and multi-file extraction examples.
 - [x] Validate in a real environment and record acceptance evidence.
+- [x] Reconcile the feature with the reusable scenario catalog and Prometheus
+      evidence changes merged to `main` before final integration.
 
 ## Evaluation Metrics
 
@@ -41,6 +43,9 @@ through SSE, and produce content-safe lifecycle evidence.
 - Keep the existing `task_id` uniqueness behavior for multipart fields.
 - Use 128 MiB per-file and 256 MiB total-request hard limits, with optional
   lower positive limits in each journey.
+- Preserve the scenario catalog's signed managed-upload tokens per multipart
+  row so reusable scenarios can retain trusted files without weakening the
+  browser-upload boundary or collapsing the multi-file model.
 
 ## Surprises And Blockers
 
@@ -50,7 +55,7 @@ through SSE, and produce content-safe lifecycle evidence.
 
 ## Acceptance Evidence
 
-- `make check` passed on 2026-07-13: format, lint, type checking, 181 unit
+- `make check` passed on 2026-07-13: format, lint, type checking, 217 unit
   and workflow tests, 90% combined branch/line coverage, 10 scenario files,
   deployment and release metadata validation at `1.6.0`, strict MkDocs build,
   and wheel/source-distribution builds.
@@ -75,3 +80,7 @@ through SSE, and produce content-safe lifecycle evidence.
   now omits pathless optional multipart rows, and timeout-like admission POST
   failures now use the same `timeout` evidence stage as SSE timeouts. Focused
   regression tests and the complete `make check` gate passed after both fixes.
+- The final `main` integration retained scenario catalog selection/import,
+  signed reusable file paths, Prometheus report sections, and the complete
+  required/optional multipart row lifecycle. The combined focused suite passed
+  91 control-plane, catalog, Relayna, and workflow tests.

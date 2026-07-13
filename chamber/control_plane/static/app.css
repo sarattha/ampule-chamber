@@ -104,6 +104,7 @@ input::placeholder { color: #99a49d; }
 .form-panel > label:not(:first-of-type) { margin-top: 22px; }
 .help { margin: 7px 0 0; color: var(--muted); font-size: .72rem; line-height: 1.45; }
 .mode-grid { display: grid; grid-template-columns: repeat(2,1fr); gap: 12px; margin-bottom: 16px; }
+.scenario-source-grid { grid-template-columns: repeat(3,1fr); }
 .mode-card { position: relative; display: flex; flex-direction: column; min-height: 112px; padding: 18px 18px 17px 48px; border: 1px solid var(--line); border-radius: 12px; background: white; cursor: pointer; }
 .mode-card input { position: absolute; top: 13px; left: 15px; width: 18px; height: 18px; }
 .mode-card strong { font-size: .88rem; }
@@ -115,6 +116,15 @@ input::placeholder { color: #99a49d; }
 .field-note strong { font-size: .78rem; }
 .field-note span { margin-top: 4px; color: var(--muted); font-size: .7rem; }
 .exercise-settings { align-items: start; }
+.scenario-section { margin-bottom: 26px; }
+.scenario-picker { display: grid; gap: 16px; margin-bottom: 12px; }
+.scenario-identity { margin: 16px 0; }
+.scenario-identity .wide-field { grid-column: 1 / -1; }
+.scenario-status { min-height: 20px; margin: 10px 2px; color: var(--muted); font-size: .75rem; line-height: 1.5; }
+.scenario-status.error { color: var(--red); }
+.scenario-status.warning { color: #8a5b0b; }
+.scenario-metadata { min-height: 62px; padding: 13px 14px; border: 1px dashed #cbd8cf; border-radius: 9px; color: var(--muted); font-size: .73rem; line-height: 1.55; white-space: pre-line; }
+.inline-check { width: auto; height: auto; margin: 8px 7px 0 0; }
 .journey-editor { margin-top: 26px; }
 .section-heading, .journey-heading { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
 .section-heading { margin-bottom: 14px; }
@@ -214,5 +224,5 @@ details { border-top: 1px solid var(--line); } summary { padding: 14px 0; cursor
   .app-shell { grid-template-columns: 1fr; }.sidebar { display: flex; gap: 5px; overflow-x: auto; position: sticky; top: 64px; z-index: 15; padding: 9px 14px; border-right: 0; border-bottom: 1px solid var(--line); }.nav-item { white-space: nowrap; margin: 0; }.nav-divider,.nav-label,.nav-muted { display: none; }.main { padding: 28px 20px 60px; }.result-grid,.live-grid,.report-layout { grid-template-columns: 1fr; }.page-heading.split { flex-direction: column; }.action-row { justify-content: flex-start; }.review-grid,.comparison-grid { grid-template-columns: 1fr; }.compare-form { grid-template-columns: 1fr; }.compare-form > span { display: none; }
 }
 @media (max-width: 620px) {
-  .topbar { padding: 0 16px; }.topbar-status { font-size: 0; }.wizard-steps { gap: 3px; }.wizard-step { flex-direction: column; align-items: flex-start; }.mode-grid,.form-grid,.review-grid,.multipart-file-row { grid-template-columns: 1fr; }.multipart-file-heading { align-items: flex-start; flex-direction: column; }.wizard-panel { min-height: auto; }.wizard-actions { position: sticky; bottom: 0; margin: 24px -20px -60px; padding: 14px 20px 18px; background: rgba(246,248,245,.96); backdrop-filter: blur(10px); }.wizard-actions .subtle { display: none; }.timeline li { grid-template-columns: 1fr; gap: 6px; }.table-card { margin: 0 -10px; border-radius: 10px; }.card-heading { padding: 0 15px; }td,th { padding-left: 14px; padding-right: 14px; }
+  .topbar { padding: 0 16px; }.topbar-status { font-size: 0; }.wizard-steps { gap: 3px; }.wizard-step { flex-direction: column; align-items: flex-start; }.mode-grid,.form-grid,.review-grid,.scenario-source-grid,.multipart-file-row { grid-template-columns: 1fr; }.multipart-file-heading { align-items: flex-start; flex-direction: column; }.wizard-panel { min-height: auto; }.wizard-actions { position: sticky; bottom: 0; margin: 24px -20px -60px; padding: 14px 20px 18px; background: rgba(246,248,245,.96); backdrop-filter: blur(10px); }.wizard-actions .subtle { display: none; }.timeline li { grid-template-columns: 1fr; gap: 6px; }.table-card { margin: 0 -10px; border-radius: 10px; }.card-heading { padding: 0 15px; }td,th { padding-left: 14px; padding-right: 14px; }
 }

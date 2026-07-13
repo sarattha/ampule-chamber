@@ -1,0 +1,80 @@
+apiVersion: chamber.ampule.dev/v1alpha1
+kind: Scenario
+metadata:
+  id: baseline-health-001
+  name: Baseline health and readiness
+  description: Confirm the target service starts, responds, emits telemetry, and remains stable without injected faults.
+  owner: platform-reliability
+  tags:
+    - baseline
+    - docker-first
+target:
+  service:
+    name: sample-service
+    image: ampule/sample-service:local
+    ports:
+      - name: http
+        port: 8080
+    healthEndpoint: /healthz
+    readinessEndpoint: /readyz
+  runtime:
+    provider: docker
+    composeFile: examples/sample-service/docker-compose.yml
+environment:
+  provider: docker
+  namespace: chamber-local
+  replicas: 1
+  resources:
+    cpuRequest: 100m
+    cpuLimit: "1"
+    memoryRequest: 128Mi
+    memoryLimit: 256Mi
+  dependencies: []
+baseline:
+  checks:
+    - type: container_running
+      description: Service container is running before traffic begins.
+    - type: readiness_http_200
+      description: Readiness endpoint returns HTTP 200.
+    - type: health_http_200
+      description: Health endpoint returns HTTP 200.
+traffic:
+  tool: k6
+  entrypoint: /healthz
+  stages:
+    - duration: 1m
+      targetVus: 1
+    - duration: 1m
+      targetVus: 5
+    - duration: 1m
+      targetVus: 0
+faults:
+  - type: none
+    description: No fault is injected during the baseline scenario.
+observability:
+  signals:
+    - pod_status
+    - kubernetes_events
+    - container_restarts
+    - memory_usage
+    - cpu_usage
+    - request_latency
+    - error_rate
+    - logs
+failureConditions:
+  - type: baseline_check_failed
+    description: Any startup, readiness, health, or telemetry baseline check fails.
+  - type: restart_count_increase
+    description: Container restart count increases during baseline traffic.
+successConditions:
+  - type: baseline_checks_pass
+    description: All startup, readiness, health, and telemetry checks pass.
+  - type: no_restart_loop
+    description: Service does not enter a restart loop during baseline validation.
+  - type: error_rate_below_percent
+    description: Baseline HTTP error rate remains below 1 percent.
+    threshold: 1
+safety:
+  maxDuration: 5m
+  maxVirtualUsers: "5"
+  productionContextAllowed: false
