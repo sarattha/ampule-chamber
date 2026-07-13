@@ -25,6 +25,8 @@ def main(argv: list[str] | None = None) -> int:
     _require_contains(ROOT / "CHANGELOG.md", f"## {version} -")
     _require_contains(ROOT / "mkdocs.yml", "site_name: Ampule Chamber")
     _require_contains(ROOT / "docs/index.md", f"Version: {version}")
+    _require_contains(ROOT / "chamber/control_plane/templates/base.html", f"?v={version}")
+    _require_contains(ROOT / "chamber/control_plane/templates/login.html", f"?v={version}")
     print(f"release metadata ok: {version}")
     return 0
 
