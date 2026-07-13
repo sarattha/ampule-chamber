@@ -108,6 +108,23 @@ class PrometheusQueryTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["series_count"], 1)
         self.assertIsNone(result["error"])
+        self.assertEqual(result["observed_pod_names"], ["example-service-abc123"])
+
+    def test_success_response_preserves_all_observed_pods_when_series_are_truncated(self) -> None:
+        series = [_series("example-service-abc123") for _ in range(20)]
+        series.append(_series("example-service-def456"))
+        with patch(
+            "chamber.workflow._read_prometheus_payload",
+            return_value={"status": "success", "data": {"result": series}},
+        ):
+            result = workflow._prometheus_query("http://prometheus.example", "up")
+
+        self.assertEqual(result["series_count"], 21)
+        self.assertEqual(len(result["series"]), 20)
+        self.assertEqual(
+            result["observed_pod_names"],
+            ["example-service-abc123", "example-service-def456"],
+        )
 
 
 class PrometheusEvidenceGateTests(unittest.TestCase):
@@ -128,11 +145,17 @@ class PrometheusEvidenceGateTests(unittest.TestCase):
 
     def test_report_regeneration_recomputes_changed_prometheus_evidence(self) -> None:
         changed_queries = (
-            {"failed_query": REQUIRED_QUERIES[1]},
-            {"zero_query": REQUIRED_QUERIES[0]},
+            (REQUIRED_QUERIES[1], None),
+            (None, REQUIRED_QUERIES[0]),
         )
-        for change in changed_queries:
-            with self.subTest(change=change), TemporaryDirectory() as tmp:
+        for failed_query, zero_query in changed_queries:
+            with (
+                self.subTest(
+                    failed_query=failed_query,
+                    zero_query=zero_query,
+                ),
+                TemporaryDirectory() as tmp,
+            ):
                 run_dir = _reportable_result_run(Path(tmp))
                 config = workflow.load_config(run_dir / "chamber.yaml", require_repo=False)
                 metadata = json.loads((run_dir / "run-metadata.json").read_text(encoding="utf-8"))
@@ -150,7 +173,11 @@ class PrometheusEvidenceGateTests(unittest.TestCase):
                     analysis_event_count,
                 )
 
-                _write_prometheus_artifact(run_dir, **change)
+                _write_prometheus_artifact(
+                    run_dir,
+                    failed_query=failed_query,
+                    zero_query=zero_query,
+                )
                 workflow.render_report_from_run(run_dir)
                 recomputed = json.loads((run_dir / "result.json").read_text(encoding="utf-8"))
 
@@ -198,6 +225,40 @@ class PrometheusEvidenceGateTests(unittest.TestCase):
         self.assertEqual(result["missing_evidence_ids"], [])
         self.assertEqual(result["evidence_limitations"], [])
 
+    def test_partial_selected_pod_coverage_is_inconclusive(self) -> None:
+        with TemporaryDirectory() as tmp:
+            run_dir = _result_run(
+                Path(tmp),
+                pod_names=("example-service-abc123", "example-service-def456"),
+                partial_query=REQUIRED_QUERIES[1],
+            )
+            result = _assessment_result(run_dir)
+
+        self.assertEqual(result["status"], "inconclusive")
+        self.assertFalse(result["conclusive"])
+        self.assertEqual(result["evidence_coverage_percent"], 75)
+        self.assertIn("prometheus-memory", result["missing_evidence_ids"])
+        self.assertEqual(
+            result["evidence_limitations"],
+            [
+                "Prometheus query container_cpu_usage_seconds_total returned no series "
+                "for selected pods: example-service-def456."
+            ],
+        )
+
+    def test_every_required_query_covering_all_selected_pods_is_conclusive(self) -> None:
+        with TemporaryDirectory() as tmp:
+            run_dir = _result_run(
+                Path(tmp),
+                pod_names=("example-service-abc123", "example-service-def456"),
+            )
+            result = _assessment_result(run_dir)
+
+        self.assertEqual(result["status"], "ready")
+        self.assertTrue(result["conclusive"])
+        self.assertEqual(result["evidence_coverage_percent"], 100)
+        self.assertEqual(result["evidence_limitations"], [])
+
 
 class PrometheusReportTests(unittest.TestCase):
     def test_offline_markdown_and_html_show_query_failure(self) -> None:
@@ -234,6 +295,19 @@ class PrometheusReportTests(unittest.TestCase):
         self.assertIn(_stored_promql(REQUIRED_QUERIES[0]), markdown)
         self.assertIn(_stored_promql(REQUIRED_QUERIES[0]), unescape(html))
 
+    def test_partial_selected_pod_coverage_is_visible(self) -> None:
+        with TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "runs/prometheus-partial"
+            _write_prometheus_artifact(
+                run_dir,
+                pod_names=("example-service-abc123", "example-service-def456"),
+                partial_query=REQUIRED_QUERIES[1],
+            )
+            markdown = _render_report(run_dir)
+
+        self.assertIn("selected_pod_coverage=1/2", markdown)
+        self.assertIn("missing_selected_pods=example-service-def456", markdown)
+
     def test_agent_summaries_and_details_preserve_error_without_zero_default(self) -> None:
         with TemporaryDirectory() as tmp:
             run_dir = Path(tmp)
@@ -253,6 +327,8 @@ def _result_run(
     *,
     failed_query: str | None = None,
     zero_query: str | None = None,
+    pod_names: tuple[str, ...] = (),
+    partial_query: str | None = None,
 ) -> Path:
     run_dir = root / "live-run"
     evidence = run_dir / "evidence"
@@ -263,6 +339,8 @@ def _result_run(
         run_dir,
         failed_query=failed_query,
         zero_query=zero_query,
+        pod_names=pod_names,
+        partial_query=partial_query,
     )
     refresh_evidence_manifest(run_dir)
     return run_dir
@@ -372,8 +450,11 @@ def _write_prometheus_artifact(
     *,
     failed_query: str | None = None,
     zero_query: str | None = None,
+    pod_names: tuple[str, ...] = (),
+    partial_query: str | None = None,
 ) -> None:
     queries = {}
+    returned_pod_names = pod_names or ("example-service-abc123",)
     for name in REQUIRED_QUERIES:
         if name == failed_query:
             queries[name] = {
@@ -392,19 +473,33 @@ def _write_prometheus_artifact(
                 "series": [],
             }
         else:
-            queries[name] = _successful_query(_stored_promql(name))
+            query_pod_names = (
+                returned_pod_names[:1] if name == partial_query else returned_pod_names
+            )
+            queries[name] = _successful_query(
+                _stored_promql(name),
+                pod_names=query_pod_names,
+            )
     path = run_dir / "evidence/prometheus-memory.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"queries": queries}) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps({"pod_names": list(pod_names), "queries": queries}) + "\n",
+        encoding="utf-8",
+    )
 
 
-def _successful_query(query: str = "up") -> dict[str, object]:
+def _successful_query(
+    query: str = "up",
+    *,
+    pod_names: tuple[str, ...] = ("example-service-abc123",),
+) -> dict[str, object]:
     return {
         "ok": True,
         "query": query,
-        "series_count": 1,
+        "series_count": len(pod_names),
         "error": None,
-        "series": [_series()],
+        "observed_pod_names": list(pod_names),
+        "series": [_series(pod_name) for pod_name in pod_names],
     }
 
 
@@ -422,9 +517,9 @@ def _event_count(run_dir: Path, event_type: str) -> int:
     )
 
 
-def _series() -> dict[str, object]:
+def _series(pod_name: str = "example-service-abc123") -> dict[str, object]:
     return {
-        "metric": {"pod": "example-service-abc123", "container": "app"},
+        "metric": {"pod": pod_name, "container": "app"},
         "value": [1710000000, "42"],
     }
 

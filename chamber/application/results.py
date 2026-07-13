@@ -167,6 +167,7 @@ def _prometheus_evidence_status(
     queries = payload.get("queries") if isinstance(payload, dict) else None
     if not isinstance(queries, dict):
         return False, ("Prometheus evidence does not contain required queries.",)
+    expected_pod_names = _string_values(payload.get("pod_names"))
     limitations = []
     for name in PROMETHEUS_REQUIRED_QUERIES:
         query = queries.get(name)
@@ -185,7 +186,39 @@ def _prometheus_evidence_status(
             limitations.append(
                 f"Prometheus query {name} succeeded but returned zero matching series."
             )
+            continue
+        _, missing_pod_names = prometheus_query_pod_coverage(query, expected_pod_names)
+        if missing_pod_names:
+            limitations.append(
+                f"Prometheus query {name} returned no series for selected pods: "
+                + ", ".join(missing_pod_names)
+                + "."
+            )
     return not limitations, tuple(limitations)
+
+
+def prometheus_query_pod_coverage(
+    query: dict[str, Any],
+    expected_pod_names: tuple[str, ...],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Return observed and missing selected pods for one persisted query result."""
+
+    observed = set(_string_values(query.get("observed_pod_names")))
+    series = query.get("series")
+    if isinstance(series, list):
+        for item in series:
+            metric = item.get("metric") if isinstance(item, dict) else None
+            pod_name = metric.get("pod") if isinstance(metric, dict) else None
+            if isinstance(pod_name, str) and pod_name:
+                observed.add(pod_name)
+    expected = tuple(dict.fromkeys(expected_pod_names))
+    return tuple(sorted(observed)), tuple(name for name in expected if name not in observed)
+
+
+def _string_values(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        return ()
+    return tuple(item for item in value if isinstance(item, str) and item)
 
 
 def _command_evidence(

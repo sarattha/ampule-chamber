@@ -37,7 +37,11 @@ from chamber.agents import (
     validate_evidence_bound_output,
 )
 from chamber.agents.sdk import OpenAIAgentsSdkRunner
-from chamber.application import analyze_guided_run, build_assessment_result
+from chamber.application import (
+    analyze_guided_run,
+    build_assessment_result,
+    prometheus_query_pod_coverage,
+)
 from chamber.environment import preflight_to_evidence, run_kubernetes_preflight
 from chamber.environment.preflight import (
     CommandRunner as KubernetesCommandRunner,
@@ -2087,6 +2091,7 @@ def _prometheus_query(prometheus_url: str, query: str) -> dict[str, Any]:
             "query": query,
             "series_count": None,
             "error": str(exc),
+            "observed_pod_names": [],
             "series": [],
         }
     if not isinstance(payload, dict) or payload.get("status") != "success":
@@ -2095,6 +2100,7 @@ def _prometheus_query(prometheus_url: str, query: str) -> dict[str, Any]:
             "query": query,
             "series_count": None,
             "error": _prometheus_response_error(payload),
+            "observed_pod_names": [],
             "series": [],
         }
     data = payload.get("data") if isinstance(payload, dict) else None
@@ -2105,13 +2111,25 @@ def _prometheus_query(prometheus_url: str, query: str) -> dict[str, Any]:
             "query": query,
             "series_count": None,
             "error": "Prometheus success response did not contain data.result",
+            "observed_pod_names": [],
             "series": [],
         }
+    observed_pod_names = sorted(
+        {
+            str(metric["pod"])
+            for item in result
+            if isinstance(item, dict)
+            and isinstance((metric := item.get("metric")), dict)
+            and isinstance(metric.get("pod"), str)
+            and metric["pod"]
+        }
+    )
     return {
         "ok": True,
         "query": query,
         "series_count": len(result),
         "error": None,
+        "observed_pod_names": observed_pod_names,
         "series": result[:20],
     }
 
@@ -3052,6 +3070,12 @@ def _prometheus_report_sections(run_dir: Path) -> tuple[ReportSection, ...]:
     queries = payload.get("queries")
     if not isinstance(queries, dict):
         return ()
+    pod_names_value = payload.get("pod_names")
+    expected_pod_names = (
+        tuple(item for item in pod_names_value if isinstance(item, str) and item)
+        if isinstance(pod_names_value, list)
+        else ()
+    )
     artifact = str(path)
     lines = [
         f"Evidence artifact: {artifact}",
@@ -3070,6 +3094,12 @@ def _prometheus_report_sections(run_dir: Path) -> tuple[ReportSection, ...]:
         query_text = query.get("query")
         if isinstance(query_text, str) and query_text:
             line += f"; query={query_text}"
+        if expected_pod_names:
+            _, missing_pod_names = prometheus_query_pod_coverage(query, expected_pod_names)
+            covered_count = len(set(expected_pod_names) - set(missing_pod_names))
+            line += f"; selected_pod_coverage={covered_count}/{len(set(expected_pod_names))}"
+            if missing_pod_names:
+                line += "; missing_selected_pods=" + ",".join(missing_pod_names)
         error = query.get("error")
         if not ok:
             line += f"; error={error or 'unknown Prometheus query failure'}"
