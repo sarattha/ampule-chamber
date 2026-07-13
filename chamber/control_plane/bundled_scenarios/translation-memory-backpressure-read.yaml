@@ -1,0 +1,96 @@
+apiVersion: chamber.ampule.dev/v1alpha1
+kind: Scenario
+metadata:
+  id: translation-memory-backpressure-read-001
+  name: Translation runtime backpressure memory read
+  description: Poll runtime backpressure and queue-health endpoints during memory assessment to detect queue pressure without adding translation work.
+  owner: platform-reliability
+  tags:
+    - translation-service
+    - memory
+    - backpressure
+target:
+  service:
+    name: translation-service
+    image: ampule/external-translation-api:local
+    ports:
+      - name: http
+        port: 8887
+    healthEndpoint: /health
+    readinessEndpoint: /health
+  runtime:
+    provider: existing_kubernetes
+environment:
+  provider: existing_kubernetes
+  namespace: chamber-external-translation-prep
+  replicas: 1
+  resources:
+    cpuRequest: 250m
+    cpuLimit: "1"
+    memoryRequest: 256Mi
+    memoryLimit: 768Mi
+  dependencies:
+    - name: rabbitmq
+      type: message_broker
+      protocol: amqp
+      endpoint: amqp://rabbitmq:5672
+      criticality: required
+    - name: redis-master
+      type: cache
+      protocol: redis
+      endpoint: redis://redis-master:6379
+      criticality: required
+baseline:
+  checks:
+    - type: readiness_http_200
+      description: Translation API /health returns HTTP 200 before runtime backpressure reads.
+    - type: metrics_available
+      description: Runtime pressure endpoint and Kubernetes memory metrics are available.
+traffic:
+  tool: k6
+  method: GET
+  entrypoint: /relayna/runtime/backpressure
+  expectedStatus: 200
+  stages:
+    - duration: 15s
+      targetVus: 1
+    - duration: 45s
+      targetVus: 3
+    - duration: 15s
+      targetVus: 0
+faults:
+  - type: none
+    description: No fault is injected; this scenario observes queue-pressure reads during the memory suite.
+observability:
+  signals:
+    - pod_status
+    - kubernetes_events
+    - container_restarts
+    - memory_usage
+    - cpu_usage
+    - queue_depth
+    - request_latency
+    - error_rate
+    - logs
+failureConditions:
+  - type: restart_count_increase
+    description: Any translation-service pod restarts during runtime pressure reads.
+  - type: queue_backlog_not_draining
+    description: Runtime backpressure reports queue depth that does not drain after traffic.
+  - type: latency_above_ms
+    description: p95 runtime backpressure read latency exceeds 750 ms.
+    percentile: p95
+    thresholdMs: 750
+successConditions:
+  - type: no_restart_loop
+    description: Translation API, worker, and aggregator pods do not enter restart loops.
+  - type: queue_backlog_drains_within
+    description: Queue depth remains bounded or drains within 2 minutes after memory traffic.
+    threshold: 2m
+  - type: error_rate_below_percent
+    description: Runtime backpressure read error rate remains below 1 percent.
+    threshold: 1
+safety:
+  maxDuration: 3m
+  maxVirtualUsers: "3"
+  productionContextAllowed: false

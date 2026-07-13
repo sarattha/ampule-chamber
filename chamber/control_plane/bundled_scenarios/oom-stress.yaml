@@ -1,0 +1,90 @@
+apiVersion: chamber.ampule.dev/v1alpha1
+kind: Scenario
+metadata:
+  id: oom-stress-001
+  name: OOM stress under high concurrency
+  description: Increase request pressure and payload size to expose memory growth, restarts, and OOMKilled behavior.
+  owner: platform-reliability
+  tags:
+    - load
+    - memory
+    - oom
+target:
+  service:
+    name: sample-service
+    image: ampule/sample-service:local
+    ports:
+      - name: http
+        port: 8080
+    healthEndpoint: /healthz
+    readinessEndpoint: /readyz
+  runtime:
+    provider: docker
+    composeFile: examples/sample-service/docker-compose.yml
+environment:
+  provider: docker
+  namespace: chamber-local
+  replicas: 1
+  resources:
+    cpuRequest: 250m
+    cpuLimit: "1"
+    memoryRequest: 128Mi
+    memoryLimit: 256Mi
+  dependencies: []
+baseline:
+  checks:
+    - type: readiness_http_200
+      description: Readiness endpoint returns HTTP 200 before load starts.
+    - type: metrics_available
+      description: Runtime memory and CPU usage can be collected.
+traffic:
+  tool: k6
+  entrypoint: /work
+  payloadProfile: large-payload
+  stages:
+    - duration: 2m
+      targetVus: 10
+    - duration: 5m
+      targetVus: 50
+    - duration: 5m
+      targetVus: 100
+    - duration: 2m
+      targetVus: 0
+faults:
+  - type: memory_pressure
+    description: Constrain container memory and observe whether the service sheds load or is killed.
+observability:
+  signals:
+    - pod_status
+    - kubernetes_events
+    - container_restarts
+    - memory_usage
+    - cpu_usage
+    - request_latency
+    - error_rate
+    - logs
+failureConditions:
+  - type: oom_killed
+    description: Container terminates with OOMKilled or equivalent Docker memory kill evidence.
+  - type: restart_count_increase
+    description: Restart count increases while load is active.
+  - type: memory_growth_for
+    description: Memory increases continuously for at least 5 minutes.
+    duration: 5m
+  - type: latency_above_ms
+    description: p99 latency exceeds 2000 ms under sustained load.
+    percentile: p99
+    thresholdMs: 2000
+successConditions:
+  - type: no_oom_killed
+    description: No OOMKilled or Docker memory kill is observed.
+  - type: no_restart_loop
+    description: Service does not enter a restart loop.
+  - type: latency_below_ms
+    description: p99 latency remains below 2000 ms during the measured window.
+    percentile: p99
+    thresholdMs: 2000
+safety:
+  maxDuration: 20m
+  maxVirtualUsers: "100"
+  productionContextAllowed: false

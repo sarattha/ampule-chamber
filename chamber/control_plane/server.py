@@ -94,7 +94,7 @@ def create_app(
     application = ChamberApplication(workspace)
     application.initialize()
     jobs = AssessmentJobManager(workspace)
-    scenarios = ScenarioCatalog(workspace, PACKAGE_DIR.parent.parent / "scenarios")
+    scenarios = ScenarioCatalog(workspace, PACKAGE_DIR / "bundled_scenarios")
     templates = Jinja2Templates(directory=TEMPLATE_DIR)
     app = FastAPI(title="Ampule Chamber Control Plane", version="1")
     app.state.chamber = application

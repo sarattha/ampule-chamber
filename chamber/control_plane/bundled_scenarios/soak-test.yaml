@@ -1,0 +1,88 @@
+apiVersion: chamber.ampule.dev/v1alpha1
+kind: Scenario
+metadata:
+  id: soak-test-001
+  name: Long-running soak stability
+  description: Run sustained normal traffic to expose slow memory growth, latency drift, restart loops, and telemetry gaps.
+  owner: platform-reliability
+  tags:
+    - soak
+    - load
+    - stability
+target:
+  service:
+    name: sample-service
+    image: ampule/sample-service:local
+    ports:
+      - name: http
+        port: 8080
+    healthEndpoint: /healthz
+    readinessEndpoint: /readyz
+  runtime:
+    provider: docker
+    composeFile: examples/sample-service/docker-compose.yml
+environment:
+  provider: docker
+  namespace: chamber-local
+  replicas: 1
+  resources:
+    cpuRequest: 250m
+    cpuLimit: "1"
+    memoryRequest: 128Mi
+    memoryLimit: 512Mi
+  dependencies: []
+baseline:
+  checks:
+    - type: readiness_http_200
+      description: Readiness endpoint returns HTTP 200 before the soak window.
+    - type: metrics_available
+      description: Runtime memory, CPU, latency, and error metrics are collectable.
+traffic:
+  tool: k6
+  entrypoint: /work
+  stages:
+    - duration: 5m
+      targetVus: 20
+    - duration: 30m
+      targetVus: 20
+    - duration: 5m
+      targetVus: 0
+faults:
+  - type: none
+    description: No explicit fault is injected; the experiment searches for time-based drift.
+observability:
+  signals:
+    - pod_status
+    - kubernetes_events
+    - container_restarts
+    - memory_usage
+    - cpu_usage
+    - cpu_throttling
+    - request_latency
+    - error_rate
+    - logs
+    - traces
+failureConditions:
+  - type: memory_growth_for
+    description: Memory usage grows continuously for 20 minutes without returning toward baseline.
+    duration: 20m
+  - type: latency_above_ms
+    description: p99 latency exceeds 1500 ms during steady-state traffic.
+    percentile: p99
+    thresholdMs: 1500
+  - type: restart_loop
+    description: Service enters a restart loop during the soak window.
+successConditions:
+  - type: memory_growth_below_percent
+    description: Memory growth remains below 15 percent between steady-state start and end.
+    threshold: 15
+  - type: latency_below_ms
+    description: p99 latency remains below 1500 ms.
+    percentile: p99
+    thresholdMs: 1500
+  - type: no_restart_loop
+    description: Service does not enter a restart loop.
+safety:
+  maxDuration: 45m
+  maxVirtualUsers: "20"
+  productionContextAllowed: false

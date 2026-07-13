@@ -1,0 +1,96 @@
+apiVersion: chamber.ampule.dev/v1alpha1
+kind: Scenario
+metadata:
+  id: translation-memory-health-ramp-001
+  name: Translation API memory health ramp
+  description: Ramp lightweight health traffic while watching API, Redis, RabbitMQ, worker, and aggregator memory stability.
+  owner: platform-reliability
+  tags:
+    - translation-service
+    - memory
+    - health
+target:
+  service:
+    name: translation-service
+    image: ampule/external-translation-api:local
+    ports:
+      - name: http
+        port: 8887
+    healthEndpoint: /health
+    readinessEndpoint: /health
+  runtime:
+    provider: existing_kubernetes
+environment:
+  provider: existing_kubernetes
+  namespace: chamber-external-translation-prep
+  replicas: 1
+  resources:
+    cpuRequest: 250m
+    cpuLimit: "1"
+    memoryRequest: 256Mi
+    memoryLimit: 768Mi
+  dependencies:
+    - name: rabbitmq
+      type: message_broker
+      protocol: amqp
+      endpoint: amqp://rabbitmq:5672
+      criticality: required
+    - name: redis-master
+      type: cache
+      protocol: redis
+      endpoint: redis://redis-master:6379
+      criticality: required
+baseline:
+  checks:
+    - type: readiness_http_200
+      description: Translation API /health returns HTTP 200 before memory ramp traffic.
+    - type: metrics_available
+      description: Kubernetes container memory metrics are available before traffic starts.
+traffic:
+  tool: k6
+  method: GET
+  entrypoint: /health
+  expectedStatus: 200
+  stages:
+    - duration: 20s
+      targetVus: 2
+    - duration: 40s
+      targetVus: 6
+    - duration: 20s
+      targetVus: 0
+faults:
+  - type: none
+    description: No fault is injected; this scenario watches for memory drift under repeated health traffic.
+observability:
+  signals:
+    - pod_status
+    - kubernetes_events
+    - container_restarts
+    - memory_usage
+    - cpu_usage
+    - request_latency
+    - error_rate
+    - logs
+failureConditions:
+  - type: restart_count_increase
+    description: Any translation-service pod restarts during the health ramp.
+  - type: memory_growth_for
+    description: Memory usage rises continuously for the full steady traffic window.
+    duration: 40s
+  - type: latency_above_ms
+    description: p95 health latency exceeds 500 ms during the ramp.
+    percentile: p95
+    thresholdMs: 500
+successConditions:
+  - type: no_restart_loop
+    description: No API, worker, aggregator, Redis, or RabbitMQ pod enters a restart loop.
+  - type: memory_growth_below_percent
+    description: Container memory remains bounded during the health ramp.
+    threshold: 10
+  - type: error_rate_below_percent
+    description: Health traffic error rate remains below 1 percent.
+    threshold: 1
+safety:
+  maxDuration: 3m
+  maxVirtualUsers: "6"
+  productionContextAllowed: false
