@@ -273,3 +273,71 @@ through SSE, and produce content-safe lifecycle evidence.
   `1.7.0`; strict MkDocs build; and source-distribution and wheel builds.
 - No project version, `CHANGELOG.md`, release notes, image assets, or framework
   dependencies were changed for issue #31.
+
+## Issue #33: Correlated Evidence Explorer And Investigation Timeline
+
+### Progress
+
+- [x] Added an additive `chamber.ampule.dev/evidence-explorer/v1` projection
+      without changing the persisted `result/v1`, finding, or evidence artifact
+      contracts established by issue #32.
+- [x] Normalized digest-valid k6, Relayna task and worker, Kubernetes event,
+      workload, bounded operational log, rollback, Prometheus, and run lifecycle
+      items onto one timestamp-ordered timeline with explicit source identity.
+- [x] Kept exact, run-window, and inferred correlations distinct in the
+      projection, legend, timeline styling, and operator-facing explanations.
+- [x] Added journey, workload, pod, task ID, signal, severity, and time-window
+      filters with context-preserving pagination and finding context.
+- [x] Deep-linked existing findings into the cited evidence range and
+      highlighted relevant cited signals without inventing a second result or
+      finding-link contract.
+- [x] Added an expert raw-artifact toggle whose downloads remain gated by the
+      existing run-bound SHA-256 manifest verification.
+- [x] Kept default projections content-safe through allowlisted operational
+      fields and tokenized Kubernetes log events; request bodies, document
+      contents, Kubernetes event messages, and arbitrary log text are excluded.
+- [x] Bounded the explorer at 1,000 representative events, at most 100 events
+      per page, 200 Relayna tasks with five sampled lifecycle events per task,
+      300 Kubernetes events, and 100 safe log events.
+- [x] Added projection, API, integrity, content-safety, multi-pod,
+      concurrent-task, filter/context, finding-deep-link, correlation, and
+      bounding/pagination regressions.
+
+### Decisions And Assumptions
+
+- Build the explorer as an application/UI projection over registered artifacts
+  rather than migrating existing artifacts. Older artifacts remain readable,
+  while only digest-valid entries enter the correlated timeline or raw download
+  list.
+- Use each item's own parseable timestamp for exact correlation. Use explicit
+  workload/task labels for exact identity, bounded run-window/service labels for
+  run-window identity, and artifact time or duration-derived positions only as
+  visibly inferred timestamps.
+- Use the persisted finding evidence IDs and signal type to select the relevant
+  cited range. Existing raw evidence URLs remain compatible; the additive
+  investigation URL opens the Evidence tab with finding context.
+- Treat k6 summary outcomes and artifacts without item timestamps as honest
+  run-window or inferred observations rather than manufacturing exact times.
+- Preserve the existing metric and Relayna summary cards as secondary legacy
+  views for pre-manifest runs. Their existing allowlisted projections remain
+  content-safe, while the new correlated explorer and all downloads require a
+  valid manifest digest.
+
+### Evaluation And Acceptance Evidence
+
+- `uv run python -m unittest tests.test_evidence_explorer` passed 8 focused
+  tests covering the complete source overlay, source/timestamp normalization,
+  content safety, multi-pod and concurrent-task evidence, all filters, context
+  preservation, finding range/highlighting, explicit correlations,
+  digest-verified downloads, tamper rejection, and large-run bounding.
+- The combined issue #33, Control Plane, decision-result, Prometheus, Relayna,
+  and Phase 11-13 workflow suite passed 121 tests.
+- `make format`, `make lint`, and `make typecheck` passed after the final
+  projection and UI changes.
+- `make check` passed on 2026-08-08: formatting, lint, and type checking;
+  243 tests; 90% combined branch/line coverage; 10 scenario files; deployment
+  and release metadata at the intentionally unchanged `1.7.0`; strict MkDocs;
+  and source-distribution and wheel builds.
+- No project version, `CHANGELOG.md`, release notes, or release documents were
+  changed; version and release integration remain intentionally delegated to
+  the integration worktree.

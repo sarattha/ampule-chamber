@@ -7,11 +7,19 @@ from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 from uuid import uuid4
 
 import yaml
 
-from chamber.runs import RunIndex, new_run_directory, read_json_value, write_json_atomic
+from chamber.application.evidence import build_evidence_explorer
+from chamber.runs import (
+    RunIndex,
+    new_run_directory,
+    read_json_value,
+    registered_evidence,
+    write_json_atomic,
+)
 
 
 @dataclass(frozen=True)
@@ -118,14 +126,33 @@ class ChamberApplication:
             raise FileNotFoundError(run_id)
         return path
 
-    def get_run(self, run_id: str) -> dict[str, Any]:
+    def get_run(
+        self,
+        run_id: str,
+        *,
+        evidence_query: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         run_dir = self.run_path(run_id)
         evidence = _evidence_entries(run_dir)
+        raw_findings = _json_or_default(run_dir / "findings.json", [])
         findings = _finding_views(
             run_id,
-            _json_or_default(run_dir / "findings.json", []),
+            raw_findings,
             evidence,
         )
+        events = _events(run_dir / "events.jsonl")
+        config = _yaml_or_default(run_dir / "chamber.yaml")
+        explorer = build_evidence_explorer(
+            run_dir,
+            run_id=run_id,
+            evidence=evidence,
+            findings=findings,
+            run_events=events,
+            config=config,
+            query=evidence_query,
+        )
+        for finding in findings:
+            finding["investigation_url"] = _investigation_url(run_id, finding)
         return {
             "run_dir": str(run_dir),
             "run": _json_or_default(run_dir / "run.json", {}),
@@ -133,13 +160,14 @@ class ChamberApplication:
             "result": _json_or_default(run_dir / "result.json", {}),
             "findings": findings,
             "evidence": evidence,
-            "events": _events(run_dir / "events.jsonl"),
-            "config": _yaml_or_default(run_dir / "chamber.yaml"),
+            "events": events,
+            "config": config,
             "plan": _json_or_default(run_dir / "plan.json", {}),
             "agents": _agents(run_dir / "agent"),
             "report_markdown": _text_or_default(run_dir / "report.md"),
             "prometheus": _prometheus_view(run_dir / "evidence/prometheus-memory.json"),
             "relayna": _relayna_view(run_dir / "evidence/relayna-summary.json"),
+            "evidence_explorer": explorer,
         }
 
     def plan_rerun(
@@ -271,11 +299,18 @@ def _events(path: Path) -> tuple[dict[str, Any], ...]:
 
 
 def _evidence_entries(run_dir: Path) -> tuple[dict[str, Any], ...]:
-    value = _json_or_default(run_dir / "evidence/manifest.json", {})
-    entries = value.get("entries") if isinstance(value, dict) else None
-    if not isinstance(entries, list):
-        return ()
-    return tuple(item for item in entries if isinstance(item, dict))
+    return registered_evidence(run_dir)
+
+
+def _investigation_url(
+    run_id: str,
+    finding: dict[str, Any],
+) -> str:
+    query = {
+        "tab": "evidence",
+        "finding": str(finding.get("finding_id", "")),
+    }
+    return f"/runs/{run_id}?{urlencode(query)}"
 
 
 def _finding_views(

@@ -350,7 +350,10 @@ def create_app(
     @app.get("/runs/{run_id}", response_class=HTMLResponse, include_in_schema=False)
     async def run_page(request: Request, run_id: str, tab: str = "overview") -> Response:
         try:
-            run = application.get_run(run_id)
+            run = application.get_run(
+                run_id,
+                evidence_query={key: value for key, value in request.query_params.items()},
+            )
         except (FileNotFoundError, ValueError):
             raise HTTPException(status_code=404, detail="run not found") from None
         allowed_tabs = {"overview", "timeline", "findings", "evidence", "configuration", "agents"}
@@ -591,6 +594,17 @@ def create_app(
             return application.get_run(run_id)
         except (FileNotFoundError, ValueError):
             raise HTTPException(status_code=404, detail="run not found") from None
+
+    @app.get("/api/v1/runs/{run_id}/evidence-explorer")
+    async def evidence_explorer_api(request: Request, run_id: str) -> dict[str, Any]:
+        try:
+            run = application.get_run(
+                run_id,
+                evidence_query={key: value for key, value in request.query_params.items()},
+            )
+        except (FileNotFoundError, ValueError):
+            raise HTTPException(status_code=404, detail="run not found") from None
+        return _mapping(run.get("evidence_explorer"))
 
     @app.post("/api/v1/runs/{run_id}/rerun", status_code=201)
     async def rerun_api(
