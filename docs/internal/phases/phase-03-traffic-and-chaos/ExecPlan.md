@@ -212,3 +212,64 @@ through SSE, and produce content-safe lifecycle evidence.
   bind the existing Relayna loopback HTTP fixture. Re-running the identical gate
   outside the socket-restricted sandbox passed; no product failure or test
   assertion was involved.
+
+## Issue #31: Reliability-Goal-First Scenario Builder
+
+### Progress
+
+- [x] Added Basic goal presets for baseline readiness, pod recovery, dependency
+      degradation, queue/task backpressure, memory/OOM recovery, and
+      latency/error regression.
+- [x] Reused repository inspection and Kubernetes Service/workload discovery
+      values to propose bounded editable traffic while showing assumptions and
+      unresolved inputs.
+- [x] Added maximum VUs, total duration, expected outcomes, selected/recommended
+      fault state, required evidence, and explicit safety-limit summaries.
+- [x] Added an in-system traffic/fault/recovery visualization plus generated
+      request and config previews without adding image assets or a UI framework.
+- [x] Preserved the existing Advanced editor for HTTP/k6, Relayna JSON and
+      multipart lifecycle requests, custom stages, fixed iterations, follow-up
+      checks, attach faults, and agent mode/exclusions.
+- [x] Preserved imported journey fields losslessly by retaining the original
+      journey and nested multipart/Relayna objects as the serialization base.
+- [x] Kept Basic and Advanced controls on the same underlying form values so a
+      mode switch only changes visibility. Selecting a new goal is the explicit
+      operation that replaces the proposal.
+- [x] Kept every preset's selected fault at `none`; recommended pod loss remains
+      disabled until the operator chooses the existing attach fault control.
+- [x] Kept final plan creation on the existing `_ui_journeys`, scenario
+      normalization, and `plan_config` server-side validation path.
+
+### Decisions And Assumptions
+
+- Basic mode is capped at 25 VUs and 300 seconds. Individual presets are lower
+  than those caps and always end with a zero-traffic recovery stage.
+- The current ChamberConfig attach runner supports only `pod_kill` and
+  `deployment_scale`. Dependency degradation and memory pressure presets expose
+  their fault mechanism as a missing input instead of inventing an unsupported
+  fault or silently enabling an unsafe substitute.
+- Attaching without a repository is a supported planning path. The proposal
+  states that source-level endpoints and dependencies cannot be inferred and
+  relies on the existing Service/workload discovery or explicit operator input.
+- Agent exclusions are now retained alongside the existing agent mode so a
+  saved or imported Advanced configuration can round-trip the full currently
+  supported agent settings.
+
+### Evaluation And Acceptance Evidence
+
+- `uv run python -m unittest tests.test_control_plane_goals` passed 5 focused
+  tests covering all six presets, bounded defaults, partial discovery,
+  attach-without-repository assumptions, goal-specific missing inputs, fault
+  safety, authoritative plan rejection, and Basic/Advanced lossless structure.
+- `uv run python -m unittest tests.test_control_plane_goals
+  tests.test_control_plane tests.test_scenario_catalog
+  tests.test_control_plane_kubernetes` passed all 36 focused and existing
+  control-plane regression tests.
+- `node --check chamber/control_plane/static/app.js` passed after the final UI
+  changes.
+- `make check` passed on 2026-08-08: Python format, lint, and type checks; 227
+  unit and workflow tests; 90% combined branch/line coverage; 10 scenario files;
+  deployment and release metadata validation at the intentionally unchanged
+  `1.7.0`; strict MkDocs build; and source-distribution and wheel builds.
+- No project version, `CHANGELOG.md`, release notes, image assets, or framework
+  dependencies were changed for issue #31.

@@ -45,8 +45,49 @@
   </section>
 
   <section class="wizard-panel" data-step="2" hidden>
-    <div class="page-heading"><div class="eyebrow">Step 3 of 4</div><h1>Define the exercise</h1><p>Add one or more traffic journeys. Every field is written directly to the generated ChamberConfig.</p></div>
-    <section class="scenario-section" data-scenario-section>
+    <div class="page-heading"><div class="eyebrow">Step 3 of 4</div><h1>Choose the reliability outcome</h1><p>Start from a bounded goal proposal, or use Advanced mode for every existing journey control.</p></div>
+    <div class="editor-mode-switch" role="group" aria-label="Exercise editor mode">
+      <button class="button active" type="button" data-editor-mode="basic" aria-pressed="true">Basic · goal first</button>
+      <button class="button" type="button" data-editor-mode="advanced" aria-pressed="false">Advanced · full config</button>
+    </div>
+    <section class="basic-builder" data-basic-builder>
+      <div class="section-heading"><div><h2>What do you want to validate?</h2><p>Selecting a goal replaces the editable proposal. It never selects a fault.</p></div><span class="pill safe">Bounded defaults</span></div>
+      <div class="goal-grid mode-grid" role="radiogroup" aria-label="Reliability goal">
+        {% for goal in reliability_goals %}
+        <label class="mode-card goal-card {{ 'selected' if loop.first else '' }}"><input type="radio" name="reliability_goal" value="{{ goal.id }}" {{ 'checked' if loop.first else '' }}><strong>{{ goal.label }}</strong><span>{{ goal.description }}</span></label>
+        {% endfor %}
+      </div>
+      <p class="scenario-status" data-goal-status aria-live="polite">Building a proposal from the values discovered so far…</p>
+      <div class="panel form-grid basic-controls">
+        <label>Method<select data-basic-method><option>GET</option><option>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option><option>HEAD</option><option>OPTIONS</option></select></label>
+        <label>Request path<input data-basic-path required pattern="/.*" value="/health"></label>
+        <label>Expected status<input data-basic-status type="number" required min="100" max="599" value="200"></label>
+        <label>Maximum VUs<input data-basic-vus type="number" required min="1" max="25" value="4"><span class="help">Basic mode cannot exceed 25 virtual users.</span></label>
+        <label>Exercise duration seconds<input data-basic-duration type="number" required min="20" max="300" value="60"><span class="help">Includes a final 10-second zero-traffic recovery window.</span></label>
+        <div class="field-note"><strong>Editable, still bounded</strong><span>These controls update the same journey shown in Advanced mode. Final validation remains server-side.</span></div>
+      </div>
+      <div class="proposal-metrics" aria-label="Scenario boundaries">
+        <div><span>Maximum traffic</span><strong data-goal-max-vus>4 VUs</strong></div>
+        <div><span>Duration</span><strong data-goal-duration>60s</strong></div>
+        <div><span>Fault</span><strong data-goal-fault>No fault selected</strong></div>
+        <div><span>Safety</span><strong data-goal-safety>Explicit opt-in</strong></div>
+      </div>
+      <section class="panel proposal-timeline" aria-label="Traffic fault and recovery summary">
+        <div class="section-heading"><div><h2>Traffic, fault, recovery</h2><p>A compact execution summary; exact stages remain editable in Advanced mode.</p></div></div>
+        <ol data-goal-timeline></ol>
+      </section>
+      <div class="proposal-detail-grid">
+        <section class="panel"><h2>Expected outcomes</h2><ul data-goal-outcomes></ul></section>
+        <section class="panel"><h2>Required evidence</h2><ul data-goal-evidence></ul></section>
+        <section class="panel"><h2>Assumptions</h2><ul data-goal-assumptions></ul></section>
+        <section class="panel gap-panel"><h2>Missing inputs</h2><ul data-goal-missing></ul></section>
+      </div>
+      <div class="proposal-preview-grid">
+        <section class="panel code-panel"><h2>Generated request preview</h2><pre data-goal-request-preview></pre></section>
+        <section class="panel code-panel"><h2>Config preview</h2><pre data-goal-config-preview></pre></section>
+      </div>
+    </section>
+    <section class="scenario-section" data-scenario-section data-advanced-only hidden>
       <div class="section-heading"><div><h2>Scenario</h2><p>Build a custom exercise, select a reusable scenario, or import supported YAML/JSON.</p></div><span class="pill safe">Review before execution</span></div>
       <div class="mode-grid scenario-source-grid" role="radiogroup" aria-label="Scenario source">
         <label class="mode-card selected"><input type="radio" name="scenario_source_mode" value="custom" checked><strong>Build custom</strong><span>Start with the guided journey editor.</span></label>
@@ -84,11 +125,12 @@
     <div class="panel form-grid exercise-settings">
       <label>Service port<input name="service_port" type="number" min="1" max="65535" value="8080"></label>
       <label>Attach fault template<select name="fault_type"><option value="none">Observe only</option><option value="pod_kill">Kill one pod and verify recovery</option><option value="deployment_scale">Scale deployment to zero and restore</option></select><span class="help">Faults run only in attach mode and require an explicit allow-faults label.</span></label>
-      <label>Agent mode<select name="agents_mode"><option value="offline">Offline deterministic</option><option value="off">Disabled</option><option value="live">Live OpenAI agents</option></select></label>
-      <div class="field-note"><strong>Execution boundary</strong><span>An assessment may contain multiple HTTP journeys or multiple Relayna journeys, but cannot mix the two adapter types.</span></div>
+      <label data-advanced-only hidden>Agent mode<select name="agents_mode"><option value="offline">Offline deterministic</option><option value="off">Disabled</option><option value="live">Live OpenAI agents</option></select></label>
+      <label data-advanced-only hidden>Excluded agents JSON <span class="optional">optional</span><textarea name="agents_exclude_json">[]</textarea><span class="help">Use a JSON array of registered agent names.</span></label>
+      <div class="field-note" data-advanced-only hidden><strong>Execution boundary</strong><span>An assessment may contain multiple HTTP journeys or multiple Relayna journeys, but cannot mix the two adapter types.</span></div>
     </div>
     <input type="hidden" name="journeys_json" data-journeys-json>
-    <div class="journey-editor" data-journey-editor>
+    <div class="journey-editor" data-journey-editor data-advanced-only hidden>
       <div class="section-heading"><div><h2>Traffic journeys</h2><p>Journeys run sequentially and retain their own request, expected response, and load schedule.</p></div><button class="button" type="button" data-add-journey>Add traffic</button></div>
       <div class="journey-list" data-journey-list></div>
     </div>
@@ -151,7 +193,7 @@
     <div class="review-grid">
       <div class="panel"><h2>Target</h2><dl><div><dt>Source</dt><dd data-review="target_source">Repository</dd></div><div><dt>Repository</dt><dd data-review="repo">Not required</dd></div><div><dt>Service</dt><dd data-review="service_name">Inferred</dd></div><div><dt>Workload</dt><dd data-review="workload_name">Inferred</dd></div><div><dt>Kind</dt><dd data-review="workload_kind">Inferred</dd></div></dl></div>
       <div class="panel"><h2>Environment</h2><dl><div><dt>Mode</dt><dd data-review="execution_mode">Local</dd></div><div><dt>Context</dt><dd data-review="kubernetes_context">Not applicable</dd></div><div><dt>Namespace</dt><dd data-review="namespace">Not applicable</dd></div></dl></div>
-      <div class="panel"><h2>Exercise</h2><dl><div><dt>Scenario</dt><dd data-review="scenario_id">Custom</dd></div><div><dt>Traffic</dt><dd data-review-journeys>1 HTTP journey</dd></div><div><dt>Files</dt><dd data-review-files>No multipart uploads</dd></div><div><dt>Maximum concurrency</dt><dd data-review-vus>4 VUs</dd></div><div><dt>Estimated duration</dt><dd data-review-duration>60s</dd></div><div><dt>Fault</dt><dd data-review="fault_type">Observe only</dd></div><div><dt>Rollback</dt><dd data-review-rollback>Not required</dd></div><div><dt>Agents</dt><dd data-review="agents_mode">Offline</dd></div></dl></div>
+      <div class="panel"><h2>Exercise</h2><dl><div><dt>Goal</dt><dd data-review="reliability_goal">Baseline readiness</dd></div><div><dt>Scenario</dt><dd data-review="scenario_id">Custom</dd></div><div><dt>Traffic</dt><dd data-review-journeys>1 HTTP journey</dd></div><div><dt>Files</dt><dd data-review-files>No multipart uploads</dd></div><div><dt>Maximum concurrency</dt><dd data-review-vus>4 VUs</dd></div><div><dt>Estimated duration</dt><dd data-review-duration>60s</dd></div><div><dt>Expected outcomes</dt><dd data-review-outcomes>Shown in proposal</dd></div><div><dt>Fault</dt><dd data-review="fault_type">Observe only</dd></div><div><dt>Rollback</dt><dd data-review-rollback>Not required</dd></div><div><dt>Agents</dt><dd data-review="agents_mode">Offline</dd></div></dl></div>
       <div class="panel safety-card"><h2>Safety contract</h2><ul><li>Explicit context for live execution</li><li>Production-like context names rejected</li><li>Bounded traffic and fault windows</li><li>Cancel triggers rollback and cleanup</li><li>Required telemetry: <span data-review-signals>default Chamber evidence</span></li><li>Unresolved limitations: <span data-review-limitations>none</span></li><li>Reports cite registered evidence only</li></ul></div>
     </div>
   </section>

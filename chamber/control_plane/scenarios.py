@@ -282,6 +282,7 @@ def _scenario_projection(document: dict[str, Any]) -> dict[str, Any]:
         "configuredFaults": faults,
         "requiredSignals": list(_mapping(document["observability"]).get("signals", [])),
         "agentMode": "offline",
+        "agentExclusions": [],
         "warnings": warnings,
     }
 
@@ -305,6 +306,8 @@ def _config_projection(document: dict[str, Any]) -> dict[str, Any]:
         if isinstance(item, dict) and item.get("type") != "none"
     ]
     recommended = faults[0] if faults and faults[0] in {"pod_kill", "deployment_scale"} else "none"
+    agents = _mapping(document.get("agents"))
+    exclusions = agents.get("exclude", [])
     return {
         "identity": {
             "id": scenario_id,
@@ -318,7 +321,8 @@ def _config_projection(document: dict[str, Any]) -> dict[str, Any]:
         "recommendedFault": recommended,
         "configuredFaults": faults,
         "requiredSignals": list(scenario.get("requiredSignals", [])),
-        "agentMode": str(_mapping(document.get("agents")).get("mode", "offline")),
+        "agentMode": str(agents.get("mode", "offline")),
+        "agentExclusions": list(exclusions) if isinstance(exclusions, list) else [],
         "origin": scenario.get("origin"),
         "warnings": [],
     }

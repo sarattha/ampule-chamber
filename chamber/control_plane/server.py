@@ -30,6 +30,7 @@ from chamber.control_plane.discovery import (
     DiscoverySettings,
     KubernetesDiscovery,
 )
+from chamber.control_plane.goals import goal_catalog, propose_goal
 from chamber.control_plane.jobs import TERMINAL_JOB_STATES, AssessmentJobManager
 from chamber.control_plane.scenarios import (
     ScenarioCatalog,
@@ -87,6 +88,19 @@ class ScenarioValidateRequest(BaseModel):
 class ScenarioSaveRequest(BaseModel):
     document: dict[str, Any]
     replace: bool = False
+
+
+class GoalProposalRequest(BaseModel):
+    goal: str
+    service_name: str = ""
+    workload_name: str = ""
+    service_port: int | None = Field(default=None, ge=1, le=65535)
+    request_path: str = ""
+    repository_available: bool = False
+    attach_mode: bool = False
+    discovery_complete: bool = False
+    dependency_names: tuple[str, ...] = ()
+    telemetry_available: tuple[str, ...] = ()
 
 
 def create_app(
@@ -232,6 +246,7 @@ def create_app(
                 "active_nav": "new",
                 "csrf_token": request.state.csrf_token,
                 "capabilities": _capabilities(kubernetes_discovery.settings),
+                "reliability_goals": goal_catalog(),
             },
         )
 
@@ -260,6 +275,7 @@ def create_app(
         fault_type: Annotated[str, Form()] = "none",
         prometheus_url: Annotated[str, Form()] = "",
         agents_mode: Annotated[str, Form()] = "offline",
+        agents_exclude_json: Annotated[str, Form()] = "[]",
         scenario_id: Annotated[str, Form()] = "",
         scenario_name: Annotated[str, Form()] = "",
         scenario_description: Annotated[str, Form()] = "",
@@ -302,6 +318,7 @@ def create_app(
                 fault_type=fault_type,
                 prometheus_url=prometheus_url,
                 agents_mode=agents_mode,
+                agents_exclude_json=agents_exclude_json,
                 scenario_id=scenario_id,
                 scenario_name=scenario_name,
                 scenario_description=scenario_description,
@@ -324,6 +341,7 @@ def create_app(
                     "active_nav": "new",
                     "csrf_token": request.state.csrf_token,
                     "capabilities": _capabilities(kubernetes_discovery.settings),
+                    "reliability_goals": goal_catalog(),
                     "error": str(exc),
                 },
             )
@@ -504,6 +522,27 @@ def create_app(
         except FileExistsError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except (ScenarioCatalogError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/v1/scenarios/propose")
+    async def propose_scenario_api(
+        request: Request, payload: GoalProposalRequest
+    ) -> dict[str, Any]:
+        _check_csrf(request, request.headers.get("X-CSRF-Token"))
+        try:
+            return propose_goal(
+                payload.goal,
+                service_name=payload.service_name,
+                workload_name=payload.workload_name,
+                service_port=payload.service_port,
+                request_path=payload.request_path,
+                repository_available=payload.repository_available,
+                attach_mode=payload.attach_mode,
+                discovery_complete=payload.discovery_complete,
+                dependency_names=payload.dependency_names,
+                telemetry_available=payload.telemetry_available,
+            )
+        except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/api/v1/kubernetes/discovery")
@@ -706,6 +745,7 @@ def _plan_from_values(
     fault_type: str,
     prometheus_url: str,
     agents_mode: str,
+    agents_exclude_json: str = "[]",
     scenario_id: str = "",
     scenario_name: str = "",
     scenario_description: str = "",
@@ -823,7 +863,17 @@ def _plan_from_values(
         ]
     else:
         raise ValueError("journey type must be http or relayna")
+    try:
+        agent_exclusions = json.loads(agents_exclude_json or "[]")
+    except json.JSONDecodeError as exc:
+        raise ValueError("Agent exclusions must be valid JSON") from exc
+    if not isinstance(agent_exclusions, list) or not all(
+        isinstance(value, str) and value.strip() for value in agent_exclusions
+    ):
+        raise ValueError("Agent exclusions must be a JSON array of non-empty strings")
     config["agents"] = {"mode": agents_mode}
+    if agent_exclusions:
+        config["agents"]["exclude"] = agent_exclusions
     runtime = cast(dict[str, Any], config["runtime"])
     if execution_mode == "kubernetes":
         runtime.update(
@@ -893,6 +943,7 @@ def _plan_from_values(
             journeys=cast(list[dict[str, Any]], traffic["journeys"]),
             required_signals=signals,
             agent_mode=agents_mode,
+            agent_exclusions=agent_exclusions,
             fault_type=fault_type,
         )
         if origin_source == "user"
@@ -980,6 +1031,7 @@ def _matching_user_scenario(
     journeys: list[dict[str, Any]],
     required_signals: list[str],
     agent_mode: str,
+    agent_exclusions: list[str],
     fault_type: str,
 ) -> dict[str, Any] | None:
     if catalog is None or not revision:
@@ -1001,6 +1053,7 @@ def _matching_user_scenario(
         and selected["journeys"] == journeys
         and selected["requiredSignals"] == required_signals
         and selected["agentMode"] == agent_mode
+        and selected.get("agentExclusions", []) == agent_exclusions
         and selected["configuredFaults"] == expected_faults
     )
     return selected if matches else None
