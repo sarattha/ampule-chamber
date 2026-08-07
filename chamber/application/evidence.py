@@ -396,11 +396,11 @@ def _kubernetes_events(run_dir: Path, source: dict[str, Any]) -> list[dict[str, 
     if not isinstance(commands, list):
         return []
     fallback = _source_timestamp(source)
-    events = []
+    command_events: list[dict[str, Any]] = []
+    pod_events: list[dict[str, Any]] = []
+    log_events: list[dict[str, Any]] = []
     log_count = 0
     for command_index, record in enumerate(commands, 1):
-        if len(events) >= MAX_SOURCE_EVENTS:
-            break
         if not isinstance(record, dict):
             continue
         command = _safe_string_list(record.get("command"))
@@ -413,7 +413,7 @@ def _kubernetes_events(run_dir: Path, source: dict[str, Any]) -> list[dict[str, 
                 involved = _mapping(item.get("involvedObject"))
                 reason = _safe_token(item.get("reason") or "KubernetesEvent")
                 event_type = _safe_token(item.get("type") or "Normal")
-                events.append(
+                command_events.append(
                     _event(
                         event_id=f"kubernetes:event:{command_index}:{item_index}",
                         timestamp=_iso(
@@ -452,7 +452,7 @@ def _kubernetes_events(run_dir: Path, source: dict[str, Any]) -> list[dict[str, 
                 status = _mapping(item.get("status"))
                 pod = _safe_token(metadata.get("name") or "pod")
                 phase = _safe_token(status.get("phase") or "Unknown")
-                events.append(
+                pod_events.append(
                     _event(
                         event_id=f"kubernetes:pod:{command_index}:{item_index}",
                         timestamp=_iso(status.get("startTime") or metadata.get("creationTimestamp"))
@@ -485,7 +485,7 @@ def _kubernetes_events(run_dir: Path, source: dict[str, Any]) -> list[dict[str, 
                     break
                 severity = match.group("severity").lower().replace("warning", "warn")
                 event_name = _safe_token(match.group("event"))
-                events.append(
+                log_events.append(
                     _event(
                         event_id=f"kubernetes:log:{command_index}:{line_index}",
                         timestamp=_iso(match.group("timestamp")) or fallback,
@@ -501,7 +501,10 @@ def _kubernetes_events(run_dir: Path, source: dict[str, Any]) -> list[dict[str, 
                         pod=pod,
                     )
                 )
-    return events[:MAX_SOURCE_EVENTS]
+    return _bounded_categories(
+        (command_events, pod_events, log_events),
+        MAX_SOURCE_EVENTS,
+    )
 
 
 def _rollback_events(run_dir: Path, source: dict[str, Any]) -> list[dict[str, Any]]:
@@ -902,6 +905,36 @@ def _evenly_bounded(values: Iterable[Any], maximum: int) -> list[Any]:
     if maximum <= 1:
         return items[:maximum]
     return [items[round(index * (len(items) - 1) / (maximum - 1))] for index in range(maximum)]
+
+
+def _bounded_categories(
+    categories: Iterable[Iterable[dict[str, Any]]], maximum: int
+) -> list[dict[str, Any]]:
+    groups = [list(category) for category in categories if category]
+    if not groups or maximum <= 0:
+        return []
+    if sum(len(group) for group in groups) <= maximum:
+        return [item for group in groups for item in group]
+
+    allocations = [1 if index < maximum else 0 for index in range(len(groups))]
+    remaining = maximum - sum(allocations)
+    while remaining > 0:
+        advanced = False
+        for index, group in enumerate(groups):
+            if allocations[index] >= len(group):
+                continue
+            allocations[index] += 1
+            remaining -= 1
+            advanced = True
+            if remaining == 0:
+                break
+        if not advanced:
+            break
+    return [
+        item
+        for group, allocation in zip(groups, allocations, strict=True)
+        for item in _evenly_bounded(group, allocation)
+    ]
 
 
 def _page_url(run_id: str, query: dict[str, str], page: int) -> str:

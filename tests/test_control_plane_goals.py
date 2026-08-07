@@ -226,6 +226,26 @@ class ReliabilityGoalControlPlaneTests(unittest.TestCase):
         ):
             self.assertIn(advanced_field, template)
 
+    def test_repository_target_attach_proposals_follow_runtime_selection(self) -> None:
+        script = (ROOT / "chamber/control_plane/static/app.js").read_text(encoding="utf-8")
+        context_start = script.index("const proposalContext = async goal =>")
+        context_end = script.index("const renderList", context_start)
+        context_source = script[context_start:context_end]
+
+        self.assertIn(
+            'const kubernetesMode = form.querySelector(\'input[name="execution_mode"]'
+            '[value="kubernetes"]\').checked;',
+            context_source,
+        )
+        self.assertIn(
+            'const attached = kubernetesMode && form.elements.runtime_mode.value === "attach";',
+            context_source,
+        )
+        self.assertNotIn(
+            'const attached = form.querySelector(\'input[name="target_source"]',
+            context_source,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -293,6 +293,56 @@ class EvidenceExplorerFallbackTests(unittest.TestCase):
                 next(event for event in kubernetes if event["category"] == "log")["pod"]
             )
 
+            write_json_atomic(
+                artifact,
+                {
+                    "commands": [
+                        {
+                            "command": ["kubectl", "get", "events"],
+                            "stdout": json.dumps(
+                                {
+                                    "items": [
+                                        {
+                                            "type": "Normal",
+                                            "reason": f"Event{index}",
+                                            "involvedObject": {
+                                                "kind": "Deployment",
+                                                "name": "api",
+                                            },
+                                        }
+                                        for index in range(300)
+                                    ]
+                                }
+                            ),
+                        },
+                        {
+                            "command": ["kubectl", "get", "pods"],
+                            "stdout": json.dumps(
+                                {
+                                    "items": [
+                                        {
+                                            "metadata": {"name": "api-late"},
+                                            "status": {"phase": "Running"},
+                                        }
+                                    ]
+                                }
+                            ),
+                        },
+                        {
+                            "command": ["kubectl", "logs", "pod/api-late"],
+                            "stdout": "2026-08-08T00:00:00Z ERROR request.failed detail",
+                        },
+                    ]
+                },
+            )
+            bounded = evidence_projection._kubernetes_events(run_dir, source)
+            self.assertEqual(len(bounded), evidence_projection.MAX_SOURCE_EVENTS)
+            self.assertEqual(
+                {event["category"] for event in bounded},
+                {"kubernetes", "log"},
+            )
+            self.assertTrue(any(event["pod"] == "api-late" for event in bounded))
+
             write_json_atomic(artifact, {"metrics": "invalid"})
             self.assertEqual(evidence_projection._k6_events(run_dir, source, config={}), [])
 

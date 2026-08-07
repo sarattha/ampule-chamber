@@ -18,6 +18,7 @@ PROMETHEUS_REQUIRED_QUERIES = (
     "container_cpu_usage_seconds_total",
     "kube_pod_container_status_restarts_total",
 )
+PROMETHEUS_REQUIRED_SIGNALS = {"cpu_usage", "memory_usage"}
 
 EVIDENCE_REQUIREMENTS = {
     "preflight": {
@@ -156,8 +157,13 @@ def build_assessment_result(
     metadata_runtime = metadata_runtime_value if isinstance(metadata_runtime_value, dict) else {}
     runtime_mode = str(runtime.get("mode", metadata.get("runtime_mode", "deploy")))
     required = ["preflight", "kubernetes-commands", _traffic_evidence_id(config)]
-    if runtime.get("prometheusUrl") or metadata_runtime.get("prometheus_url"):
+    if (
+        runtime.get("prometheusUrl")
+        or metadata_runtime.get("prometheus_url")
+        or _requires_prometheus(config)
+    ):
         required.append("prometheus-memory")
+    required = list(dict.fromkeys(required))
     if runtime_mode == "attach":
         required.extend(("attach-discovery", "pre-test-state", "rollback"))
     available = {str(item.get("evidence_id")) for item in registered_evidence(run_dir)}
@@ -260,6 +266,15 @@ def build_assessment_result(
         "finding_count": len(findings),
         "generated_at": _now(),
     }
+
+
+def _requires_prometheus(config: dict[str, Any]) -> bool:
+    scenario_value = config.get("scenario")
+    scenario = scenario_value if isinstance(scenario_value, dict) else {}
+    signals = scenario.get("requiredSignals")
+    return isinstance(signals, list) and any(
+        isinstance(signal, str) and signal in PROMETHEUS_REQUIRED_SIGNALS for signal in signals
+    )
 
 
 def _evidence_requirements(

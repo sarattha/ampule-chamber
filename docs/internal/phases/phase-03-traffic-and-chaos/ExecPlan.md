@@ -357,6 +357,9 @@ through SSE, and produce content-safe lifecycle evidence.
       phase boundary for the complete P0 workflow.
 - [x] Run the final combined `make check`, scan for conflict markers, and record
       the release-candidate evidence.
+- [x] Address the first Codex review by gating goal-required CPU and memory
+      signals, preserving representative Kubernetes evidence categories, and
+      deriving attach proposals from the selected runtime mode.
 
 ### Integration Decisions
 
@@ -380,3 +383,6 @@ through SSE, and produce content-safe lifecycle evidence.
   `ampule_chamber-1.8.0-py3-none-any.whl`.
 - A repository-wide conflict-marker scan and `git diff --check` passed after
   integration. The final branch contains no unmerged paths.
+- The first Codex review follow-up added three focused regressions. The complete
+  `make check` passed again on 2026-08-08 with 245 tests, 90% combined coverage,
+  all 10 scenarios, strict documentation, release metadata, and package builds.

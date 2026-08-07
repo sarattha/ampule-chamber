@@ -547,7 +547,8 @@
         ...(inspection?.dependencies?.external || []),
       ].map(item => typeof item === "string" ? item : item?.name).filter(Boolean);
       const inspectedPath = inspection?.traffic?.journeys?.[0]?.path || "";
-      const attached = form.querySelector('input[name="target_source"][value="kubernetes"]').checked;
+      const kubernetesMode = form.querySelector('input[name="execution_mode"][value="kubernetes"]').checked;
+      const attached = kubernetesMode && form.elements.runtime_mode.value === "attach";
       return {
         goal,
         service_name: serviceName.value.trim(),

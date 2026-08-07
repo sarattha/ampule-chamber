@@ -121,6 +121,26 @@ class DecisionResultProjectionTests(unittest.TestCase):
             self.assertIn("connection refused", " ".join(gap["limitations"]))
             self.assertIsNone(result["readiness_score"])
 
+    def test_goal_required_cpu_or_memory_signals_gate_on_prometheus_evidence(self) -> None:
+        for signal in ("cpu_usage", "memory_usage"):
+            with self.subTest(signal=signal), TemporaryDirectory() as tmp:
+                run_dir = Path(tmp) / signal
+                _write_required_evidence(run_dir)
+                config = _config()
+                config["scenario"]["requiredSignals"] = [signal]
+
+                result = build_assessment_result(
+                    run_dir,
+                    config=config,
+                    metadata=_metadata(run_dir.name),
+                    findings=(),
+                )
+
+                self.assertEqual(result["status"], "inconclusive")
+                self.assertIn("prometheus-memory", result["required_evidence_ids"])
+                self.assertIn("prometheus-memory", result["missing_evidence_ids"])
+                self.assertIsNone(result["readiness_score"])
+
     def test_findings_link_to_registered_supporting_evidence(self) -> None:
         with TemporaryDirectory() as tmp:
             workspace = Path(tmp) / ".chamber"
