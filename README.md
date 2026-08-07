@@ -1,6 +1,6 @@
 # Ampule Chamber
 
-Version: 1.7.0
+Version: 1.8.0
 
 Production-ready release for agent-driven reliability testing of Kubernetes
 services before production.
@@ -15,11 +15,12 @@ teams that need to answer:
 
 ## Release Status
 
-Ampule Chamber `1.7.0` makes runtime evidence easier to review. The assessment
-UI shows Prometheus CPU, memory, and restart summaries for API and short-lived
-Relayna worker pods, plus a separate content-safe SSE feed for every admitted
-task. Concurrent VUs stay grouped by their admission task IDs, while worker
-correlation distinguishes exact task labels from run-window inference.
+Ampule Chamber `1.8.0` guides operators from a reliability goal to a bounded,
+editable scenario, explains every result as an evidence-backed operational
+decision, and provides one synchronized investigation timeline across traffic,
+faults, Kubernetes state, metrics, safe logs, and Relayna task lifecycles.
+Incomplete evidence never produces a readiness score, and raw downloads remain
+digest-verified.
 
 ## What It Tests
 

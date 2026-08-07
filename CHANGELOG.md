@@ -2,6 +2,36 @@
 
 All notable changes to Ampule Chamber are documented in this file.
 
+## 1.8.0 - 2026-08-08
+
+### Added
+
+- Added six goal-first reliability presets that propose bounded, editable
+  traffic and recovery journeys while keeping faults disabled until explicitly
+  selected.
+- Added plain-language operational verdicts, structured evidence requirements,
+  prioritized next actions, and a review-before-execution setup recovery path.
+- Added a synchronized, filterable evidence explorer spanning traffic, faults,
+  Kubernetes state, metrics, content-safe logs, and Relayna task lifecycles.
+- Added finding deep-links, explicit exact/run-window/inferred correlation
+  labels, bounded pagination, and digest-verified expert artifact downloads.
+
+### Changed
+
+- Basic and Advanced scenario modes now edit the same validated configuration
+  model and preserve imported journey fields across mode changes.
+- Ready, inconclusive, failed, cancelled, local-only, and preflight-failed
+  results remain distinct; incomplete evidence never receives a readiness
+  score.
+- Overview, API responses, and Markdown/HTML/JSON reports now share the same
+  additive decision projection while released artifacts remain readable.
+
+### Documentation
+
+- Documented the goal-first builder, evidence-gap recovery workflow, correlated
+  evidence filters, correlation semantics, content-safety limits, and release
+  acceptance evidence.
+
 ## 1.7.0 - 2026-07-13
 
 ### Added

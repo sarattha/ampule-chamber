@@ -341,3 +341,42 @@ through SSE, and produce content-safe lifecycle evidence.
 - No project version, `CHANGELOG.md`, release notes, or release documents were
   changed; version and release integration remain intentionally delegated to
   the integration worktree.
+
+## P0 Integration And Release 1.8.0
+
+### Checklist
+
+- [x] Integrate issue #32 first as the shared evidence/result contract.
+- [x] Integrate issue #31 while preserving both responsive UI additions and
+      both isolated acceptance-evidence sections.
+- [x] Implement issue #33 from the tested #31/#32 integration state and merge
+      its commit without conflict.
+- [x] Bump the project, Helm chart, deployment image, documentation, and static
+      asset versions once, after all three feature worktrees were combined.
+- [x] Update the changelog, release notes, product documentation, and active
+      phase boundary for the complete P0 workflow.
+- [x] Run the final combined `make check`, scan for conflict markers, and record
+      the release-candidate evidence.
+
+### Integration Decisions
+
+- Release these additive capabilities as SemVer minor version `1.8.0`.
+- Keep one integration branch as the only source of release metadata changes;
+  the three feature branches remain independently reviewable and version-free.
+- Resolve the only #31/#32 textual overlaps by retaining both responsive CSS
+  selector sets and both issue-specific ExecPlan sections. Their server changes
+  merged automatically. Issue #33 was based on that resolved commit and applied
+  without conflict.
+- Do not merge the integration branch into `main` until its final gate is green
+  and the user reviews the ready branch.
+
+### Release-Candidate Evidence
+
+- `make check` passed on 2026-08-08 after the single `1.8.0` release update:
+  formatting, lint, and type checking; 243 tests; 90% combined branch/line
+  coverage; 10 scenario files; deployment and release metadata at `1.8.0`;
+  strict MkDocs; and source-distribution and wheel builds.
+- The package build produced `ampule_chamber-1.8.0.tar.gz` and
+  `ampule_chamber-1.8.0-py3-none-any.whl`.
+- A repository-wide conflict-marker scan and `git diff --check` passed after
+  integration. The final branch contains no unmerged paths.
