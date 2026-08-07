@@ -1,6 +1,6 @@
 # Ampule Chamber
 
-Version: 1.7.0
+Version: 1.8.0
 
 Ampule Chamber is a production-ready reliability testing chamber for Kubernetes
 services before production. It deploys services into isolated chamber
@@ -9,11 +9,11 @@ collects runtime evidence, and produces evidence-backed readiness reports.
 
 ## Production-Ready Release
 
-The `1.7.0` release adds digestible runtime evidence to the assessment UI.
-Prometheus run-window summaries place API and short-lived Relayna worker pods
-side by side, while content-safe SSE events remain grouped under the admission
-task ID for every concurrent VU. Worker-to-task correlation is exact only when
-Kubernetes metadata supports it.
+The `1.8.0` release adds a goal-first scenario builder, decision-oriented
+evidence-gap recovery, and a correlated investigation timeline. Operators can
+move from a bounded proposed test to an evidence-backed verdict, then validate
+findings across traffic, faults, Kubernetes state, metrics, safe logs, and
+Relayna task lifecycles without downloading artifacts.
 
 ## Core Commands
 

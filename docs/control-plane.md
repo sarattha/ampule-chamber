@@ -114,23 +114,36 @@ custom security/resource settings are needed.
 2. **Environment:** choose a local artifact assessment, isolated Kubernetes
    deploy, or attach to an existing non-production namespace. Live runs require
    an explicit context.
-3. **Exercise:** build a custom scenario, select a bundled or workspace
-   scenario, or import supported YAML/JSON. Every selection populates the same
-   editable fields before review. Add one or more HTTP or Relayna traffic journeys. Each journey
-   has its own method, path, expected HTTP status, body, and load model. HTTP
-   journeys support reusable profiles, custom stages, or fixed iterations;
+3. **Exercise:** choose a reliability goal for a bounded editable proposal,
+   build a custom scenario, select a bundled or workspace scenario, or import
+   supported YAML/JSON. Basic and Advanced modes edit the same journey values.
+   HTTP journeys support reusable profiles, custom stages, or fixed iterations;
    Relayna journeys additionally configure task ID extraction, SSE terminal
    statuses, concurrency, iterations, and completion timeout. One assessment
-   cannot mix HTTP and Relayna adapters. Optionally choose an attach-only,
-   allow-listed fault.
+   cannot mix HTTP and Relayna adapters. Faults are never selected by a goal
+   preset; an attach-only, allow-listed fault requires explicit operator input.
 4. **Review:** inspect the safety receipt and generated plan before any live
    action.
 5. **Run:** observe state and evidence updates. Cancellation sends an interrupt
    to the workflow so rollback, cleanup, result persistence, and reporting can
    complete.
-6. **Results:** review readiness, coverage, findings, timeline, registered
-   evidence, resolved configuration, and agent output. Compare compatible runs
-   or export HTML, Markdown, or JSON.
+6. **Results:** read the operational verdict, evidence gaps, and prioritized
+   actions, then validate findings on the synchronized evidence timeline.
+   Compare compatible runs or export HTML, Markdown, or JSON.
+
+### Goal-first scenario builder
+
+Basic mode offers bounded presets for baseline readiness, pod recovery,
+dependency degradation, queue or task backpressure, memory/OOM recovery, and
+latency/error regression. Each proposal shows its assumptions, missing inputs,
+maximum virtual users, total duration, expected outcomes, required evidence,
+traffic/fault/recovery sequence, request preview, and generated configuration.
+
+The presets are proposals, not a second configuration format. Basic and
+Advanced modes edit the same journey controls, and imported fields that the
+guided UI does not understand are retained when switching modes. A new goal
+selection is the only action that replaces the proposal. Server-side
+`ChamberConfig` validation remains authoritative when the plan is created.
 
 ### Runtime evidence in the assessment UI
 
@@ -151,6 +164,38 @@ Worker pods are discovered by Job ownership, run-window start time, and service
 labels. When a worker exposes a task-ID label, the UI shows the exact task link.
 When it does not, the UI explicitly labels the worker as correlated to the run
 rather than claiming an unsupported task-level mapping.
+
+### Verdicts, evidence gaps, and setup recovery
+
+The Overview tab answers what happened, why that outcome was selected, and what
+to do next. It lists required, present, and missing evidence with operational
+impact, likely cause, resolution guidance, and a link to the relevant resolved
+configuration. Ready, inconclusive, failed, cancelled, local-only, and
+preflight-failed states remain distinct. A readiness score is available only
+when every required evidence gate is satisfied.
+
+For recoverable Kubernetes setup gaps, **Fix setup and rerun** creates a new
+plan for review. It may change only the Kubernetes context and Prometheus URL;
+the original target, scenario revision, journeys, safety bounds, and explicitly
+selected faults are deep-copied unchanged. It never starts execution
+automatically and never promotes a local-only run into Kubernetes mode.
+
+### Correlated evidence explorer
+
+The Evidence tab aligns digest-valid traffic, fault, rollback, Kubernetes,
+metric, bounded log, Relayna task, worker, and run-lifecycle observations on one
+timestamp-ordered timeline. Filter by journey, workload, pod, task ID, signal,
+severity, or time window. Finding links retain that context, open the cited
+range, and highlight supporting signals.
+
+Correlation is labeled **exact** only when an item's own timestamp and identity
+support it. Service-label or bounded run-window associations are labeled
+**run-window**; artifact-time or duration-derived placement is labeled
+**inferred**. Large runs are represented by at most 1,000 timeline items and
+paginated in pages of at most 100. The default projection contains only
+allowlisted operational fields: request bodies, uploaded document contents,
+arbitrary Kubernetes messages, and raw log text are excluded. Expert downloads
+remain available only when the registered SHA-256 digest verifies.
 
 ## Exercise editor reference
 

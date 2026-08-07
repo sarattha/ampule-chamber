@@ -1,19 +1,19 @@
 ARG GO_VERSION=1.26.5
 ARG KUBECTL_VERSION=v1.36.2
 ARG KUBECTL_MODULE_VERSION=v0.36.2
-ARG K6_VERSION=v2.1.0
 
 FROM golang:${GO_VERSION}-bookworm AS tool-builder
 ARG KUBECTL_VERSION
 ARG KUBECTL_MODULE_VERSION
-ARG K6_VERSION
 WORKDIR /src/kubectl
 COPY tools/kubectl ./
 RUN test "$(go list -m -f '{{.Version}}' k8s.io/kubectl)" = "${KUBECTL_MODULE_VERSION}" \
     && CGO_ENABLED=0 go build -trimpath \
       -ldflags="-s -w -X k8s.io/component-base/version.gitVersion=${KUBECTL_VERSION} -X k8s.io/component-base/version.gitTreeState=clean" \
-      -o /out/kubectl . \
-    && GOBIN=/out CGO_ENABLED=0 go install -trimpath "go.k6.io/k6/v2@${K6_VERSION}"
+      -o /out/kubectl .
+WORKDIR /src/k6
+COPY tools/k6 ./
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/k6 .
 
 FROM python:3.13-slim AS builder
 WORKDIR /app

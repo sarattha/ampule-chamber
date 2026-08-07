@@ -18,6 +18,81 @@ PROMETHEUS_REQUIRED_QUERIES = (
     "container_cpu_usage_seconds_total",
     "kube_pod_container_status_restarts_total",
 )
+PROMETHEUS_REQUIRED_SIGNALS = {"cpu_usage", "memory_usage"}
+
+EVIDENCE_REQUIREMENTS = {
+    "preflight": {
+        "name": "Kubernetes preflight checks",
+        "impact": "Cluster identity, access, and safety prerequisites were not verified.",
+        "likely_cause": "Preflight did not run, failed, or its artifact was not retained.",
+        "resolution": "Select a reachable Kubernetes context and rerun preflight.",
+        "configuration_path": "runtime.kubernetesContext",
+    },
+    "kubernetes-commands": {
+        "name": "Kubernetes runtime observations",
+        "impact": (
+            "The assessment cannot verify workload behavior from Kubernetes state and events."
+        ),
+        "likely_cause": "Runtime collection did not finish or its evidence was not retained.",
+        "resolution": "Verify namespace read access and rerun runtime collection.",
+        "configuration_path": "runtime.namespace",
+    },
+    "k6-summary": {
+        "name": "Traffic outcome summary",
+        "impact": "Request success, latency, and recovery behavior cannot be evaluated.",
+        "likely_cause": "The traffic journey did not finish or the k6 summary was not retained.",
+        "resolution": "Review the traffic journeys and rerun the bounded load profile.",
+        "configuration_path": "traffic.journeys",
+    },
+    "relayna-summary": {
+        "name": "Relayna lifecycle summary",
+        "impact": "Task admission, lifecycle completion, and recovery cannot be evaluated.",
+        "likely_cause": "The Relayna journey did not finish or its summary was not retained.",
+        "resolution": "Review the Relayna journey and rerun its bounded lifecycle checks.",
+        "configuration_path": "traffic.journeys",
+    },
+    "prometheus-memory": {
+        "name": "Prometheus workload telemetry",
+        "impact": "CPU, memory, restart, and selected-pod coverage are incomplete.",
+        "likely_cause": (
+            "Prometheus was unreachable, queries failed, or selected pods had no series."
+        ),
+        "resolution": "Set a reachable Prometheus URL with metrics for every selected pod.",
+        "configuration_path": "runtime.prometheusUrl",
+    },
+    "attach-discovery": {
+        "name": "Attached target discovery",
+        "impact": "The exact attached workload and dependency boundary cannot be confirmed.",
+        "likely_cause": "Target discovery failed or its artifact was not retained.",
+        "resolution": "Verify the namespace and selected workload, then rerun discovery.",
+        "configuration_path": "deployment.workloads",
+    },
+    "pre-test-state": {
+        "name": "Pre-test workload state",
+        "impact": "Post-fault behavior cannot be compared with a trusted baseline state.",
+        "likely_cause": "The baseline snapshot did not finish or its artifact was not retained.",
+        "resolution": (
+            "Verify target read access and capture state before applying traffic or faults."
+        ),
+        "configuration_path": "deployment.workloads",
+    },
+    "rollback": {
+        "name": "Fault rollback verification",
+        "impact": "Recovery and restoration of the attached target cannot be proven.",
+        "likely_cause": (
+            "Rollback did not finish, could not be verified, or evidence was not retained."
+        ),
+        "resolution": "Review the explicitly selected fault and verify its rollback permissions.",
+        "configuration_path": "runtime.faults",
+    },
+    "live-kubernetes-execution": {
+        "name": "Live Kubernetes execution",
+        "impact": "Local inspection cannot support a production-readiness decision.",
+        "likely_cause": "This assessment was intentionally run in local-only mode.",
+        "resolution": "Create a Kubernetes assessment and explicitly select its target context.",
+        "configuration_path": "runtime.provider",
+    },
+}
 
 
 def analyze_guided_run(
@@ -82,8 +157,13 @@ def build_assessment_result(
     metadata_runtime = metadata_runtime_value if isinstance(metadata_runtime_value, dict) else {}
     runtime_mode = str(runtime.get("mode", metadata.get("runtime_mode", "deploy")))
     required = ["preflight", "kubernetes-commands", _traffic_evidence_id(config)]
-    if runtime.get("prometheusUrl") or metadata_runtime.get("prometheus_url"):
+    if (
+        runtime.get("prometheusUrl")
+        or metadata_runtime.get("prometheus_url")
+        or _requires_prometheus(config)
+    ):
         required.append("prometheus-memory")
+    required = list(dict.fromkeys(required))
     if runtime_mode == "attach":
         required.extend(("attach-discovery", "pre-test-state", "rollback"))
     available = {str(item.get("evidence_id")) for item in registered_evidence(run_dir)}
@@ -109,10 +189,14 @@ def build_assessment_result(
     score: int | None = None
     if stage == "cancelled":
         status = "cancelled"
-    elif stage in {"failed", "preflight_failed"} or not rollback_verified:
+    elif stage == "preflight_failed":
+        status = "preflight_failed"
+    elif stage == "failed" or not rollback_verified:
         status = "failed"
     elif mode != "kubernetes":
-        status = "inconclusive"
+        status = "local_only"
+        required = ["live-kubernetes-execution"]
+        present = []
         missing = ["live-kubernetes-execution"]
         evidence_coverage = 0
     elif missing:
@@ -131,9 +215,32 @@ def build_assessment_result(
         else:
             status = "conditional"
 
+    run_id = str(metadata.get("run_id", run_dir.name))
+    evidence_requirements = _evidence_requirements(
+        run_id=run_id,
+        required=required,
+        present=present,
+        missing=missing,
+        available=available,
+        config=config,
+        limitations=prometheus_limitations,
+    )
+    verdict = _verdict(
+        status=status,
+        score=score,
+        findings=findings,
+        missing=evidence_requirements["missing"],
+        metadata=metadata,
+    )
+    actions = _next_actions(
+        status=status,
+        findings=findings,
+        missing=evidence_requirements["missing"],
+    )
+
     return {
         "schema_version": "chamber.ampule.dev/result/v1",
-        "run_id": str(metadata.get("run_id", run_dir.name)),
+        "run_id": run_id,
         "status": status,
         "conclusive": conclusive,
         "readiness_score": score,
@@ -147,8 +254,276 @@ def build_assessment_result(
         "available_evidence_ids": sorted(available),
         "missing_evidence_ids": missing,
         "evidence_limitations": list(prometheus_limitations),
+        "verdict": verdict,
+        "evidence_requirements": evidence_requirements,
+        "next_actions": actions,
+        "fix_and_rerun": _fix_and_rerun(
+            run_id=run_id,
+            status=status,
+            config=config,
+            missing=evidence_requirements["missing"],
+        ),
         "finding_count": len(findings),
         "generated_at": _now(),
+    }
+
+
+def _requires_prometheus(config: dict[str, Any]) -> bool:
+    scenario_value = config.get("scenario")
+    scenario = scenario_value if isinstance(scenario_value, dict) else {}
+    signals = scenario.get("requiredSignals")
+    return isinstance(signals, list) and any(
+        isinstance(signal, str) and signal in PROMETHEUS_REQUIRED_SIGNALS for signal in signals
+    )
+
+
+def _evidence_requirements(
+    *,
+    run_id: str,
+    required: list[str],
+    present: list[str],
+    missing: list[str],
+    available: set[str],
+    config: dict[str, Any],
+    limitations: tuple[str, ...],
+) -> dict[str, list[dict[str, Any]]]:
+    present_ids = set(present)
+    items = []
+    for evidence_id in dict.fromkeys(required + missing):
+        spec = EVIDENCE_REQUIREMENTS[evidence_id]
+        is_present = evidence_id in present_ids
+        context = {
+            "path": spec["configuration_path"],
+            "url": f"/runs/{run_id}?tab=configuration",
+        }
+        current_value = _configuration_value(config, spec["configuration_path"])
+        if current_value is not None:
+            context["current_value"] = current_value
+        item: dict[str, Any] = {
+            "evidence_id": evidence_id,
+            "name": spec["name"],
+            "state": "present" if is_present else "missing",
+            "impact": (
+                "This required signal is registered and passed its evidence gate."
+                if is_present
+                else spec["impact"]
+            ),
+            "likely_cause": None if is_present else spec["likely_cause"],
+            "resolution": None if is_present else spec["resolution"],
+            "configuration_context": context,
+        }
+        if evidence_id in available:
+            item["evidence_url"] = f"/api/v1/runs/{run_id}/evidence/{evidence_id}"
+        if evidence_id == "prometheus-memory" and not is_present and limitations:
+            item["limitations"] = list(limitations)
+        items.append(item)
+    return {
+        "required": items,
+        "present": [item for item in items if item["state"] == "present"],
+        "missing": [item for item in items if item["state"] == "missing"],
+    }
+
+
+def _configuration_value(config: dict[str, Any], path: str) -> str | None:
+    value: Any = config
+    for part in path.split("."):
+        if not isinstance(value, dict) or part not in value:
+            return None
+        value = value[part]
+    if isinstance(value, str | int | float | bool):
+        return str(value)
+    return None
+
+
+def _verdict(
+    *,
+    status: str,
+    score: int | None,
+    findings: tuple[dict[str, Any], ...],
+    missing: list[dict[str, Any]],
+    metadata: dict[str, Any],
+) -> dict[str, str]:
+    missing_names = ", ".join(str(item["name"]) for item in missing)
+    error = str(metadata.get("error", "")).strip()
+    if status == "ready":
+        return {
+            "headline": "Ready on the tested evidence",
+            "what_happened": (
+                "The assessment completed with every required evidence signal present."
+            ),
+            "why": f"The evidence-backed readiness score is {score}/100 with no blocking finding.",
+            "next_step": "Review the tested scope and promotion guardrails before deployment.",
+        }
+    if status == "inconclusive":
+        return {
+            "headline": "No readiness decision: required evidence is missing",
+            "what_happened": "The assessment completed without enough evidence for a score.",
+            "why": f"Missing required signals: {missing_names}.",
+            "next_step": "Fix the listed telemetry or setup gaps and rerun the same exercise.",
+        }
+    if status == "local_only":
+        return {
+            "headline": "Local-only result: live readiness was not tested",
+            "what_happened": "Repository checks completed without a live Kubernetes exercise.",
+            "why": "Local inspection cannot provide the runtime evidence required for readiness.",
+            "next_step": "Create a Kubernetes assessment and explicitly select the target context.",
+        }
+    if status == "preflight_failed":
+        return {
+            "headline": "Preflight blocked the assessment before mutation",
+            "what_happened": "The Kubernetes safety and access checks did not pass.",
+            "why": error or "The selected target did not satisfy required preflight checks.",
+            "next_step": "Correct the target context or permissions, then rerun preflight.",
+        }
+    if status == "cancelled":
+        return {
+            "headline": "Assessment cancelled before a readiness decision",
+            "what_happened": "Execution stopped at the operator's request.",
+            "why": "Cancellation leaves the tested exercise and its evidence incomplete.",
+            "next_step": "Confirm cleanup, review partial evidence, and rerun when safe.",
+        }
+    if status == "failed":
+        return {
+            "headline": "Assessment execution failed",
+            "what_happened": "The assessment or required rollback did not complete safely.",
+            "why": error or "Execution failed before a conclusive readiness result was produced.",
+            "next_step": "Resolve the execution or rollback failure before retesting.",
+        }
+    finding_count = len(findings)
+    return {
+        "headline": (
+            "Not ready on the tested evidence"
+            if status == "not_ready"
+            else "Conditionally ready on the tested evidence"
+        ),
+        "what_happened": "The live assessment completed with all required evidence present.",
+        "why": f"{finding_count} evidence-backed finding(s) reduced readiness to {score}/100.",
+        "next_step": "Remediate the prioritized findings and rerun the same bounded exercise.",
+    }
+
+
+def _next_actions(
+    *,
+    status: str,
+    findings: tuple[dict[str, Any], ...],
+    missing: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    actions: list[dict[str, Any]] = []
+    if status == "preflight_failed":
+        actions.append(
+            _action(
+                "setup", "Correct Kubernetes preflight setup", "Resolve context and access checks."
+            )
+        )
+    elif status == "cancelled":
+        actions.append(
+            _action(
+                "safety",
+                "Confirm cleanup after cancellation",
+                "Verify no bounded fault remains active.",
+            )
+        )
+    elif status == "failed":
+        actions.append(
+            _action(
+                "remediation",
+                "Resolve the execution failure",
+                "Use the recorded error and timeline.",
+            )
+        )
+    elif status == "local_only":
+        actions.append(
+            _action(
+                "setup", "Select a Kubernetes target", "Live evidence requires an explicit context."
+            )
+        )
+    for gap in missing:
+        actions.append(
+            _action(
+                "telemetry" if gap["evidence_id"] == "prometheus-memory" else "setup",
+                f"Restore {gap['name']}",
+                str(gap["resolution"]),
+                configuration_context=gap["configuration_context"],
+            )
+        )
+    for finding in findings:
+        recommendations = finding.get("recommendations")
+        rationale = (
+            str(recommendations[0])
+            if isinstance(recommendations, list) and recommendations
+            else "Review the cited evidence and correct the observed reliability failure."
+        )
+        actions.append(
+            _action(
+                "remediation",
+                f"Remediate {finding.get('signal_type', 'reliability finding')}",
+                rationale,
+                finding_id=str(finding.get("finding_id", "unknown")),
+            )
+        )
+    if status == "ready":
+        actions.append(
+            _action(
+                "review",
+                "Review promotion guardrails",
+                "Confirm the tested scope matches deployment risk.",
+            )
+        )
+    actions.append(
+        _action(
+            "retest",
+            "Rerun the preserved exercise",
+            "Compare the next evidence-backed result with this run.",
+        )
+    )
+    for priority, action in enumerate(actions, start=1):
+        action["priority"] = priority
+    return actions
+
+
+def _action(category: str, title: str, rationale: str, **context: Any) -> dict[str, Any]:
+    return {"category": category, "title": title, "rationale": rationale, **context}
+
+
+def _fix_and_rerun(
+    *,
+    run_id: str,
+    status: str,
+    config: dict[str, Any],
+    missing: list[dict[str, Any]],
+) -> dict[str, Any]:
+    runtime = config.get("runtime")
+    runtime = runtime if isinstance(runtime, dict) else {}
+    scenario = config.get("scenario")
+    scenario = scenario if isinstance(scenario, dict) else {}
+    return {
+        "available": status != "local_only",
+        "method": "POST",
+        "url": f"/ui/runs/{run_id}/fix-and-rerun",
+        "preserves": [
+            "service target",
+            "scenario revision",
+            "traffic journeys",
+            "safety bounds",
+            "explicitly selected faults",
+        ],
+        "scenario_revision": scenario.get("revision"),
+        "setup": {
+            "kubernetes_context": runtime.get("kubernetesContext", ""),
+            "prometheus_url": runtime.get("prometheusUrl", ""),
+        },
+        "prefilled_configuration_paths": [
+            str(item["configuration_context"]["path"])
+            for item in missing
+            if item["configuration_context"]["path"]
+            in {"runtime.kubernetesContext", "runtime.prometheusUrl"}
+        ],
+        "unavailable_reason": (
+            "Choose a Kubernetes target explicitly; a local config cannot be promoted "
+            "automatically."
+            if status == "local_only"
+            else None
+        ),
     }
 
 

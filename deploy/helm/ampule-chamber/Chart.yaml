@@ -2,5 +2,5 @@ apiVersion: v2
 name: ampule-chamber
 description: In-cluster Ampule Chamber control-plane UI for Kubernetes reliability assessments
 type: application
-version: 1.7.0
-appVersion: "1.7.0"
+version: 1.8.0
+appVersion: "1.8.0"

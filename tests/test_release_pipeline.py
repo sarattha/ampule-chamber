@@ -12,9 +12,20 @@ class ReleasePipelineTest(unittest.TestCase):
 
         self.assertIn("ARG GO_VERSION=1.26.5", dockerfile)
         self.assertIn("COPY tools/kubectl ./", dockerfile)
-        self.assertIn('go install -trimpath "go.k6.io/k6/v2@${K6_VERSION}"', dockerfile)
+        self.assertIn("COPY tools/k6 ./", dockerfile)
+        self.assertIn(
+            'RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/k6 .', dockerfile
+        )
         self.assertNotIn("dl.k8s.io/release", dockerfile)
         self.assertNotIn("github.com/grafana/k6/releases/download", dockerfile)
+
+    def test_embedded_tool_builds_pin_fixed_security_dependencies(self) -> None:
+        kubectl_module = (ROOT / "tools/kubectl/go.mod").read_text(encoding="utf-8")
+        k6_module = (ROOT / "tools/k6/go.mod").read_text(encoding="utf-8")
+
+        self.assertIn("golang.org/x/text v0.39.0", kubectl_module)
+        self.assertIn("golang.org/x/text v0.39.0", k6_module)
+        self.assertIn("google.golang.org/grpc v1.82.1", k6_module)
 
     def test_release_scan_gates_registry_publication(self) -> None:
         workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")

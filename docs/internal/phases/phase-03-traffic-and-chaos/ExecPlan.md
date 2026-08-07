@@ -145,3 +145,252 @@ through SSE, and produce content-safe lifecycle evidence.
   per-pod peaks and sample counts from the complete response before truncating
   raw series for persistence. A 101-pod regression fixture verifies the last
   worker remains summarized, and the complete `make check` gate passed again.
+
+## Issue #32: Decision-Oriented Results And Evidence-Gap Recovery
+
+### Progress
+
+- [x] Add one evidence-gated result projection that explains what happened,
+      why the status was selected, and what the operator should do next.
+- [x] Project required, present, and missing signals with human-readable names,
+      operational impact, likely cause, resolution, and configuration links.
+- [x] Keep ready, inconclusive, failed, cancelled, local-only, and
+      preflight-failed results distinct without assigning incomplete runs a
+      readiness score.
+- [x] Link findings to registered supporting evidence and missing signals to
+      the relevant resolved-configuration context.
+- [x] Add prioritized setup, telemetry, remediation, safety, review, and retest
+      actions according to the result state.
+- [x] Add review-before-execution UI and API rerun paths that preserve the
+      target, scenario revision, traffic journeys, safety bounds, and explicitly
+      selected faults while allowing only Kubernetes context and Prometheus URL
+      setup overrides.
+- [x] Keep the Overview, Markdown/HTML/JSON report exports, and
+      `/api/v1/runs/{run_id}` on the same persisted result projection.
+- [x] Add focused six-state, evidence-gap, link, surface-consistency, safe-rerun,
+      Prometheus-gate, and legacy `result/v1` compatibility coverage.
+- [x] Run the complete `make check` acceptance gate and record final evidence.
+
+### Decisions
+
+- Preserve `chamber.ampule.dev/result/v1` and its existing evidence ID, score,
+  and coverage fields. The decision-oriented fields are additive so released
+  run artifacts remain readable without migration.
+- Use `local_only` and `preflight_failed` result statuses instead of collapsing
+  them into `inconclusive` or `failed`. Both remain non-conclusive and always
+  retain a null readiness score.
+- Treat a registered but invalid Prometheus artifact as missing required
+  evidence while linking both its retained artifact and its query limitations.
+- Never turn a local config into a Kubernetes config through recovery. The
+  operator must select a Kubernetes target explicitly in the normal intake
+  flow.
+- A blank rerun setup field preserves the previous value. In particular, an
+  operator cannot remove an existing Prometheus evidence requirement by
+  submitting a blank recovery form.
+- The fix path creates a new plan for review and never starts execution. Only
+  `runtime.kubernetesContext` and `runtime.prometheusUrl` may change; all tested
+  traffic, safety, scenario, target, and fault data is deep-copied unchanged.
+
+### Acceptance Evidence
+
+- The focused decision-result suite passed 8 tests covering the six explicit
+  result states, structured required/present/missing evidence, Prometheus
+  limitations, finding-to-evidence links, UI/API/JSON report consistency,
+  Markdown decision sections, safe rerun preservation, local-only refusal, and
+  released `result/v1` compatibility.
+- The combined Prometheus evidence, decision-result, and existing assessment
+  projection suite passed 37 tests.
+- Existing Phase 05 reporting, complete Control Plane, Phase 11-13 workflow,
+  and scenario catalog suites passed 85 tests after the projection and rerun
+  changes.
+- `make check` passed on 2026-08-08: 62 files were formatted, lint and type
+  checking passed, 230 tests passed, combined branch/line coverage remained at
+  90%, 10 scenario files passed validation, deployment and release metadata
+  remained at the intentionally unchanged `1.7.0`, strict MkDocs completed,
+  and the source distribution and wheel built successfully.
+- The first sandboxed `make check` attempt reached the test target but could not
+  bind the existing Relayna loopback HTTP fixture. Re-running the identical gate
+  outside the socket-restricted sandbox passed; no product failure or test
+  assertion was involved.
+
+## Issue #31: Reliability-Goal-First Scenario Builder
+
+### Progress
+
+- [x] Added Basic goal presets for baseline readiness, pod recovery, dependency
+      degradation, queue/task backpressure, memory/OOM recovery, and
+      latency/error regression.
+- [x] Reused repository inspection and Kubernetes Service/workload discovery
+      values to propose bounded editable traffic while showing assumptions and
+      unresolved inputs.
+- [x] Added maximum VUs, total duration, expected outcomes, selected/recommended
+      fault state, required evidence, and explicit safety-limit summaries.
+- [x] Added an in-system traffic/fault/recovery visualization plus generated
+      request and config previews without adding image assets or a UI framework.
+- [x] Preserved the existing Advanced editor for HTTP/k6, Relayna JSON and
+      multipart lifecycle requests, custom stages, fixed iterations, follow-up
+      checks, attach faults, and agent mode/exclusions.
+- [x] Preserved imported journey fields losslessly by retaining the original
+      journey and nested multipart/Relayna objects as the serialization base.
+- [x] Kept Basic and Advanced controls on the same underlying form values so a
+      mode switch only changes visibility. Selecting a new goal is the explicit
+      operation that replaces the proposal.
+- [x] Kept every preset's selected fault at `none`; recommended pod loss remains
+      disabled until the operator chooses the existing attach fault control.
+- [x] Kept final plan creation on the existing `_ui_journeys`, scenario
+      normalization, and `plan_config` server-side validation path.
+
+### Decisions And Assumptions
+
+- Basic mode is capped at 25 VUs and 300 seconds. Individual presets are lower
+  than those caps and always end with a zero-traffic recovery stage.
+- The current ChamberConfig attach runner supports only `pod_kill` and
+  `deployment_scale`. Dependency degradation and memory pressure presets expose
+  their fault mechanism as a missing input instead of inventing an unsupported
+  fault or silently enabling an unsafe substitute.
+- Attaching without a repository is a supported planning path. The proposal
+  states that source-level endpoints and dependencies cannot be inferred and
+  relies on the existing Service/workload discovery or explicit operator input.
+- Agent exclusions are now retained alongside the existing agent mode so a
+  saved or imported Advanced configuration can round-trip the full currently
+  supported agent settings.
+
+### Evaluation And Acceptance Evidence
+
+- `uv run python -m unittest tests.test_control_plane_goals` passed 5 focused
+  tests covering all six presets, bounded defaults, partial discovery,
+  attach-without-repository assumptions, goal-specific missing inputs, fault
+  safety, authoritative plan rejection, and Basic/Advanced lossless structure.
+- `uv run python -m unittest tests.test_control_plane_goals
+  tests.test_control_plane tests.test_scenario_catalog
+  tests.test_control_plane_kubernetes` passed all 36 focused and existing
+  control-plane regression tests.
+- `node --check chamber/control_plane/static/app.js` passed after the final UI
+  changes.
+- `make check` passed on 2026-08-08: Python format, lint, and type checks; 227
+  unit and workflow tests; 90% combined branch/line coverage; 10 scenario files;
+  deployment and release metadata validation at the intentionally unchanged
+  `1.7.0`; strict MkDocs build; and source-distribution and wheel builds.
+- No project version, `CHANGELOG.md`, release notes, image assets, or framework
+  dependencies were changed for issue #31.
+
+## Issue #33: Correlated Evidence Explorer And Investigation Timeline
+
+### Progress
+
+- [x] Added an additive `chamber.ampule.dev/evidence-explorer/v1` projection
+      without changing the persisted `result/v1`, finding, or evidence artifact
+      contracts established by issue #32.
+- [x] Normalized digest-valid k6, Relayna task and worker, Kubernetes event,
+      workload, bounded operational log, rollback, Prometheus, and run lifecycle
+      items onto one timestamp-ordered timeline with explicit source identity.
+- [x] Kept exact, run-window, and inferred correlations distinct in the
+      projection, legend, timeline styling, and operator-facing explanations.
+- [x] Added journey, workload, pod, task ID, signal, severity, and time-window
+      filters with context-preserving pagination and finding context.
+- [x] Deep-linked existing findings into the cited evidence range and
+      highlighted relevant cited signals without inventing a second result or
+      finding-link contract.
+- [x] Added an expert raw-artifact toggle whose downloads remain gated by the
+      existing run-bound SHA-256 manifest verification.
+- [x] Kept default projections content-safe through allowlisted operational
+      fields and tokenized Kubernetes log events; request bodies, document
+      contents, Kubernetes event messages, and arbitrary log text are excluded.
+- [x] Bounded the explorer at 1,000 representative events, at most 100 events
+      per page, 200 Relayna tasks with five sampled lifecycle events per task,
+      300 Kubernetes events, and 100 safe log events.
+- [x] Added projection, API, integrity, content-safety, multi-pod,
+      concurrent-task, filter/context, finding-deep-link, correlation, and
+      bounding/pagination regressions.
+
+### Decisions And Assumptions
+
+- Build the explorer as an application/UI projection over registered artifacts
+  rather than migrating existing artifacts. Older artifacts remain readable,
+  while only digest-valid entries enter the correlated timeline or raw download
+  list.
+- Use each item's own parseable timestamp for exact correlation. Use explicit
+  workload/task labels for exact identity, bounded run-window/service labels for
+  run-window identity, and artifact time or duration-derived positions only as
+  visibly inferred timestamps.
+- Use the persisted finding evidence IDs and signal type to select the relevant
+  cited range. Existing raw evidence URLs remain compatible; the additive
+  investigation URL opens the Evidence tab with finding context.
+- Treat k6 summary outcomes and artifacts without item timestamps as honest
+  run-window or inferred observations rather than manufacturing exact times.
+- Preserve the existing metric and Relayna summary cards as secondary legacy
+  views for pre-manifest runs. Their existing allowlisted projections remain
+  content-safe, while the new correlated explorer and all downloads require a
+  valid manifest digest.
+
+### Evaluation And Acceptance Evidence
+
+- `uv run python -m unittest tests.test_evidence_explorer` passed 8 focused
+  tests covering the complete source overlay, source/timestamp normalization,
+  content safety, multi-pod and concurrent-task evidence, all filters, context
+  preservation, finding range/highlighting, explicit correlations,
+  digest-verified downloads, tamper rejection, and large-run bounding.
+- The combined issue #33, Control Plane, decision-result, Prometheus, Relayna,
+  and Phase 11-13 workflow suite passed 121 tests.
+- `make format`, `make lint`, and `make typecheck` passed after the final
+  projection and UI changes.
+- `make check` passed on 2026-08-08: formatting, lint, and type checking;
+  243 tests; 90% combined branch/line coverage; 10 scenario files; deployment
+  and release metadata at the intentionally unchanged `1.7.0`; strict MkDocs;
+  and source-distribution and wheel builds.
+- No project version, `CHANGELOG.md`, release notes, or release documents were
+  changed; version and release integration remain intentionally delegated to
+  the integration worktree.
+
+## P0 Integration And Release 1.8.0
+
+### Checklist
+
+- [x] Integrate issue #32 first as the shared evidence/result contract.
+- [x] Integrate issue #31 while preserving both responsive UI additions and
+      both isolated acceptance-evidence sections.
+- [x] Implement issue #33 from the tested #31/#32 integration state and merge
+      its commit without conflict.
+- [x] Bump the project, Helm chart, deployment image, documentation, and static
+      asset versions once, after all three feature worktrees were combined.
+- [x] Update the changelog, release notes, product documentation, and active
+      phase boundary for the complete P0 workflow.
+- [x] Run the final combined `make check`, scan for conflict markers, and record
+      the release-candidate evidence.
+- [x] Address the first Codex review by gating goal-required CPU and memory
+      signals, preserving representative Kubernetes evidence categories, and
+      deriving attach proposals from the selected runtime mode.
+- [x] Repair the release security gates by updating the Python lock and building
+      k6 and kubectl from checked-in Go modules with fixed dependencies.
+
+### Integration Decisions
+
+- Release these additive capabilities as SemVer minor version `1.8.0`.
+- Keep one integration branch as the only source of release metadata changes;
+  the three feature branches remain independently reviewable and version-free.
+- Resolve the only #31/#32 textual overlaps by retaining both responsive CSS
+  selector sets and both issue-specific ExecPlan sections. Their server changes
+  merged automatically. Issue #33 was based on that resolved commit and applied
+  without conflict.
+- Do not merge the integration branch into `main` until its final gate is green
+  and the user reviews the ready branch.
+
+### Release-Candidate Evidence
+
+- `make check` passed on 2026-08-08 after the single `1.8.0` release update:
+  formatting, lint, and type checking; 243 tests; 90% combined branch/line
+  coverage; 10 scenario files; deployment and release metadata at `1.8.0`;
+  strict MkDocs; and source-distribution and wheel builds.
+- The package build produced `ampule_chamber-1.8.0.tar.gz` and
+  `ampule_chamber-1.8.0-py3-none-any.whl`.
+- A repository-wide conflict-marker scan and `git diff --check` passed after
+  integration. The final branch contains no unmerged paths.
+- The first Codex review follow-up added three focused regressions. The complete
+  `make check` passed again on 2026-08-08 with 245 tests, 90% combined coverage,
+  all 10 scenarios, strict documentation, release metadata, and package builds.
+- Local Trivy `0.70.0` filesystem and image scans both passed with zero HIGH or
+  CRITICAL findings after updating MCP to `1.29.0`, cryptography to `50.0.0`,
+  `golang.org/x/text` to `0.39.0`, and gRPC-Go to `1.82.1`.
+- The security-gate follow-up `make check` passed with 246 tests, 90% combined
+  coverage, all 10 scenarios, strict documentation, release metadata, and
+  package builds.

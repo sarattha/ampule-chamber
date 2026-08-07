@@ -1,5 +1,27 @@
 # Releases
 
+## 1.8.0 - 2026-08-08
+
+Ampule Chamber `1.8.0` connects scenario design, operational decisions, and
+evidence investigation into one reviewable workflow.
+
+Highlights:
+
+- Start from one of six reliability goals and review bounded traffic, recovery,
+  assumptions, missing inputs, safety limits, and generated configuration.
+- Switch between Basic and Advanced editing without losing imported journey or
+  agent settings; faults remain an explicit operator choice.
+- Read a plain-language verdict with required, present, and missing evidence,
+  configuration links, prioritized actions, and a safe setup-rerun plan.
+- Distinguish ready, inconclusive, failed, cancelled, local-only, and
+  preflight-failed outcomes without inventing readiness scores.
+- Investigate traffic, faults, Kubernetes events, metrics, safe logs, and
+  Relayna task events on one filterable, paginated timeline.
+- Open findings at their cited time window, distinguish exact from run-window
+  or inferred correlation, and download only digest-verified raw artifacts.
+- Ship fixed Python dependencies and source-built k6 and kubectl clients that
+  pass the release HIGH/CRITICAL repository and container vulnerability gates.
+
 ## 1.7.0 - 2026-07-13
 
 Ampule Chamber `1.7.0` turns Relayna runtime artifacts into a digestible

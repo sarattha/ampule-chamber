@@ -31,10 +31,21 @@
     const importScenarioPanel = form.querySelector("[data-import-scenario]");
     const scenarioSelect = form.querySelector("[data-scenario-select]");
     const scenarioMetadata = form.querySelector("[data-scenario-metadata]");
+    const basicBuilder = form.querySelector("[data-basic-builder]");
+    const basicMethod = form.querySelector("[data-basic-method]");
+    const basicPath = form.querySelector("[data-basic-path]");
+    const basicStatus = form.querySelector("[data-basic-status]");
+    const basicVus = form.querySelector("[data-basic-vus]");
+    const basicDuration = form.querySelector("[data-basic-duration]");
+    const goalStatus = form.querySelector("[data-goal-status]");
     const csrfToken = form.elements._csrf.value;
     let discoveryData = null;
+    let repositoryInspection = null;
+    let repositoryInspectionPath = "";
     let scenarioCatalog = [];
     let scenarioWarnings = [];
+    let goalProposal = null;
+    let goalContextDirty = true;
     let current = 0;
 
     const profiles = {
@@ -45,6 +56,12 @@
 
     const field = (card, name) => card.querySelector(`[data-journey-field="${name}"]`);
     const multipartField = (row, name) => row.querySelector(`[data-multipart-file-field="${name}"]`);
+    const originalJourney = card => {
+      try {
+        const item = JSON.parse(card.dataset.journeyBase || "{}");
+        return item && typeof item === "object" && !Array.isArray(item) ? item : {};
+      } catch (_) { return {}; }
+    };
     const retainedMultipartFile = row => {
       try {
         const item = JSON.parse(row.dataset.retainedMultipartFile || "null");
@@ -171,6 +188,7 @@
     };
 
     const populateJourney = (card, journey) => {
+      card.dataset.journeyBase = JSON.stringify(journey);
       const adapter = journey.adapter || "http";
       field(card, "adapter").value = adapter;
       field(card, "name").value = journey.name || "traffic";
@@ -238,6 +256,7 @@
       form.elements.scenario_revision.value = projection.revision;
       form.elements.required_signals_json.value = JSON.stringify(projection.requiredSignals || []);
       form.elements.agents_mode.value = projection.agentMode || "offline";
+      form.elements.agents_exclude_json.value = JSON.stringify(projection.agentExclusions || [], null, 2);
       if (Number.isInteger(projection.targetServicePort)) {
         form.elements.service_port.value = projection.targetServicePort;
       }
@@ -246,6 +265,9 @@
       projection.journeys.forEach(journey => addJourney({adapter: journey.adapter || "http", journey}));
       scenarioWarnings = projection.warnings || [];
       form.dataset.scenarioWarnings = JSON.stringify(scenarioWarnings);
+      goalProposal = null;
+      goalContextDirty = false;
+      setEditorMode("advanced");
       const faultMessage = projection.recommendedFault && projection.recommendedFault !== "none"
         ? ` ${projection.recommendedFault} is recommended but remains disabled; choose it explicitly below.` : "";
       const warningMessage = scenarioWarnings.length ? ` ${scenarioWarnings.join(" ")}` : "";
@@ -312,15 +334,29 @@
         const adapter = field(card, "adapter").value;
         const loadModel = field(card, "loadModel").value;
         const requestEncoding = field(card, "requestEncoding").value;
+        const baseJourney = originalJourney(card);
         const journey = {
+          ...baseJourney,
           name: field(card, "name").value.trim(),
           method: field(card, "method").value,
           path: field(card, "path").value.trim(),
           expectedStatus: Number(field(card, "expectedStatus").value),
           requestEncoding,
         };
+        delete journey.adapter;
+        delete journey.body;
+        delete journey.form;
+        delete journey.multipart;
+        delete journey.contentType;
+        delete journey.textBytes;
+        delete journey.stages;
+        delete journey.vus;
+        delete journey.iterations;
+        delete journey.durationSeconds;
+        delete journey.relayna;
+        delete journey.followUps;
         const tool = field(card, "tool").value.trim();
-        if (tool) journey.tool = tool;
+        if (tool) journey.tool = tool; else delete journey.tool;
         if (adapter === "relayna") journey.adapter = "relayna";
         if (requestEncoding === "json") {
           const bodyControl = field(card, "body");
@@ -362,7 +398,10 @@
             }
             return item;
           });
+          const baseMultipart = baseJourney.multipart && typeof baseJourney.multipart === "object"
+            ? baseJourney.multipart : {};
           journey.multipart = {
+            ...baseMultipart,
             fields,
             files,
           };
@@ -392,7 +431,10 @@
           journey.stages = profiles[field(card, "profile").value];
         }
         if (adapter === "relayna") {
+          const baseLifecycle = baseJourney.relayna && typeof baseJourney.relayna === "object"
+            ? baseJourney.relayna : {};
           journey.relayna = {
+            ...baseLifecycle,
             taskIdPath: field(card, "taskIdPath").value.trim(),
             eventsPath: field(card, "eventsPath").value.trim(),
             terminalStatuses: field(card, "terminalStatuses").value.split(",").map(value => value.trim()).filter(Boolean),
@@ -442,11 +484,13 @@
       if (!workload) return;
       workloadName.value = workload.name;
       form.elements.workload_kind.value = workload.kind;
+      goalContextDirty = true;
     };
 
     const applyService = () => {
       const service = (discoveryData?.services || []).find(item => item.name === discoveredService.value);
       if (!service) return;
+      goalContextDirty = true;
       serviceName.value = service.name;
       if (service.ports.length) form.elements.service_port.value = service.ports[0].port;
       const candidates = service.workloads.length ? service.workloads : discoveryData.workloads;
@@ -466,6 +510,217 @@
         discoveryStatus.textContent = "No workload was found. Enter its name and kind in the Target step.";
       } else {
         discoveryStatus.textContent = `Matched ${service.name} to ${candidates[0].kind} ${candidates[0].name}.`;
+      }
+    };
+
+    const inspectRepositoryForGoal = async () => {
+      const attached = form.querySelector('input[name="target_source"][value="kubernetes"]').checked;
+      const selectedRepo = repo.value.trim();
+      if (attached || !selectedRepo) return null;
+      if (repositoryInspection && repositoryInspectionPath === selectedRepo) return repositoryInspection;
+      const response = await fetch("/api/v1/inspect", {
+        method: "POST",
+        headers: {"Content-Type": "application/json", "X-CSRF-Token": csrfToken},
+        body: JSON.stringify({repo: selectedRepo}),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || "Repository inspection failed");
+      repositoryInspection = payload;
+      repositoryInspectionPath = selectedRepo;
+      const inspectedService = payload.service?.name;
+      if (!serviceName.value.trim() && inspectedService) serviceName.value = inspectedService;
+      const workload = (payload.deployment?.workloads || []).find(item => item.role === "target")
+        || (payload.deployment?.workloads || [])[0];
+      if (!workloadName.value.trim() && workload?.name) {
+        workloadName.value = workload.name;
+        if (workload.kind) form.elements.workload_kind.value = workload.kind;
+      }
+      return payload;
+    };
+
+    const proposalContext = async goal => {
+      let inspection = null;
+      try { inspection = await inspectRepositoryForGoal(); }
+      catch (error) { goalStatus.textContent = `${error.message}. Using the entered values instead.`; }
+      const dependencies = [
+        ...(inspection?.dependencies?.internal || []),
+        ...(inspection?.dependencies?.external || []),
+      ].map(item => typeof item === "string" ? item : item?.name).filter(Boolean);
+      const inspectedPath = inspection?.traffic?.journeys?.[0]?.path || "";
+      const kubernetesMode = form.querySelector('input[name="execution_mode"][value="kubernetes"]').checked;
+      const attached = kubernetesMode && form.elements.runtime_mode.value === "attach";
+      return {
+        goal,
+        service_name: serviceName.value.trim(),
+        workload_name: workloadName.value.trim(),
+        service_port: Number(form.elements.service_port.value) || null,
+        request_path: inspectedPath,
+        repository_available: Boolean(inspection),
+        attach_mode: attached,
+        discovery_complete: Boolean(attached && discoveryData && serviceName.value.trim() && workloadName.value.trim()),
+        dependency_names: dependencies,
+        telemetry_available: form.elements.prometheus_url.value.trim() ? ["prometheus"] : [],
+      };
+    };
+
+    const renderList = (selector, values, emptyMessage) => {
+      const list = form.querySelector(selector);
+      const items = values.length ? values : [emptyMessage];
+      list.replaceChildren(...items.map(value => {
+        const item = document.createElement("li");
+        item.textContent = value;
+        return item;
+      }));
+    };
+
+    const proposalDuration = journeys => journeys.reduce((total, journey) => total
+      + Number(journey.durationSeconds || 0)
+      + (journey.stages || []).reduce((stageTotal, stage) => {
+        const match = String(stage.duration || "").match(/^(\d+)(s|m)$/);
+        return stageTotal + (match ? Number(match[1]) * (match[2] === "m" ? 60 : 1) : 0);
+      }, 0), 0);
+
+    const renderGoalSummary = () => {
+      let journeys = [];
+      try { journeys = serializeJourneys(); } catch (_) { journeys = []; }
+      const maxVus = journeys.reduce((maximum, journey) => Math.max(
+        maximum,
+        Number(journey.vus || 0),
+        ...(journey.stages || []).map(stage => Number(stage.targetVus || 0)),
+      ), 0);
+      const duration = proposalDuration(journeys);
+      const selectedFault = form.elements.fault_type.value;
+      const faultLabel = form.elements.fault_type.selectedOptions[0]?.textContent || "Observe only";
+      form.querySelector("[data-goal-max-vus]").textContent = `${maxVus} VUs`;
+      form.querySelector("[data-goal-duration]").textContent = duration ? `${duration}s` : "Not specified";
+      form.querySelector("[data-goal-fault]").textContent = selectedFault === "none" ? "No fault selected" : faultLabel;
+      form.querySelector("[data-goal-safety]").textContent = `${maxVus}/25 VUs · ${duration}/300s`;
+      const timeline = [
+        ["Traffic", `${maxVus} VUs maximum across ${duration || "an unspecified"}s`],
+        ["Fault", selectedFault === "none" ? (goalProposal?.faultSummary || "No fault selected") : faultLabel],
+        ["Recovery", "Traffic returns to zero and readiness evidence is collected"],
+      ];
+      form.querySelector("[data-goal-timeline]").replaceChildren(...timeline.map(([label, detail], index) => {
+        const item = document.createElement("li");
+        const marker = document.createElement("span");
+        marker.textContent = String(index + 1);
+        const content = document.createElement("div");
+        const heading = document.createElement("strong");
+        const note = document.createElement("small");
+        heading.textContent = label;
+        note.textContent = detail;
+        content.append(heading, note);
+        item.append(marker, content);
+        return item;
+      }));
+      renderList("[data-goal-outcomes]", goalProposal?.expectedOutcomes || [], "Confirm the expected outcome in Advanced mode.");
+      renderList("[data-goal-evidence]", goalProposal?.requiredEvidence || [], "Default Chamber evidence");
+      renderList("[data-goal-assumptions]", goalProposal?.assumptions || [], "No generated assumptions yet.");
+      renderList("[data-goal-missing]", goalProposal?.missingInputs || [], "No unresolved inputs.");
+      const first = journeys[0] || {};
+      const requestPreview = `${first.method || "GET"} http://${serviceName.value.trim() || "<service>"}:${form.elements.service_port.value || "<port>"}${first.path || "/"}\nExpected status: ${first.expectedStatus || "<required>"}\nEncoding: ${first.requestEncoding || "none"}`;
+      form.querySelector("[data-goal-request-preview]").textContent = requestPreview;
+      form.querySelector("[data-goal-config-preview]").textContent = JSON.stringify({
+        goal: form.elements.reliability_goal.value,
+        target: {
+          service: serviceName.value.trim() || "<missing>",
+          workload: workloadName.value.trim() || "<missing>",
+        },
+        traffic: {journeys},
+        expectedOutcomes: goalProposal?.expectedOutcomes || [],
+        requiredEvidence: goalProposal?.requiredEvidence || [],
+        fault: selectedFault,
+        safety: {maxVirtualUsers: maxVus, maxDurationSeconds: duration, faultsRequireExplicitSelection: true},
+      }, null, 2);
+    };
+
+    const syncBasicControls = () => {
+      const card = journeyList.querySelector("[data-journey]");
+      if (!card) return;
+      basicMethod.value = field(card, "method").value;
+      basicPath.value = field(card, "path").value;
+      basicStatus.value = field(card, "expectedStatus").value;
+      let journey = null;
+      try { journey = serializeJourneys()[0]; } catch (_) { journey = null; }
+      const vus = Math.max(Number(journey?.vus || 0), ...(journey?.stages || []).map(stage => Number(stage.targetVus || 0)));
+      basicVus.value = String(vus || 1);
+      basicDuration.value = String(proposalDuration(journey ? [journey] : []) || 20);
+    };
+
+    const applyBasicEdits = () => {
+      const card = journeyList.querySelector("[data-journey]");
+      if (!card) return;
+      field(card, "method").value = basicMethod.value;
+      field(card, "path").value = basicPath.value;
+      field(card, "expectedStatus").value = basicStatus.value;
+      if (field(card, "adapter").value === "http") {
+        const duration = Math.max(20, Math.min(300, Number(basicDuration.value) || 20));
+        const vus = Math.max(1, Math.min(25, Number(basicVus.value) || 1));
+        field(card, "loadModel").value = "stages";
+        field(card, "stages").value = JSON.stringify([
+          {duration: `${duration - 10}s`, targetVus: vus},
+          {duration: "10s", targetVus: 0},
+        ], null, 2);
+      }
+      syncJourney(card);
+      renderGoalSummary();
+    };
+
+    const applyGoalProposal = projection => {
+      goalProposal = projection;
+      form.elements.fault_type.value = "none";
+      form.elements.scenario_id.value = `${(serviceName.value.trim() || "service").toLowerCase().replace(/[^a-z0-9.-]+/g, "-")}-${projection.goal.replaceAll("_", "-")}`.slice(0, 63).replace(/[-.]$/, "");
+      form.elements.scenario_name.value = `${serviceName.value.trim() || "Service"} · ${projection.label}`;
+      form.elements.scenario_description.value = projection.description;
+      form.elements.scenario_tags.value = `goal-first, ${projection.goal.replaceAll("_", "-")}`;
+      form.elements.scenario_source.value = "custom";
+      form.elements.scenario_revision.value = "";
+      form.elements.required_signals_json.value = JSON.stringify(projection.requiredEvidence);
+      scenarioWarnings = projection.missingInputs;
+      form.dataset.scenarioWarnings = JSON.stringify(scenarioWarnings);
+      journeyList.replaceChildren();
+      projection.journeys.forEach(journey => addJourney({adapter: journey.adapter || "http", journey}));
+      syncBasicControls();
+      renderGoalSummary();
+      const gap = projection.missingInputs.length;
+      goalStatus.textContent = gap
+        ? `Proposal ready with ${gap} missing input${gap === 1 ? "" : "s"}. Resolve or accept each assumption before Review.`
+        : "Proposal ready from the discovered values. Review the assumptions before continuing.";
+      goalStatus.classList.remove("error");
+      goalStatus.classList.toggle("warning", gap > 0);
+    };
+
+    const requestGoalProposal = async goal => {
+      form.elements.fault_type.value = "none";
+      goalStatus.textContent = "Building a bounded proposal from discovered values…";
+      goalStatus.classList.remove("error", "warning");
+      try {
+        const response = await fetch("/api/v1/scenarios/propose", {
+          method: "POST",
+          headers: {"Content-Type": "application/json", "X-CSRF-Token": csrfToken},
+          body: JSON.stringify(await proposalContext(goal)),
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.detail || "Could not build goal proposal");
+        applyGoalProposal(payload);
+        goalContextDirty = false;
+      } catch (error) {
+        goalStatus.textContent = error.message;
+        goalStatus.classList.add("error");
+      }
+    };
+
+    const setEditorMode = mode => {
+      basicBuilder.hidden = mode !== "basic";
+      form.querySelectorAll("[data-advanced-only]").forEach(node => node.hidden = mode !== "advanced");
+      form.querySelectorAll("[data-editor-mode]").forEach(button => {
+        const active = button.dataset.editorMode === mode;
+        button.classList.toggle("active", active);
+        button.setAttribute("aria-pressed", String(active));
+      });
+      if (mode === "basic") {
+        syncBasicControls();
+        renderGoalSummary();
       }
     };
 
@@ -492,6 +747,9 @@
       next.hidden = current === panels.length - 1;
       submit.hidden = current !== panels.length - 1;
       if (current >= 2) ensureScenarioIdentity();
+      if (current === 2 && !basicBuilder.hidden && goalContextDirty && form.elements.scenario_source.value === "custom") {
+        requestGoalProposal(form.elements.reliability_goal.value);
+      }
       if (current === panels.length - 1) updateReview(form);
       panels[current].querySelector("h1")?.focus({preventScroll: true});
     };
@@ -511,6 +769,23 @@
     next.addEventListener("click", () => { if (valid() && current < panels.length - 1) { current += 1; render(); } });
     back.addEventListener("click", () => { if (current > 0) { current -= 1; render(); } });
     stepButtons.forEach((button, index) => button.addEventListener("click", () => { if (index <= current || valid()) { current = index; render(); } }));
+    form.querySelectorAll("[data-editor-mode]").forEach(button => button.addEventListener("click", () => setEditorMode(button.dataset.editorMode)));
+    form.querySelectorAll('input[name="reliability_goal"]').forEach(input => input.addEventListener("change", () => {
+      selectModeCard(input);
+      requestGoalProposal(input.value);
+    }));
+    [basicMethod, basicPath, basicStatus, basicVus, basicDuration].forEach(control => control.addEventListener("input", applyBasicEdits));
+    form.elements.fault_type.addEventListener("change", renderGoalSummary);
+    [serviceName, workloadName].forEach(control => control.addEventListener("input", () => {
+      goalContextDirty = true;
+      renderGoalSummary();
+    }));
+    form.elements.service_port.addEventListener("input", renderGoalSummary);
+    repo.addEventListener("input", () => {
+      repositoryInspection = null;
+      repositoryInspectionPath = "";
+      goalContextDirty = true;
+    });
     form.querySelectorAll('input[name="execution_mode"]').forEach(input => input.addEventListener("change", () => {
       const kubernetes = input.checked && input.value === "kubernetes";
       kubernetesFields.hidden = !kubernetes;
@@ -522,6 +797,7 @@
     form.querySelectorAll('input[name="target_source"]').forEach(input => input.addEventListener("change", () => {
       selectModeCard(input);
       selectAttachedTarget(input.checked && input.value === "kubernetes");
+      goalContextDirty = true;
     }));
     form.elements.runtime_mode.addEventListener("change", updateDiscoveryVisibility);
     form.querySelectorAll('input[name="scenario_source_mode"]').forEach(input => input.addEventListener("change", () => {
@@ -620,6 +896,7 @@
       alert(Object.entries(values).filter(([key]) => key !== "_csrf").map(([key,value]) => `${key}: ${value}`).join("\n"));
     });
     addJourney();
+    setEditorMode("basic");
     render();
   }
 
@@ -628,7 +905,9 @@
     form.querySelectorAll("[data-review]").forEach(node => {
       const key = node.dataset.review;
       const kubernetes = data.get("execution_mode") === "kubernetes";
-      const value = !kubernetes && ["kubernetes_context", "namespace"].includes(key) ? "" : data.get(key);
+      const selectedGoal = form.querySelector('input[name="reliability_goal"]:checked');
+      const value = key === "reliability_goal" ? selectedGoal?.closest("label")?.querySelector("strong")?.textContent
+        : !kubernetes && ["kubernetes_context", "namespace"].includes(key) ? "" : data.get(key);
       const fallback = key === "service_name" ? "Inferred"
         : key === "workload_name" ? "Inferred during planning"
         : ["kubernetes_context", "namespace"].includes(key) ? "Not applicable"
@@ -679,6 +958,8 @@
     form.querySelector("[data-review-duration]").textContent = durationSeconds ? `${durationSeconds}s` : "Not specified";
     const fault = data.get("fault_type");
     form.querySelector("[data-review-rollback]").textContent = fault === "none" ? "Not required" : "Required and verified after injection";
+    const outcomeSummary = form.querySelector("[data-review-outcomes]");
+    if (outcomeSummary) outcomeSummary.textContent = (form.querySelector("[data-goal-outcomes] li")?.textContent || "Review the configured journey outcomes");
     let signals = [];
     let warnings = [];
     try { signals = JSON.parse(data.get("required_signals_json") || "[]"); } catch (_) { signals = []; }
