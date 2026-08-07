@@ -360,6 +360,8 @@ through SSE, and produce content-safe lifecycle evidence.
 - [x] Address the first Codex review by gating goal-required CPU and memory
       signals, preserving representative Kubernetes evidence categories, and
       deriving attach proposals from the selected runtime mode.
+- [x] Repair the release security gates by updating the Python lock and building
+      k6 and kubectl from checked-in Go modules with fixed dependencies.
 
 ### Integration Decisions
 
@@ -386,3 +388,9 @@ through SSE, and produce content-safe lifecycle evidence.
 - The first Codex review follow-up added three focused regressions. The complete
   `make check` passed again on 2026-08-08 with 245 tests, 90% combined coverage,
   all 10 scenarios, strict documentation, release metadata, and package builds.
+- Local Trivy `0.70.0` filesystem and image scans both passed with zero HIGH or
+  CRITICAL findings after updating MCP to `1.29.0`, cryptography to `50.0.0`,
+  `golang.org/x/text` to `0.39.0`, and gRPC-Go to `1.82.1`.
+- The security-gate follow-up `make check` passed with 246 tests, 90% combined
+  coverage, all 10 scenarios, strict documentation, release metadata, and
+  package builds.

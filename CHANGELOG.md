@@ -26,6 +26,12 @@ All notable changes to Ampule Chamber are documented in this file.
 - Overview, API responses, and Markdown/HTML/JSON reports now share the same
   additive decision projection while released artifacts remain readable.
 
+### Security
+
+- Updated the locked MCP and cryptography packages and rebuilt the embedded k6
+  and kubectl clients with fixed Go dependencies so repository and image scans
+  contain no known HIGH or CRITICAL vulnerabilities.
+
 ### Documentation
 
 - Documented the goal-first builder, evidence-gap recovery workflow, correlated

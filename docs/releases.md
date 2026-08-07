@@ -19,6 +19,8 @@ Highlights:
   Relayna task events on one filterable, paginated timeline.
 - Open findings at their cited time window, distinguish exact from run-window
   or inferred correlation, and download only digest-verified raw artifacts.
+- Ship fixed Python dependencies and source-built k6 and kubectl clients that
+  pass the release HIGH/CRITICAL repository and container vulnerability gates.
 
 ## 1.7.0 - 2026-07-13
 
