@@ -74,6 +74,11 @@ class CompareRequest(BaseModel):
     candidate_run_id: str
 
 
+class RerunRequest(BaseModel):
+    kubernetes_context: str = ""
+    prometheus_url: str = ""
+
+
 class ScenarioValidateRequest(BaseModel):
     content: str
     service_name: str = ""
@@ -371,6 +376,27 @@ def create_app(
         )
         return RedirectResponse(f"/jobs/{job['job_id']}", status_code=303)
 
+    @app.post("/ui/runs/{run_id}/fix-and-rerun", include_in_schema=False)
+    async def fix_and_rerun_page(
+        request: Request,
+        run_id: str,
+        csrf: Annotated[str, Form(alias="_csrf")],
+        kubernetes_context: Annotated[str, Form()] = "",
+        prometheus_url: Annotated[str, Form()] = "",
+    ) -> Response:
+        _check_csrf(request, csrf)
+        try:
+            planned = application.plan_rerun(
+                run_id,
+                kubernetes_context=kubernetes_context,
+                prometheus_url=prometheus_url,
+            )
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="run not found") from None
+        except (OSError, ValueError, RuntimeError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return RedirectResponse(f"/runs/{planned.name}?tab=configuration", status_code=303)
+
     @app.get("/jobs/{job_id}", response_class=HTMLResponse, include_in_schema=False)
     async def job_page(request: Request, job_id: str) -> Response:
         try:
@@ -526,6 +552,25 @@ def create_app(
             return application.get_run(run_id)
         except (FileNotFoundError, ValueError):
             raise HTTPException(status_code=404, detail="run not found") from None
+
+    @app.post("/api/v1/runs/{run_id}/rerun", status_code=201)
+    async def rerun_api(
+        request: Request,
+        run_id: str,
+        payload: RerunRequest,
+    ) -> dict[str, str]:
+        _check_csrf(request, request.headers.get("X-CSRF-Token"))
+        try:
+            planned = application.plan_rerun(
+                run_id,
+                kubernetes_context=payload.kubernetes_context,
+                prometheus_url=payload.prometheus_url,
+            )
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="run not found") from None
+        except (OSError, ValueError, RuntimeError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"run_id": planned.name, "run_dir": str(planned)}
 
     @app.get("/api/v1/runs/{run_id}/events")
     async def run_events_api(run_id: str) -> StreamingResponse:

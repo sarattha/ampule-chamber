@@ -3577,6 +3577,21 @@ def _report_input(
             if isinstance(result.get("cleanup_verified"), bool)
             else None
         ),
+        verdict=(
+            {str(key): str(value) for key, value in result["verdict"].items()}
+            if isinstance(result.get("verdict"), dict)
+            else None
+        ),
+        evidence_gaps=tuple(
+            item
+            for item in _mapping(
+                result.get("evidence_requirements", {}), "evidence_requirements"
+            ).get("missing", [])
+            if isinstance(item, dict)
+        ),
+        next_actions=tuple(
+            item for item in result.get("next_actions", []) if isinstance(item, dict)
+        ),
     )
 
 
@@ -3640,10 +3655,16 @@ def _persisted_report_findings(run_dir: Path) -> tuple[ReportFinding, ...]:
     payload = read_json_value(path)
     if not isinstance(payload, list):
         raise WorkflowError(f"{path} must contain a JSON list")
+    evidence_paths = {
+        str(item.get("evidence_id")): str(item.get("relative_path"))
+        for item in registered_evidence(run_dir)
+        if item.get("evidence_id") and item.get("relative_path")
+    }
     findings = []
     for item in payload:
         if not isinstance(item, dict):
             continue
+        evidence_ids = tuple(str(value) for value in item.get("evidence_ids", ()))
         findings.append(
             ReportFinding(
                 finding_id=str(item.get("finding_id", "unknown")),
@@ -3653,14 +3674,29 @@ def _persisted_report_findings(run_dir: Path) -> tuple[ReportFinding, ...]:
                 suspected_cause=str(item.get("suspected_cause", "Unknown cause.")),
                 severity=str(item.get("severity", "low")),
                 confidence=str(item.get("confidence", "low")),
-                evidence_ids=tuple(str(value) for value in item.get("evidence_ids", ())),
+                evidence_ids=evidence_ids,
                 related_timeline_ids=tuple(
                     str(value) for value in item.get("related_timeline_ids", ())
                 ),
                 recommendations=tuple(str(value) for value in item.get("recommendations", ())),
+                evidence_links=tuple(
+                    (evidence_id, evidence_paths[public_id])
+                    for evidence_id in evidence_ids
+                    if (public_id := _report_evidence_id(evidence_id, evidence_paths)) is not None
+                ),
             )
         )
     return tuple(findings)
+
+
+def _report_evidence_id(evidence_id: str, available: dict[str, str]) -> str | None:
+    if evidence_id in available:
+        return evidence_id
+    if evidence_id.startswith("kubernetes-command-") and "kubernetes-commands" in available:
+        return "kubernetes-commands"
+    if ":k6-summary:" in evidence_id and "k6-summary" in available:
+        return "k6-summary"
+    return None
 
 
 def _max_virtual_users(journeys: tuple[dict[str, Any], ...]) -> int:

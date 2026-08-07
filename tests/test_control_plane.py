@@ -114,7 +114,7 @@ class AssessmentResultTests(unittest.TestCase):
                 metadata={"run_id": run_dir.name, "stage": "assessed", "mode": "local"},
                 findings=(),
             )
-            self.assertEqual(result["status"], "inconclusive")
+            self.assertEqual(result["status"], "local_only")
             self.assertIsNone(result["readiness_score"])
             self.assertEqual(result["missing_evidence_ids"], ["live-kubernetes-execution"])
 

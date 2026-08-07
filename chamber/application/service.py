@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import yaml
 
-from chamber.runs import RunIndex, new_run_directory, read_json_value
+from chamber.runs import RunIndex, new_run_directory, read_json_value, write_json_atomic
 
 
 @dataclass(frozen=True)
@@ -118,13 +120,19 @@ class ChamberApplication:
 
     def get_run(self, run_id: str) -> dict[str, Any]:
         run_dir = self.run_path(run_id)
+        evidence = _evidence_entries(run_dir)
+        findings = _finding_views(
+            run_id,
+            _json_or_default(run_dir / "findings.json", []),
+            evidence,
+        )
         return {
             "run_dir": str(run_dir),
             "run": _json_or_default(run_dir / "run.json", {}),
             "metadata": _json_or_default(run_dir / "run-metadata.json", {}),
             "result": _json_or_default(run_dir / "result.json", {}),
-            "findings": _json_or_default(run_dir / "findings.json", []),
-            "evidence": _evidence_entries(run_dir),
+            "findings": findings,
+            "evidence": evidence,
             "events": _events(run_dir / "events.jsonl"),
             "config": _yaml_or_default(run_dir / "chamber.yaml"),
             "plan": _json_or_default(run_dir / "plan.json", {}),
@@ -133,6 +141,63 @@ class ChamberApplication:
             "prometheus": _prometheus_view(run_dir / "evidence/prometheus-memory.json"),
             "relayna": _relayna_view(run_dir / "evidence/relayna-summary.json"),
         }
+
+    def plan_rerun(
+        self,
+        run_id: str,
+        *,
+        kubernetes_context: str = "",
+        prometheus_url: str = "",
+    ) -> Path:
+        """Clone a terminal Kubernetes run with only recoverable setup overrides."""
+
+        source = self.get_run(run_id)
+        result = _mapping(source.get("result"))
+        status = str(result.get("status", ""))
+        if status not in {
+            "ready",
+            "conditional",
+            "not_ready",
+            "inconclusive",
+            "failed",
+            "cancelled",
+            "preflight_failed",
+        }:
+            raise ValueError("fix and rerun requires a terminal Kubernetes assessment")
+        config = deepcopy(_mapping(source.get("config")))
+        runtime = config.get("runtime")
+        if not isinstance(runtime, dict) or runtime.get("provider") != "kubernetes":
+            raise ValueError("fix and rerun requires an explicit Kubernetes target")
+        changes: dict[str, str] = {}
+        if kubernetes_context.strip():
+            runtime["kubernetesContext"] = kubernetes_context.strip()
+            changes["runtime.kubernetesContext"] = kubernetes_context.strip()
+        if prometheus_url.strip():
+            runtime["prometheusUrl"] = prometheus_url.strip()
+            changes["runtime.prometheusUrl"] = prometheus_url.strip()
+
+        drafts = self.workspace / "drafts"
+        drafts.mkdir(parents=True, exist_ok=True)
+        draft = drafts / f"rerun-{uuid4().hex}.yaml"
+        draft.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+        planned = self.plan(draft)
+        record_path = planned / "run.json"
+        record = _json_or_default(record_path, {})
+        if isinstance(record, dict):
+            record["parent_run_id"] = run_id
+            record["rerun"] = {
+                "kind": "fix_setup",
+                "setup_changes": changes,
+                "preserved": [
+                    "service",
+                    "scenario",
+                    "traffic",
+                    "safety",
+                    "runtime.faults",
+                ],
+            }
+            write_json_atomic(record_path, record)
+        return planned
 
     def compare(self, baseline_run_id: str, candidate_run_id: str) -> RunComparison:
         baseline = self.get_run(baseline_run_id)
@@ -211,6 +276,52 @@ def _evidence_entries(run_dir: Path) -> tuple[dict[str, Any], ...]:
     if not isinstance(entries, list):
         return ()
     return tuple(item for item in entries if isinstance(item, dict))
+
+
+def _finding_views(
+    run_id: str,
+    value: Any,
+    evidence: tuple[dict[str, Any], ...],
+) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    available = {str(item.get("evidence_id")): item for item in evidence}
+    findings = []
+    for raw in value:
+        if not isinstance(raw, dict):
+            continue
+        finding = dict(raw)
+        ids = raw.get("evidence_ids")
+        links = []
+        for evidence_id in ids if isinstance(ids, list) else []:
+            public_id = _public_evidence_id(str(evidence_id), available)
+            if public_id is None:
+                continue
+            item = available[public_id]
+            links.append(
+                {
+                    "evidence_id": str(evidence_id),
+                    "registered_evidence_id": public_id,
+                    "name": str(item.get("relative_path", public_id)),
+                    "url": f"/api/v1/runs/{run_id}/evidence/{public_id}",
+                }
+            )
+        finding["evidence_links"] = links
+        findings.append(finding)
+    return findings
+
+
+def _public_evidence_id(
+    evidence_id: str,
+    available: dict[str, dict[str, Any]],
+) -> str | None:
+    if evidence_id in available:
+        return evidence_id
+    if evidence_id.startswith("kubernetes-command-") and "kubernetes-commands" in available:
+        return "kubernetes-commands"
+    if ":k6-summary:" in evidence_id and "k6-summary" in available:
+        return "k6-summary"
+    return None
 
 
 def _agents(agent_dir: Path) -> dict[str, Any]:

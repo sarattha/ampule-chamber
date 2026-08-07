@@ -145,3 +145,70 @@ through SSE, and produce content-safe lifecycle evidence.
   per-pod peaks and sample counts from the complete response before truncating
   raw series for persistence. A 101-pod regression fixture verifies the last
   worker remains summarized, and the complete `make check` gate passed again.
+
+## Issue #32: Decision-Oriented Results And Evidence-Gap Recovery
+
+### Progress
+
+- [x] Add one evidence-gated result projection that explains what happened,
+      why the status was selected, and what the operator should do next.
+- [x] Project required, present, and missing signals with human-readable names,
+      operational impact, likely cause, resolution, and configuration links.
+- [x] Keep ready, inconclusive, failed, cancelled, local-only, and
+      preflight-failed results distinct without assigning incomplete runs a
+      readiness score.
+- [x] Link findings to registered supporting evidence and missing signals to
+      the relevant resolved-configuration context.
+- [x] Add prioritized setup, telemetry, remediation, safety, review, and retest
+      actions according to the result state.
+- [x] Add review-before-execution UI and API rerun paths that preserve the
+      target, scenario revision, traffic journeys, safety bounds, and explicitly
+      selected faults while allowing only Kubernetes context and Prometheus URL
+      setup overrides.
+- [x] Keep the Overview, Markdown/HTML/JSON report exports, and
+      `/api/v1/runs/{run_id}` on the same persisted result projection.
+- [x] Add focused six-state, evidence-gap, link, surface-consistency, safe-rerun,
+      Prometheus-gate, and legacy `result/v1` compatibility coverage.
+- [x] Run the complete `make check` acceptance gate and record final evidence.
+
+### Decisions
+
+- Preserve `chamber.ampule.dev/result/v1` and its existing evidence ID, score,
+  and coverage fields. The decision-oriented fields are additive so released
+  run artifacts remain readable without migration.
+- Use `local_only` and `preflight_failed` result statuses instead of collapsing
+  them into `inconclusive` or `failed`. Both remain non-conclusive and always
+  retain a null readiness score.
+- Treat a registered but invalid Prometheus artifact as missing required
+  evidence while linking both its retained artifact and its query limitations.
+- Never turn a local config into a Kubernetes config through recovery. The
+  operator must select a Kubernetes target explicitly in the normal intake
+  flow.
+- A blank rerun setup field preserves the previous value. In particular, an
+  operator cannot remove an existing Prometheus evidence requirement by
+  submitting a blank recovery form.
+- The fix path creates a new plan for review and never starts execution. Only
+  `runtime.kubernetesContext` and `runtime.prometheusUrl` may change; all tested
+  traffic, safety, scenario, target, and fault data is deep-copied unchanged.
+
+### Acceptance Evidence
+
+- The focused decision-result suite passed 8 tests covering the six explicit
+  result states, structured required/present/missing evidence, Prometheus
+  limitations, finding-to-evidence links, UI/API/JSON report consistency,
+  Markdown decision sections, safe rerun preservation, local-only refusal, and
+  released `result/v1` compatibility.
+- The combined Prometheus evidence, decision-result, and existing assessment
+  projection suite passed 37 tests.
+- Existing Phase 05 reporting, complete Control Plane, Phase 11-13 workflow,
+  and scenario catalog suites passed 85 tests after the projection and rerun
+  changes.
+- `make check` passed on 2026-08-08: 62 files were formatted, lint and type
+  checking passed, 230 tests passed, combined branch/line coverage remained at
+  90%, 10 scenario files passed validation, deployment and release metadata
+  remained at the intentionally unchanged `1.7.0`, strict MkDocs completed,
+  and the source distribution and wheel built successfully.
+- The first sandboxed `make check` attempt reached the test target but could not
+  bind the existing Relayna loopback HTTP fixture. Re-running the identical gate
+  outside the socket-restricted sandbox passed; no product failure or test
+  assertion was involved.

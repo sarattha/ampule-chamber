@@ -77,6 +77,7 @@ class ReportFinding:
     evidence_ids: tuple[str, ...]
     related_timeline_ids: tuple[str, ...]
     recommendations: tuple[str, ...]
+    evidence_links: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -123,6 +124,9 @@ class ReportInput:
     execution_coverage_percent: int | None = None
     rollback_verified: bool | None = None
     cleanup_verified: bool | None = None
+    verdict: dict[str, str] | None = None
+    evidence_gaps: tuple[dict[str, Any], ...] = ()
+    next_actions: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -203,6 +207,9 @@ def render_markdown_report(report: ReportInput) -> str:
         f"- Status: {status}",
         *_result_detail_lines(report),
         "",
+        *_decision_lines(report),
+        *_evidence_gap_lines(report.evidence_gaps),
+        *_next_action_lines(report.next_actions),
         "## Key Findings",
     ]
     if report.findings:
@@ -254,7 +261,7 @@ def _finding_lines(index: int, finding: ReportFinding) -> list[str]:
         f"### {index}. {finding.signal_type} on {finding.affected_resource}",
         f"- Severity: {finding.severity}",
         f"- Confidence: {finding.confidence}",
-        f"- Evidence: {', '.join(finding.evidence_ids)}",
+        f"- Evidence: {_finding_evidence(finding)}",
         f"- Related timeline events: {_join_or_none(finding.related_timeline_ids)}",
         "- Observed facts:",
         *_indented_list(finding.observed_facts),
@@ -352,6 +359,9 @@ def _report_input(raw: dict[str, Any]) -> ReportInput:
         execution_coverage_percent=_optional_integer(raw, "execution_coverage_percent"),
         rollback_verified=_optional_boolean(raw, "rollback_verified"),
         cleanup_verified=_optional_boolean(raw, "cleanup_verified"),
+        verdict=_optional_mapping(raw, "verdict"),
+        evidence_gaps=tuple(_optional_dict_list(raw, "evidence_gaps")),
+        next_actions=tuple(_optional_dict_list(raw, "next_actions")),
     )
 
 
@@ -409,6 +419,10 @@ def _finding(raw: dict[str, Any]) -> ReportFinding:
         evidence_ids=tuple(_string_list(raw, "evidence_ids")),
         related_timeline_ids=tuple(_string_list(raw, "related_timeline_ids")),
         recommendations=tuple(_string_list(raw, "recommendations")),
+        evidence_links=tuple(
+            (_string(item, "evidence_id"), _string(item, "path"))
+            for item in _optional_dict_list(raw, "evidence_links")
+        ),
     )
 
 
@@ -424,6 +438,12 @@ def _mapping(raw: dict[str, Any], key: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"report fixture field {key!r} must be an object")
     return value
+
+
+def _optional_mapping(raw: dict[str, Any], key: str) -> dict[str, Any] | None:
+    if key not in raw:
+        return None
+    return _mapping(raw, key)
 
 
 def _dict_list(raw: dict[str, Any], key: str) -> list[dict[str, Any]]:
@@ -507,6 +527,60 @@ def _result_detail_lines(report: ReportInput) -> list[str]:
     if report.cleanup_verified is not None:
         lines.append(f"- Cleanup verified: {'yes' if report.cleanup_verified else 'no'}")
     return lines
+
+
+def _decision_lines(report: ReportInput) -> list[str]:
+    if not report.verdict:
+        return []
+    return [
+        "## Operational Verdict",
+        f"- What happened: {report.verdict.get('what_happened', 'Not recorded.')}",
+        f"- Why: {report.verdict.get('why', 'Not recorded.')}",
+        f"- What to do next: {report.verdict.get('next_step', 'Not recorded.')}",
+        "",
+    ]
+
+
+def _evidence_gap_lines(gaps: tuple[dict[str, Any], ...]) -> list[str]:
+    if not gaps:
+        return []
+    lines = ["## Missing Evidence"]
+    for gap in gaps:
+        context = gap.get("configuration_context")
+        path = context.get("path") if isinstance(context, dict) else "configuration"
+        lines.extend(
+            [
+                f"### {gap.get('name', gap.get('evidence_id', 'Required evidence'))}",
+                f"- Evidence ID: {gap.get('evidence_id', 'unknown')}",
+                f"- Impact: {gap.get('impact', 'Readiness confidence is reduced.')}",
+                f"- Likely cause: {gap.get('likely_cause', 'Unknown.')}",
+                f"- Resolution: {gap.get('resolution', 'Review configuration and rerun.')}",
+                f"- Configuration: `{path}`",
+                "",
+            ]
+        )
+    return lines
+
+
+def _next_action_lines(actions: tuple[dict[str, Any], ...]) -> list[str]:
+    if not actions:
+        return []
+    lines = ["## Prioritized Next Actions"]
+    for action in actions:
+        lines.append(
+            f"{action.get('priority', '-')}. [{action.get('category', 'action')}] "
+            f"{action.get('title', 'Review result')}: {action.get('rationale', '')}"
+        )
+    return [*lines, ""]
+
+
+def _finding_evidence(finding: ReportFinding) -> str:
+    links = dict(finding.evidence_links)
+    values = [
+        f"[{evidence_id}]({links[evidence_id]})" if evidence_id in links else evidence_id
+        for evidence_id in finding.evidence_ids
+    ]
+    return ", ".join(values)
 
 
 def _severity(value: str) -> str:
