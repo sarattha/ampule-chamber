@@ -1,5 +1,27 @@
 # Releases
 
+## 1.9.0 - 2026-08-08
+
+Ampule Chamber `1.9.0` makes the control plane an accessible operational
+reliability workspace instead of a collection of run-detail screens.
+
+Highlights:
+
+- Find active, failed, regressed, inconclusive, and cleanup-attention runs with
+  saved views, URL-backed filters, service history, tags, and reversible archive
+  controls.
+- Read one decision-oriented Overview and structured HTML report with tested
+  scope, evidence limits, cited findings, remediation, retest, and safety
+  verification while retaining Markdown and JSON exports.
+- Compare only compatible earlier baselines, including evidence-safe signal,
+  finding, score, scenario, and environment deltas.
+- Start from six bounded goal proposals, edit the essential traffic and optional
+  fault controls, and move to the full Advanced journey configuration without
+  losing values.
+- Navigate the main workflows by keyboard with restrained live announcements,
+  visible focus, 44-pixel targets, responsive high-zoom reflow, and print-safe
+  reports.
+
 ## 1.8.0 - 2026-08-08
 
 Ampule Chamber `1.8.0` connects scenario design, operational decisions, and

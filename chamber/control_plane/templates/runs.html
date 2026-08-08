@@ -2,25 +2,60 @@
 {% block title %}Runs · Ampule Chamber{% endblock %}
 {% block content %}
 <div class="page-heading split">
-  <div><div class="eyebrow">Reliability workspace</div><h1>Assessment runs</h1><p>Plan, observe, and compare production-like service exercises.</p></div>
+  <div><div class="eyebrow">Reliability workspace</div><h1>Operational reliability</h1><p>Find active work, regressions, evidence gaps, and service history without memorizing run IDs.</p></div>
   <a class="button primary" href="/new">New assessment</a>
 </div>
+
+<section class="dashboard-summary" aria-label="Run attention summary">
+  {% for key, label in [('active','Active'),('failed','Failed'),('regressed','Regressed'),('inconclusive','Inconclusive'),('cleanup_attention','Cleanup attention')] %}
+  <a class="summary-card" href="/runs?{{ 'state=running' if key == 'active' else 'view=recent_regressions' if key == 'regressed' else 'outcome=inconclusive' if key == 'inconclusive' else 'view=needs_attention' }}"><span>{{ label }}</span><strong>{{ workspace.summary[key] }}</strong></a>
+  {% endfor %}
+</section>
+
+<nav class="saved-views" aria-label="Saved run views">
+  <a class="button compact {{ 'active' if not workspace.filters.view else '' }}" href="/runs">All current</a>
+  <a class="button compact {{ 'active' if workspace.filters.view == 'needs_attention' else '' }}" href="/runs?view=needs_attention">Needs attention</a>
+  <a class="button compact {{ 'active' if workspace.filters.view == 'recent_regressions' else '' }}" href="/runs?view=recent_regressions">Recent regressions</a>
+  <a class="button compact {{ 'active' if workspace.filters.view == 'my_services' else '' }}" href="/runs?view=my_services">My services</a>
+  <a class="button compact {{ 'active' if workspace.filters.include_archived else '' }}" href="/runs?archived=true">Include archived</a>
+</nav>
+
+<form class="panel run-filters" method="get" action="/runs" aria-label="Filter assessment runs">
+  {% if workspace.filters.view %}<input type="hidden" name="view" value="{{ workspace.filters.view }}">{% endif %}
+  <label class="run-search">Search<input type="search" name="q" value="{{ workspace.filters.search }}" placeholder="Service, scenario, run, commit, tag, or owner"></label>
+  <label>State<select name="state"><option value="">All states</option>{% for value in workspace.facets.states %}<option value="{{ value }}" {{ 'selected' if value == workspace.filters.state else '' }}>{{ value | replace('_',' ') | title }}</option>{% endfor %}</select></label>
+  <label>Outcome<select name="outcome"><option value="">All outcomes</option>{% for value in workspace.facets.outcomes %}<option value="{{ value }}" {{ 'selected' if value == workspace.filters.outcome else '' }}>{{ value | replace('_',' ') | title }}</option>{% endfor %}</select></label>
+  <label>Environment<select name="environment"><option value="">All environments</option>{% for value in workspace.facets.environments %}<option value="{{ value }}" {{ 'selected' if value == workspace.filters.environment else '' }}>{{ value | title }}</option>{% endfor %}</select></label>
+  <label>Evidence<select name="coverage"><option value="">Any coverage</option><option value="complete" {{ 'selected' if workspace.filters.coverage == 'complete' else '' }}>Complete</option><option value="partial" {{ 'selected' if workspace.filters.coverage == 'partial' else '' }}>Partial</option><option value="missing" {{ 'selected' if workspace.filters.coverage == 'missing' else '' }}>Missing</option></select></label>
+  <label>Fault<select name="fault"><option value="">Any fault</option>{% for value in workspace.facets.faults %}<option value="{{ value }}" {{ 'selected' if value == workspace.filters.fault else '' }}>{{ value | replace('_',' ') | title }}</option>{% endfor %}</select></label>
+  <label>From<input type="date" name="date_from" value="{{ workspace.filters.date_from }}"></label>
+  <label>To<input type="date" name="date_to" value="{{ workspace.filters.date_to }}"></label>
+  <button class="button primary" type="submit">Apply filters</button>
+</form>
+
+{% if workspace.partial_index %}<div class="alert warning" role="status">Showing the newest 1,000 indexed runs. Narrow the filters for a complete result set.</div>{% endif %}
+
 {% if runs %}
+<section class="service-groups" aria-labelledby="service-groups-title"><div class="section-heading"><div><h2 id="service-groups-title">Service history</h2><p>Latest result and trend for the services on this page.</p></div></div><div>{% for group in workspace.groups %}<a href="/runs?q={{ group.service_name | urlencode }}"><span>{{ group.service_name }}</span><strong>{{ group.latest.status | replace('_',' ') }}</strong><small>{{ group.trend | title }} · {{ group.runs | length }} run{{ '' if group.runs | length == 1 else 's' }}</small></a>{% endfor %}</div></section>
 <section class="table-card" aria-labelledby="runs-title">
-  <div class="card-heading"><h2 id="runs-title">Recent runs</h2><span class="muted">{{ runs | length }} indexed</span></div>
-  <div class="table-scroll"><table>
-    <thead><tr><th>Run</th><th>Service</th><th>State</th><th>Outcome</th><th>Coverage</th><th>Started</th></tr></thead>
+  <div class="card-heading"><h2 id="runs-title">Runs</h2><span class="muted">{{ workspace.pagination.total_items }} matching</span></div>
+  <div class="table-scroll" tabindex="0" aria-label="Scrollable run results"><table>
+    <thead><tr><th scope="col">Service and run</th><th scope="col">State</th><th scope="col">Outcome</th><th scope="col">Evidence</th><th scope="col">Scenario</th><th scope="col">Started</th><th scope="col">Actions</th></tr></thead>
     <tbody>{% for item in runs %}<tr>
-      <td><a class="run-link" href="/runs/{{ item.run_id }}">{{ item.run_id }}</a></td>
-      <td>{{ item.service_name or 'Unknown service' }}</td>
-      <td><span class="pill {{ item.state or 'planned' }}">{{ item.state or 'planned' }}</span></td>
-      <td>{{ item.status or item.result_status or 'Pending' }}</td>
-      <td>{{ item.evidence_coverage_percent or 0 }}%</td>
+      <td><a class="service-link" href="/runs/{{ item.run_id }}">{{ item.service_name or 'Unknown service' }}</a><span class="run-secondary mono">{{ item.run_id }}</span>{% if item.tags %}<span class="tag-row">{% for tag in item.tags %}<span class="tag">{{ tag }}</span>{% endfor %}</span>{% endif %}</td>
+      <td><span class="pill {{ item.state or 'planned' }}">{{ item.state or 'planned' }}</span>{% if item.active_job %}<a class="run-secondary" href="/jobs/{{ item.active_job.job_id }}">Open live progress</a>{% endif %}</td>
+      <td><span class="pill outcome-{{ item.status }}">{{ item.status | replace('_',' ') }}</span>{% if item.regressed %}<span class="run-secondary danger-text">Regression detected</span>{% endif %}</td>
+      <td><strong>{{ item.evidence_coverage_percent or 0 }}%</strong><span class="run-secondary">{{ item.finding_count }} finding{{ '' if item.finding_count == 1 else 's' }}</span></td>
+      <td>{{ item.scenario_id }}<span class="run-secondary">{{ item.scenario_revision }} · {{ item.environment }}</span></td>
       <td class="mono muted">{{ item.created_at or '—' }}</td>
+      <td><div class="row-actions"><a class="button compact" href="/runs/{{ item.run_id }}">Open</a><a class="button compact" href="/compare?candidate={{ item.run_id }}">Compare</a>{% if item.active_job %}<form method="post" action="/ui/jobs/{{ item.active_job.job_id }}/cancel"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><button class="button danger compact" type="submit">Cancel safely</button></form>{% else %}<form method="post" action="/ui/runs/{{ item.run_id }}/archive"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><input type="hidden" name="archived" value="{{ 'false' if item.archived else 'true' }}"><button class="button subtle compact" type="submit" title="{{ item.retention }}">{{ 'Restore' if item.archived else 'Archive' }}</button></form>{% endif %}</div>{% if item.archived %}<span class="run-secondary">Archived {{ item.archived_at }}</span>{% endif %}</td>
     </tr>{% endfor %}</tbody>
   </table></div>
+  {% if workspace.pagination.total_pages > 1 %}<nav class="table-pagination" aria-label="Run result pages">{% if workspace.pagination.page > 1 %}<a class="button compact" href="{{ workspace.previous_url }}">Previous</a>{% endif %}<span>Page {{ workspace.pagination.page }} of {{ workspace.pagination.total_pages }}</span>{% if workspace.pagination.page < workspace.pagination.total_pages %}<a class="button compact" href="{{ workspace.next_url }}">Next</a>{% endif %}</nav>{% endif %}
 </section>
+{% elif workspace.pagination.total_items == 0 and (workspace.filters.search or workspace.filters.state or workspace.filters.outcome or workspace.filters.environment or workspace.filters.coverage or workspace.filters.fault or workspace.filters.date_from or workspace.filters.date_to or workspace.filters.view) %}
+<section class="empty-state"><h2>No runs match these filters</h2><p>Change or clear the URL-backed filters to return to the complete workspace.</p><a class="button" href="/runs">Clear filters</a></section>
 {% else %}
-<section class="empty-state"><h2>No assessments yet</h2><p>Start with a repository, inspect the generated plan, then choose local or Kubernetes execution.</p><a class="button primary" href="/new">Create first assessment</a></section>
+<section class="empty-state"><h2>No assessments yet</h2><p>Start with a repository or attached workload, review the generated plan, then run a bounded assessment.</p><a class="button primary" href="/new">Create first assessment</a></section>
 {% endif %}
 {% endblock %}

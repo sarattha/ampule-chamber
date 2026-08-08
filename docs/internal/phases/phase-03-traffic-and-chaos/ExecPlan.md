@@ -394,3 +394,73 @@ through SSE, and produce content-safe lifecycle evidence.
 - The security-gate follow-up `make check` passed with 246 tests, 90% combined
   coverage, all 10 scenarios, strict documentation, release metadata, and
   package builds.
+
+## Control-Plane Enhancements #34-#39 And Release 1.9.0
+
+### Checklist
+
+- [x] Rework Overview around verdict, confidence, tested scope, top risk or
+      evidence gap, cited findings, and the next operational action (#34).
+- [x] Render structured HTML reports from persisted projections with navigation,
+      coverage, limitations, citations, remediation, retest, and safety sections
+      while preserving Markdown and JSON exports (#35).
+- [x] Complete Basic/Advanced editor parity with bounded essential controls,
+      required-evidence and generated-config previews, and value preservation
+      across mode switches (#36).
+- [x] Add an operational Runs workspace with attention summaries, saved views,
+      URL-backed filters, service trends, tags, reversible archive, active-job
+      actions, and bounded pagination (#37).
+- [x] Compare compatible earlier baselines across context, signals, findings,
+      evidence, and material configuration while suppressing misleading deltas
+      for incompatible or missing evidence (#38).
+- [x] Apply visible focus, semantic status/progress, controlled announcements,
+      44-pixel default targets, focus restoration, scroll affordances, responsive
+      high-zoom reflow, and print styles (#39).
+- [x] Bump the package, static assets, Helm chart, deployment image, changelog,
+      release notes, and operator documentation once for SemVer minor `1.9.0`.
+
+### Decisions And Surprises
+
+- Use one shared run-workspace projection for HTML and `/api/v1/runs`, retaining
+  the legacy `runs` array and `limit` input instead of introducing a second
+  persistence or query model.
+- Store tags and reversible archive state in `run.json`; neither operation
+  changes the tested configuration or removes evidence from the workspace.
+- Recommend a baseline only when compatibility dimensions match and its
+  timestamp is earlier than the candidate. Computer Use found and verified the
+  correction for a newer compatible run that was initially recommended.
+- Render HTML and JSON reports directly from persisted projections. Computer Use
+  exposed that unconditional Markdown regeneration made an otherwise readable
+  retained run fail when planning artifacts were absent; Markdown regeneration
+  is now isolated to the Markdown export path.
+- Keep unavailable comparison signals as `N/A` and suppress all numeric deltas
+  for incompatible runs. Missing evidence is never interpreted as improvement.
+- Treat browser zoom as the accessibility reflow acceptance boundary: the main
+  navigation and content reflow at 400%, while intentionally wide tables remain
+  semantic labeled scroll regions.
+
+### Evaluation And Acceptance Evidence
+
+- `uv run python -m unittest tests.test_control_plane_enhancements -v` passed
+  seven focused tests for run projection/filtering, regression detection, tags,
+  archive, recommended baselines, comparison deltas, report compatibility, and
+  accessibility contracts.
+- Computer Use exercised the disposable local control plane at
+  `127.0.0.1:8765`: Runs filters and regression view; compatible baseline
+  selection; detailed score, signal, finding, and config comparison; conclusive
+  and inconclusive Overview states; structured report navigation and citations;
+  Basic proposal editing; Basic/Advanced value preservation; invalid-field focus;
+  and 400% reflow.
+- Captured design-QA evidence is stored in `docs/internal/design-qa/` for Runs at
+  desktop and 400% zoom, conclusive and inconclusive Overview, detailed compare,
+  structured report, and both editor modes.
+- `make check` passed on 2026-08-08: formatting, lint, and type checking; 253
+  tests; 90% combined branch/line coverage; all 10 scenarios; deployment and
+  release metadata at `1.9.0`; strict MkDocs; and source-distribution and wheel
+  builds for `ampule_chamber-1.9.0`.
+- The first Codex review follow-up made HTML/JSON report reads non-mutating,
+  rejected unknown compatibility dimensions, suppressed all finding movement
+  for incompatible runs, included archived and older runs in the bounded
+  comparison selector, and preserved legacy API limits through 1,000 rows.
+  `make check` passed again with 256 tests and 90% coverage after five new
+  regressions and the updated legacy comparison/report contracts.

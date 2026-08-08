@@ -567,7 +567,7 @@ class PrometheusEvidenceGateTests(unittest.TestCase):
 
 
 class PrometheusReportTests(unittest.TestCase):
-    def test_control_plane_formats_recompute_stale_prometheus_results(self) -> None:
+    def test_only_markdown_export_recomputes_stale_prometheus_results(self) -> None:
         for report_format in ("json", "html", "markdown"):
             with self.subTest(report_format=report_format), TemporaryDirectory() as tmp:
                 workspace = Path(tmp)
@@ -590,22 +590,29 @@ class PrometheusReportTests(unittest.TestCase):
 
                 persisted = json.loads((run_dir / "result.json").read_text(encoding="utf-8"))
                 self.assertEqual(response.status_code, 200)
-                self.assertEqual(persisted["status"], "inconclusive")
-                self.assertEqual(persisted["evidence_coverage_percent"], 75)
                 self.assertEqual(
                     _event_count(run_dir, "analysis_completed"),
                     analysis_event_count,
                 )
-                self.assertEqual(_event_count(run_dir, "report_generated"), 1)
-                if report_format == "json":
-                    self.assertEqual(response.json()["result"]["status"], "inconclusive")
-                    self.assertEqual(
-                        response.json()["result"]["evidence_coverage_percent"],
-                        75,
-                    )
-                else:
+                if report_format == "markdown":
+                    self.assertEqual(persisted["status"], "inconclusive")
+                    self.assertEqual(persisted["evidence_coverage_percent"], 75)
+                    self.assertEqual(_event_count(run_dir, "report_generated"), 1)
                     self.assertIn("inconclusive", response.text.lower())
                     self.assertIn("75%", response.text)
+                else:
+                    self.assertEqual(persisted["status"], "ready")
+                    self.assertEqual(persisted["evidence_coverage_percent"], 100)
+                    self.assertEqual(_event_count(run_dir, "report_generated"), 0)
+                    if report_format == "json":
+                        self.assertEqual(response.json()["result"]["status"], "ready")
+                        self.assertEqual(
+                            response.json()["result"]["evidence_coverage_percent"],
+                            100,
+                        )
+                    else:
+                        self.assertIn("ready", response.text.lower())
+                        self.assertIn("100%", response.text)
 
     def test_report_cli_tolerates_unreadable_prometheus_artifacts(self) -> None:
         malformed_artifacts = (

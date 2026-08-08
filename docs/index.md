@@ -1,6 +1,6 @@
 # Ampule Chamber
 
-Version: 1.8.0
+Version: 1.9.0
 
 Ampule Chamber is a production-ready reliability testing chamber for Kubernetes
 services before production. It deploys services into isolated chamber
@@ -9,11 +9,11 @@ collects runtime evidence, and produces evidence-backed readiness reports.
 
 ## Production-Ready Release
 
-The `1.8.0` release adds a goal-first scenario builder, decision-oriented
-evidence-gap recovery, and a correlated investigation timeline. Operators can
-move from a bounded proposed test to an evidence-backed verdict, then validate
-findings across traffic, faults, Kubernetes state, metrics, safe logs, and
-Relayna task lifecycles without downloading artifacts.
+The `1.9.0` release turns the control plane into an operational reliability
+workspace. Operators can filter service history, find regressions and evidence
+gaps, compare compatible earlier runs, read a structured cited report, and use
+the same bounded proposal in Basic or Advanced mode with accessible keyboard and
+high-zoom behavior.
 
 ## Core Commands
 

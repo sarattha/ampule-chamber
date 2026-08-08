@@ -243,6 +243,8 @@ def build_assessment_result(
         "run_id": run_id,
         "status": status,
         "conclusive": conclusive,
+        "confidence": _confidence_label(conclusive, evidence_coverage, findings),
+        "tested_scope": _tested_scope(config, metadata),
         "readiness_score": score,
         "evidence_coverage_percent": evidence_coverage,
         "execution_coverage_percent": 100 if stage == "assessed" else 0,
@@ -265,6 +267,39 @@ def build_assessment_result(
         ),
         "finding_count": len(findings),
         "generated_at": _now(),
+    }
+
+
+def _confidence_label(
+    conclusive: bool,
+    evidence_coverage: int,
+    findings: tuple[dict[str, Any], ...],
+) -> str:
+    if not conclusive or evidence_coverage < 100:
+        return "limited"
+    finding_confidence = {str(item.get("confidence", "unknown")).lower() for item in findings}
+    if "low" in finding_confidence:
+        return "moderate"
+    return "high"
+
+
+def _tested_scope(config: dict[str, Any], metadata: dict[str, Any]) -> dict[str, Any]:
+    service = config.get("service")
+    service = service if isinstance(service, dict) else {}
+    scenario = config.get("scenario")
+    scenario = scenario if isinstance(scenario, dict) else {}
+    runtime = config.get("runtime")
+    runtime = runtime if isinstance(runtime, dict) else {}
+    traffic = config.get("traffic")
+    traffic = traffic if isinstance(traffic, dict) else {}
+    journeys = traffic.get("journeys")
+    return {
+        "service": service.get("name", "unknown"),
+        "scenario_id": scenario.get("id") or config.get("scenarioId", "unrecorded"),
+        "scenario_revision": scenario.get("revision", "unrecorded"),
+        "provider": runtime.get("provider") or metadata.get("mode", "unknown"),
+        "runtime_mode": runtime.get("mode") or metadata.get("runtime_mode", "unknown"),
+        "journey_count": len(journeys) if isinstance(journeys, list) else 0,
     }
 
 

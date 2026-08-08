@@ -10,9 +10,10 @@
     <button type="button" class="wizard-step" data-step-button="3"><span>4</span> Review</button>
   </div>
   {% if error %}<div class="alert danger" role="alert">{{ error }}</div>{% endif %}
+  <p class="sr-only" data-wizard-status role="status" aria-live="polite"></p>
 
   <section class="wizard-panel" data-step="0">
-    <div class="page-heading split"><div><div class="eyebrow">Step 1 of 4</div><h1>Choose the service to assess</h1><p>Start from source code, or attach directly to a service that is already running in Kubernetes.</p></div><span class="pill safe">Read-only planning</span></div>
+    <div class="page-heading split"><div><div class="eyebrow">Step 1 of 4</div><h1 tabindex="-1">Choose the service to assess</h1><p>Start from source code, or attach directly to a service that is already running in Kubernetes.</p></div><span class="pill safe">Read-only planning</span></div>
     <div class="mode-grid" role="radiogroup" aria-label="Target source">
       <label class="mode-card selected"><input type="radio" name="target_source" value="repository" checked><strong>Local repository</strong><span>Inspect source, manifests, and container metadata to build the plan.</span></label>
       <label class="mode-card"><input type="radio" name="target_source" value="kubernetes"><strong>Running Kubernetes service</strong><span>Attach using context, namespace, service name, and port. No repository is needed.</span></label>
@@ -21,7 +22,7 @@
   </section>
 
   <section class="wizard-panel" data-step="1" hidden>
-    <div class="page-heading split"><div><div class="eyebrow">Step 2 of 4</div><h1>Choose the chamber environment</h1><p>Every Kubernetes run requires an explicit context and passes preflight before mutation.</p></div><span class="pill {{ 'safe' if capabilities.ready_for_kubernetes_attach else 'warning' }}">{{ 'Ready for Kubernetes' if capabilities.ready_for_kubernetes_attach else 'kubectl required' }}</span></div>
+    <div class="page-heading split"><div><div class="eyebrow">Step 2 of 4</div><h1 tabindex="-1">Choose the chamber environment</h1><p>Every Kubernetes run requires an explicit context and passes preflight before mutation.</p></div><span class="pill {{ 'safe' if capabilities.ready_for_kubernetes_attach else 'warning' }}">{{ 'Ready for Kubernetes' if capabilities.ready_for_kubernetes_attach else 'kubectl required' }}</span></div>
     <div class="mode-grid" role="radiogroup" aria-label="Execution environment">
       <label class="mode-card selected"><input type="radio" name="execution_mode" value="local" checked><strong>Local artifact assessment</strong><span>Inspect configuration and create a non-conclusive report without touching Kubernetes.</span></label>
       <label class="mode-card"><input type="radio" name="execution_mode" value="kubernetes"><strong>Kubernetes chamber</strong><span>Deploy into isolation or attach to an explicit non-production namespace.</span></label>
@@ -45,7 +46,7 @@
   </section>
 
   <section class="wizard-panel" data-step="2" hidden>
-    <div class="page-heading"><div class="eyebrow">Step 3 of 4</div><h1>Choose the reliability outcome</h1><p>Start from a bounded goal proposal, or use Advanced mode for every existing journey control.</p></div>
+    <div class="page-heading"><div class="eyebrow">Step 3 of 4</div><h1 tabindex="-1">Choose the reliability outcome</h1><p>Start from a bounded goal proposal, or use Advanced mode for every existing journey control.</p></div>
     <div class="editor-mode-switch" role="group" aria-label="Exercise editor mode">
       <button class="button active" type="button" data-editor-mode="basic" aria-pressed="true">Basic · goal first</button>
       <button class="button" type="button" data-editor-mode="advanced" aria-pressed="false">Advanced · full config</button>
@@ -84,7 +85,7 @@
       </div>
       <div class="proposal-preview-grid">
         <section class="panel code-panel"><h2>Generated request preview</h2><pre data-goal-request-preview></pre></section>
-        <section class="panel code-panel"><h2>Config preview</h2><pre data-goal-config-preview></pre></section>
+        <section class="panel code-panel"><h2>Generated config diff</h2><p class="help">Shows the bounded values this proposal writes into the shared Advanced configuration.</p><pre data-goal-config-preview></pre></section>
       </div>
     </section>
     <section class="scenario-section" data-scenario-section data-advanced-only hidden>
@@ -189,7 +190,7 @@
   </section>
 
   <section class="wizard-panel" data-step="3" hidden>
-    <div class="page-heading"><div class="eyebrow">Step 4 of 4</div><h1>Review the safety receipt</h1><p>Chamber will create a durable plan first. You explicitly start execution from the plan page.</p></div>
+    <div class="page-heading"><div class="eyebrow">Step 4 of 4</div><h1 tabindex="-1">Review the safety receipt</h1><p>Chamber will create a durable plan first. You explicitly start execution from the plan page.</p></div>
     <div class="review-grid">
       <div class="panel"><h2>Target</h2><dl><div><dt>Source</dt><dd data-review="target_source">Repository</dd></div><div><dt>Repository</dt><dd data-review="repo">Not required</dd></div><div><dt>Service</dt><dd data-review="service_name">Inferred</dd></div><div><dt>Workload</dt><dd data-review="workload_name">Inferred</dd></div><div><dt>Kind</dt><dd data-review="workload_kind">Inferred</dd></div></dl></div>
       <div class="panel"><h2>Environment</h2><dl><div><dt>Mode</dt><dd data-review="execution_mode">Local</dd></div><div><dt>Context</dt><dd data-review="kubernetes_context">Not applicable</dd></div><div><dt>Namespace</dt><dd data-review="namespace">Not applicable</dd></div></dl></div>

@@ -229,12 +229,57 @@ def create_app(
         return RedirectResponse("/runs", status_code=303)
 
     @app.get("/runs", response_class=HTMLResponse, include_in_schema=False)
-    async def runs_page(request: Request) -> Response:
-        runs = application.list_runs(limit=200)
+    async def runs_page(
+        request: Request,
+        q: str = "",
+        state: str = "",
+        outcome: str = "",
+        environment: str = "",
+        coverage: str = "",
+        fault: str = "",
+        date_from: str = "",
+        date_to: str = "",
+        view: str = "",
+        page: int = 1,
+        page_size: int = 25,
+        archived: bool = False,
+    ) -> Response:
+        workspace_projection = application.query_runs(
+            search=q,
+            state=state,
+            outcome=outcome,
+            environment=environment,
+            coverage=coverage,
+            fault=fault,
+            date_from=date_from,
+            date_to=date_to,
+            view=view,
+            page=page,
+            page_size=page_size,
+            include_archived=archived,
+        )
+        active_jobs = {
+            str(job["run_id"]): job
+            for job in jobs.list()
+            if job.get("run_id") and job.get("state") not in TERMINAL_JOB_STATES
+        }
+        for item in workspace_projection["runs"]:
+            item["active_job"] = active_jobs.get(str(item["run_id"]))
+        workspace_projection["previous_url"] = _request_page_url(
+            request, int(workspace_projection["pagination"]["page"]) - 1
+        )
+        workspace_projection["next_url"] = _request_page_url(
+            request, int(workspace_projection["pagination"]["page"]) + 1
+        )
         return templates.TemplateResponse(
             request=request,
             name="runs.html",
-            context={"runs": runs, "active_nav": "runs", "csrf_token": request.state.csrf_token},
+            context={
+                "workspace": workspace_projection,
+                "runs": workspace_projection["runs"],
+                "active_nav": "runs",
+                "csrf_token": request.state.csrf_token,
+            },
         )
 
     @app.get("/new", response_class=HTMLResponse, include_in_schema=False)
@@ -418,6 +463,37 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return RedirectResponse(f"/runs/{planned.name}?tab=configuration", status_code=303)
 
+    @app.post("/ui/runs/{run_id}/archive", include_in_schema=False)
+    async def archive_run_page(
+        request: Request,
+        run_id: str,
+        csrf: Annotated[str, Form(alias="_csrf")],
+        archived: Annotated[bool, Form()] = True,
+    ) -> Response:
+        _check_csrf(request, csrf)
+        try:
+            application.set_run_archived(run_id, archived=archived)
+        except (FileNotFoundError, ValueError):
+            raise HTTPException(status_code=404, detail="run not found") from None
+        return RedirectResponse("/runs", status_code=303)
+
+    @app.post("/ui/runs/{run_id}/tags", include_in_schema=False)
+    async def tag_run_page(
+        request: Request,
+        run_id: str,
+        csrf: Annotated[str, Form(alias="_csrf")],
+        tags: Annotated[str, Form()] = "",
+    ) -> Response:
+        _check_csrf(request, csrf)
+        try:
+            application.set_run_tags(
+                run_id,
+                tags=tuple(item.strip() for item in tags.split(",") if item.strip()),
+            )
+        except (FileNotFoundError, ValueError):
+            raise HTTPException(status_code=404, detail="run not found") from None
+        return RedirectResponse(f"/runs/{run_id}", status_code=303)
+
     @app.get("/jobs/{job_id}", response_class=HTMLResponse, include_in_schema=False)
     async def job_page(request: Request, job_id: str) -> Response:
         try:
@@ -460,11 +536,38 @@ def create_app(
                 comparison = asdict(application.compare(baseline, candidate))
             except (FileNotFoundError, ValueError) as exc:
                 error = str(exc)
+        run_workspace = application.query_runs(
+            page_size=1000,
+            include_archived=True,
+            max_page_size=1000,
+        )
+        candidate_item = next(
+            (item for item in run_workspace["runs"] if item["run_id"] == candidate), None
+        )
+        for item in run_workspace["runs"]:
+            item["recommended_baseline"] = bool(
+                candidate_item
+                and item["run_id"] != candidate
+                and str(item.get("created_at") or "") < str(candidate_item.get("created_at") or "")
+                and all(
+                    _known_comparison_dimension(item.get(key))
+                    and _known_comparison_dimension(candidate_item.get(key))
+                    and item.get(key) == candidate_item.get(key)
+                    for key in (
+                        "service_name",
+                        "scenario_id",
+                        "scenario_revision",
+                        "environment",
+                        "runtime_mode",
+                    )
+                )
+            )
+        run_workspace["runs"].sort(key=lambda item: not item["recommended_baseline"])
         return templates.TemplateResponse(
             request=request,
             name="compare.html",
             context={
-                "runs": application.list_runs(limit=200),
+                "runs": run_workspace["runs"],
                 "comparison": comparison,
                 "error": error,
                 "baseline": baseline,
@@ -574,8 +677,38 @@ def create_app(
         return {"run_id": run_dir.name, "run_dir": str(run_dir)}
 
     @app.get("/api/v1/runs")
-    async def list_runs_api(limit: int = 100) -> dict[str, Any]:
-        return {"runs": application.list_runs(limit=limit)}
+    async def list_runs_api(
+        q: str = "",
+        state: str = "",
+        outcome: str = "",
+        environment: str = "",
+        coverage: str = "",
+        fault: str = "",
+        date_from: str = "",
+        date_to: str = "",
+        view: str = "",
+        page: int = 1,
+        page_size: int = 25,
+        archived: bool = False,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        if limit is not None:
+            page_size = limit
+        return application.query_runs(
+            search=q,
+            state=state,
+            outcome=outcome,
+            environment=environment,
+            coverage=coverage,
+            fault=fault,
+            date_from=date_from,
+            date_to=date_to,
+            view=view,
+            page=page,
+            page_size=page_size,
+            include_archived=archived,
+            max_page_size=1000 if limit is not None else 100,
+        )
 
     @app.post("/api/v1/runs", status_code=202)
     async def start_run_api(request: Request, payload: RunStartRequest) -> dict[str, Any]:
@@ -681,12 +814,22 @@ def create_app(
     async def report_api(request: Request, run_id: str, format: str = "markdown") -> Response:
         try:
             run_dir = application.run_path(run_id)
-            report_path = application.report(run_dir)
+            report_path = None
+            if format == "markdown":
+                report_path = application.report(run_dir)
             run = application.get_run(run_id)
         except (FileNotFoundError, ValueError):
             raise HTTPException(status_code=404, detail="run not found") from None
         if format == "json":
-            return JSONResponse({"result": run["result"], "findings": run["findings"]})
+            return JSONResponse(
+                {
+                    "result": run["result"],
+                    "findings": run["findings"],
+                    "evidence": run["evidence"],
+                    "tested_scope": _mapping(run["result"]).get("tested_scope", {}),
+                    "next_actions": _mapping(run["result"]).get("next_actions", []),
+                }
+            )
         if format == "html":
             return templates.TemplateResponse(
                 request=request,
@@ -698,6 +841,8 @@ def create_app(
                     "csrf_token": request.state.csrf_token,
                 },
             )
+        if report_path is None:
+            raise HTTPException(status_code=409, detail="Markdown report is unavailable")
         return Response(report_path.read_text(encoding="utf-8"), media_type="text/markdown")
 
     @app.post("/api/v1/compare")
@@ -733,6 +878,12 @@ def run_server(
         threading.Timer(0.8, webbrowser.open, args=(url,)).start()
     uvicorn.run(create_app(workspace), host=host, port=port, log_level="info")
     return 0
+
+
+def _request_page_url(request: Request, page: int) -> str:
+    query = dict(request.query_params)
+    query["page"] = str(max(1, page))
+    return f"/runs?{urlencode(query)}"
 
 
 def _plan_from_values(
@@ -1502,3 +1653,7 @@ def _json_file(path: Path) -> dict[str, Any]:
 
 def _mapping(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def _known_comparison_dimension(value: Any) -> bool:
+    return str(value).strip().lower() not in {"", "unknown", "unrecorded", "none", "null"}
