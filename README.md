@@ -1,6 +1,6 @@
 # Ampule Chamber
 
-Version: 1.8.0
+Version: 1.9.0
 
 Production-ready release for agent-driven reliability testing of Kubernetes
 services before production.
@@ -15,12 +15,11 @@ teams that need to answer:
 
 ## Release Status
 
-Ampule Chamber `1.8.0` guides operators from a reliability goal to a bounded,
-editable scenario, explains every result as an evidence-backed operational
-decision, and provides one synchronized investigation timeline across traffic,
-faults, Kubernetes state, metrics, safe logs, and Relayna task lifecycles.
-Incomplete evidence never produces a readiness score, and raw downloads remain
-digest-verified.
+Ampule Chamber `1.9.0` adds an operational run workspace, structured reliability
+reports, richer baseline comparison, and accessible goal-first editing. Teams
+can now find regressions and evidence gaps across service history, compare only
+compatible earlier runs, and move from an executive verdict to cited technical
+evidence without losing the existing Markdown and JSON exports.
 
 ## What It Tests
 

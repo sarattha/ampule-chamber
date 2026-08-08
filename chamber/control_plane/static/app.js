@@ -38,6 +38,7 @@
     const basicVus = form.querySelector("[data-basic-vus]");
     const basicDuration = form.querySelector("[data-basic-duration]");
     const goalStatus = form.querySelector("[data-goal-status]");
+    const wizardStatus = form.querySelector("[data-wizard-status]");
     const csrfToken = form.elements._csrf.value;
     let discoveryData = null;
     let repositoryInspection = null;
@@ -722,6 +723,7 @@
         syncBasicControls();
         renderGoalSummary();
       }
+      wizardStatus.textContent = `${title(mode)} Exercise editor selected. Values are preserved between modes.`;
     };
 
     const ensureScenarioIdentity = () => {
@@ -751,16 +753,27 @@
         requestGoalProposal(form.elements.reliability_goal.value);
       }
       if (current === panels.length - 1) updateReview(form);
+      wizardStatus.textContent = `Step ${current + 1} of ${panels.length}: ${panels[current].querySelector("h1")?.textContent || "Assessment step"}`;
       panels[current].querySelector("h1")?.focus({preventScroll: true});
     };
     const valid = () => {
       const fields = [...panels[current].querySelectorAll("input,select,textarea")].filter(field => !field.closest("[hidden]"));
-      if (!fields.every(field => field.reportValidity())) return false;
+      const invalidField = fields.find(field => !field.checkValidity());
+      if (invalidField) {
+        wizardStatus.textContent = invalidField.validationMessage;
+        invalidField.focus({preventScroll: true});
+        invalidField.reportValidity();
+        return false;
+      }
       if (current === 2) {
         try { serializeJourneys(); }
         catch (error) {
           const invalid = panels[current].querySelector(":invalid");
-          if (invalid) invalid.reportValidity(); else window.alert(error.message);
+          wizardStatus.textContent = error.message;
+          if (invalid) {
+            invalid.focus({preventScroll: true});
+            invalid.reportValidity();
+          }
           return false;
         }
       }
@@ -887,7 +900,9 @@
       catch (error) {
         event.preventDefault();
         journeyList.querySelectorAll("[data-journey]").forEach(card => syncJourney(card));
-        window.alert(error.message);
+        wizardStatus.textContent = error.message;
+        const invalid = journeyList.querySelector(":invalid");
+        if (invalid) invalid.focus({preventScroll: true});
       }
     });
     form.querySelector("[data-advanced]").addEventListener("click", () => {
@@ -971,6 +986,8 @@
   function initializeLivePage(page) {
     const jobId = page.dataset.jobId;
     const source = new EventSource(`/api/v1/jobs/${jobId}/events`);
+    const announcer = page.querySelector("[data-live-announcer]");
+    let announcedState = page.querySelector("[data-job-state]").textContent;
     source.addEventListener("job", event => {
       const job = JSON.parse(event.data);
       page.querySelector("[data-job-title]").textContent = title(job.state);
@@ -979,7 +996,15 @@
       page.querySelector("[data-job-output]").textContent = job.output || (job.error ? job.error : "Assessment process is running…");
       const stages = [...page.querySelectorAll(".stage-list li")];
       const stageIndex = job.run_id ? 1 : 0;
-      stages.forEach((stage, index) => stage.classList.toggle("active", index <= stageIndex));
+      stages.forEach((stage, index) => {
+        stage.classList.toggle("active", index <= stageIndex);
+        if (index === stageIndex) stage.setAttribute("aria-current", "step");
+        else stage.removeAttribute("aria-current");
+      });
+      if (job.state !== announcedState) {
+        announcer.textContent = `Assessment ${title(job.state)}${job.error ? `. ${job.error}` : "."}`;
+        announcedState = job.state;
+      }
       if (["completed", "failed", "cancelled"].includes(job.state)) {
         source.close();
         const button = page.querySelector("[data-cancel-form] button");
@@ -987,7 +1012,11 @@
         if (job.run_id) window.setTimeout(() => window.location.assign(`/runs/${job.run_id}`), 900);
       }
     });
-    source.onerror = () => { page.querySelector("[data-job-message]").textContent = "Connection interrupted. Chamber will reconnect automatically; the assessment continues server-side."; };
+    source.onerror = () => {
+      const message = "Connection interrupted. Chamber will reconnect automatically; the assessment continues server-side.";
+      page.querySelector("[data-job-message]").textContent = message;
+      announcer.textContent = message;
+    };
   }
 
   function title(value) { return value.replaceAll("_", " ").replace(/\b\w/g, letter => letter.toUpperCase()); }

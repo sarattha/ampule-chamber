@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
@@ -34,6 +35,12 @@ class RunComparison:
     added_finding_ids: tuple[str, ...]
     resolved_finding_ids: tuple[str, ...]
     notes: tuple[str, ...]
+    baseline: dict[str, Any]
+    candidate: dict[str, Any]
+    compatibility_reasons: tuple[dict[str, Any], ...]
+    signal_deltas: tuple[dict[str, Any], ...]
+    finding_changes: tuple[dict[str, Any], ...]
+    config_changes: tuple[dict[str, Any], ...]
 
 
 class ChamberApplication:
@@ -105,17 +112,119 @@ class ChamberApplication:
     def list_runs(self, *, limit: int = 100) -> tuple[dict[str, Any], ...]:
         index = RunIndex(self.workspace)
         index.rebuild()
-        rows = []
+        rows: list[dict[str, Any]] = []
         for indexed in index.list_runs(limit=limit):
-            row = dict(indexed)
-            run_dir = Path(str(row["run_dir"]))
-            result = _json_or_default(run_dir / "result.json", {})
-            if isinstance(result, dict):
-                row["status"] = result.get("status")
-                row["readiness_score"] = result.get("readiness_score")
-                row["evidence_coverage_percent"] = result.get("evidence_coverage_percent", 0)
-            rows.append(row)
+            rows.append(_run_list_item(indexed))
         return tuple(rows)
+
+    def query_runs(
+        self,
+        *,
+        search: str = "",
+        state: str = "",
+        outcome: str = "",
+        environment: str = "",
+        coverage: str = "",
+        fault: str = "",
+        date_from: str = "",
+        date_to: str = "",
+        view: str = "",
+        page: int = 1,
+        page_size: int = 25,
+        include_archived: bool = False,
+    ) -> dict[str, Any]:
+        """Return the URL-filterable operational run workspace projection."""
+
+        all_rows = list(self.list_runs(limit=1000))
+        _mark_regressions(all_rows)
+        visible = [row for row in all_rows if include_archived or not row["archived"]]
+        summary = _run_summary_cards(visible)
+        filtered = [
+            row
+            for row in visible
+            if _run_matches(
+                row,
+                search=search,
+                state=state,
+                outcome=outcome,
+                environment=environment,
+                coverage=coverage,
+                fault=fault,
+                date_from=date_from,
+                date_to=date_to,
+                view=view,
+            )
+        ]
+        bounded_page_size = max(1, min(page_size, 100))
+        total_pages = max(1, (len(filtered) + bounded_page_size - 1) // bounded_page_size)
+        selected_page = max(1, min(page, total_pages))
+        start = (selected_page - 1) * bounded_page_size
+        items = filtered[start : start + bounded_page_size]
+        groups: list[dict[str, Any]] = []
+        for service_name in dict.fromkeys(str(row["service_name"]) for row in items):
+            service_runs = [row for row in items if row["service_name"] == service_name]
+            groups.append(
+                {
+                    "service_name": service_name,
+                    "latest": service_runs[0],
+                    "runs": service_runs,
+                    "trend": _service_trend(service_runs),
+                }
+            )
+        return {
+            "schema_version": "chamber.ampule.dev/run-workspace/v1",
+            "runs": items,
+            "groups": groups,
+            "summary": summary,
+            "pagination": {
+                "page": selected_page,
+                "page_size": bounded_page_size,
+                "total_items": len(filtered),
+                "total_pages": total_pages,
+            },
+            "filters": {
+                "search": search,
+                "state": state,
+                "outcome": outcome,
+                "environment": environment,
+                "coverage": coverage,
+                "fault": fault,
+                "date_from": date_from,
+                "date_to": date_to,
+                "view": view,
+                "include_archived": include_archived,
+            },
+            "facets": {
+                "states": sorted({str(row["state"]) for row in visible}),
+                "outcomes": sorted({str(row["status"]) for row in visible}),
+                "environments": sorted({str(row["environment"]) for row in visible}),
+                "faults": sorted(
+                    {str(value) for row in visible for value in row.get("fault_types", ())}
+                ),
+            },
+            "partial_index": len(all_rows) >= 1000,
+        }
+
+    def set_run_archived(self, run_id: str, *, archived: bool) -> dict[str, Any]:
+        """Toggle the recoverable archive state on a canonical run record."""
+
+        run_dir = self.run_path(run_id)
+        path = run_dir / "run.json"
+        record = _mapping(_json_or_default(path, {}))
+        record["archived"] = archived
+        record["archived_at"] = _now() if archived else None
+        write_json_atomic(path, record)
+        return _run_list_item({**record, "run_dir": str(run_dir)})
+
+    def set_run_tags(self, run_id: str, *, tags: tuple[str, ...]) -> dict[str, Any]:
+        """Replace operator tags on one run with normalized searchable values."""
+
+        run_dir = self.run_path(run_id)
+        path = run_dir / "run.json"
+        record = _mapping(_json_or_default(path, {}))
+        record["tags"] = list(dict.fromkeys(tag.strip() for tag in tags if tag.strip()))[:20]
+        write_json_atomic(path, record)
+        return _run_list_item({**record, "run_dir": str(run_dir)})
 
     def run_path(self, run_id: str) -> Path:
         if not run_id or run_id in {".", ".."} or Path(run_id).name != run_id:
@@ -230,10 +339,11 @@ class ChamberApplication:
     def compare(self, baseline_run_id: str, candidate_run_id: str) -> RunComparison:
         baseline = self.get_run(baseline_run_id)
         candidate = self.get_run(candidate_run_id)
-        baseline_service = _service_name(baseline)
-        candidate_service = _service_name(candidate)
-        compatible = baseline_service == candidate_service
-        notes = () if compatible else ("Run services differ; score delta is not comparable.",)
+        compatibility_reasons = _compatibility_reasons(baseline, candidate)
+        compatible = all(bool(item["compatible"]) for item in compatibility_reasons)
+        notes = tuple(
+            str(item["detail"]) for item in compatibility_reasons if not item["compatible"]
+        )
         baseline_result = _mapping(baseline.get("result"))
         candidate_result = _mapping(candidate.get("result"))
         baseline_score = baseline_result.get("readiness_score")
@@ -245,6 +355,10 @@ class ChamberApplication:
         )
         baseline_findings = _finding_ids(baseline.get("findings"))
         candidate_findings = _finding_ids(candidate.get("findings"))
+        baseline_context = _comparison_context(baseline_run_id, baseline)
+        candidate_context = _comparison_context(candidate_run_id, candidate)
+        signal_deltas = _signal_deltas(baseline, candidate, compatible=compatible)
+        finding_changes = _finding_changes(baseline, candidate)
         return RunComparison(
             baseline_run_id=baseline_run_id,
             candidate_run_id=candidate_run_id,
@@ -255,6 +369,12 @@ class ChamberApplication:
             added_finding_ids=tuple(sorted(candidate_findings - baseline_findings)),
             resolved_finding_ids=tuple(sorted(baseline_findings - candidate_findings)),
             notes=notes,
+            baseline=baseline_context,
+            candidate=candidate_context,
+            compatibility_reasons=compatibility_reasons,
+            signal_deltas=signal_deltas,
+            finding_changes=finding_changes,
+            config_changes=_config_changes(baseline, candidate),
         )
 
 
@@ -384,7 +504,49 @@ def _prometheus_view(path: Path) -> dict[str, Any]:
         "window": artifact.get("window") if isinstance(artifact.get("window"), dict) else {},
         "workloads": workloads,
         "has_range_metrics": isinstance(summaries, list) and bool(summaries),
+        "queries": _prometheus_query_views(artifact),
+        "artifact_path": "evidence/prometheus-memory.json",
     }
+
+
+def _prometheus_query_views(artifact: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_queries = artifact.get("queries")
+    if not isinstance(raw_queries, dict):
+        return []
+    queries = []
+    for name, raw in raw_queries.items():
+        if not isinstance(raw, dict):
+            continue
+        samples = []
+        series = raw.get("series")
+        for item in series if isinstance(series, list) else []:
+            if not isinstance(item, dict):
+                continue
+            metric = item.get("metric") if isinstance(item.get("metric"), dict) else {}
+            sample = item.get("value")
+            samples.append(
+                {
+                    "pod": metric.get("pod"),
+                    "container": metric.get("container"),
+                    "timestamp": sample[0]
+                    if isinstance(sample, list | tuple) and len(sample) >= 2
+                    else None,
+                    "value": sample[1]
+                    if isinstance(sample, list | tuple) and len(sample) >= 2
+                    else None,
+                }
+            )
+        queries.append(
+            {
+                "name": str(name),
+                "ok": raw.get("ok") is True,
+                "series_count": raw.get("series_count"),
+                "error": raw.get("error"),
+                "query": raw.get("query"),
+                "samples": samples,
+            }
+        )
+    return queries
 
 
 def _prometheus_workload_view(item: dict[str, Any], *, memory_kind: str) -> dict[str, Any]:
@@ -559,6 +721,405 @@ def _finding_ids(value: Any) -> set[str]:
         for item in value
         if isinstance(item, dict) and item.get("finding_id")
     }
+
+
+def _run_list_item(indexed: dict[str, Any]) -> dict[str, Any]:
+    row = dict(indexed)
+    run_dir = Path(str(row["run_dir"]))
+    record = _mapping(_json_or_default(run_dir / "run.json", {}))
+    metadata = _mapping(_json_or_default(run_dir / "run-metadata.json", {}))
+    result = _mapping(_json_or_default(run_dir / "result.json", {}))
+    config = _yaml_or_default(run_dir / "chamber.yaml")
+    scenario = _mapping(config.get("scenario"))
+    runtime = _mapping(config.get("runtime"))
+    service = _mapping(config.get("service"))
+    findings = _json_or_default(run_dir / "findings.json", [])
+    finding_count = len(findings) if isinstance(findings, list) else 0
+    faults = runtime.get("faults")
+    fault_types = tuple(
+        str(item.get("type"))
+        for item in (faults if isinstance(faults, list) else [])
+        if isinstance(item, dict) and item.get("type")
+    )
+    raw_tags = record.get("tags")
+    tag_items: list[Any]
+    if isinstance(raw_tags, list):
+        tag_items = raw_tags
+    else:
+        scenario_tags = scenario.get("tags")
+        tag_items = scenario_tags if isinstance(scenario_tags, list) else []
+    tag_values = tuple(str(item) for item in tag_items if isinstance(item, str))
+    status = str(result.get("status") or row.get("result_status") or "pending")
+    row.update(
+        {
+            "service_name": str(
+                row.get("service_name") or service.get("name") or metadata.get("service_name")
+            ),
+            "status": status,
+            "readiness_score": result.get("readiness_score"),
+            "evidence_coverage_percent": int(result.get("evidence_coverage_percent", 0) or 0),
+            "cleanup_verified": result.get("cleanup_verified"),
+            "rollback_verified": result.get("rollback_verified"),
+            "finding_count": finding_count,
+            "scenario_id": str(
+                scenario.get("id")
+                or config.get("scenarioId")
+                or record.get("scenario_id")
+                or "unrecorded"
+            ),
+            "scenario_revision": str(
+                scenario.get("revision") or record.get("scenario_revision") or "unrecorded"
+            ),
+            "environment": str(runtime.get("provider") or row.get("mode") or "unknown"),
+            "runtime_mode": str(runtime.get("mode") or row.get("runtime_mode") or "unknown"),
+            "namespace": str(runtime.get("namespace") or metadata.get("namespace") or ""),
+            "context": str(runtime.get("kubernetesContext") or metadata.get("context") or ""),
+            "commit": str(service.get("commit") or metadata.get("commit") or "unrecorded"),
+            "owner": str(config.get("owner") or metadata.get("owner") or "unassigned"),
+            "tags": tag_values,
+            "fault_types": fault_types,
+            "archived": bool(record.get("archived", False)),
+            "archived_at": record.get("archived_at"),
+            "retention": "Workspace retained; archive is reversible.",
+            "regressed": False,
+        }
+    )
+    return row
+
+
+def _mark_regressions(rows: list[dict[str, Any]]) -> None:
+    previous_by_service: dict[str, dict[str, Any]] = {}
+    for row in reversed(rows):
+        service = str(row["service_name"])
+        previous = previous_by_service.get(service)
+        score = row.get("readiness_score")
+        previous_score = previous.get("readiness_score") if previous else None
+        row["regressed"] = bool(
+            previous
+            and (
+                (
+                    isinstance(score, int)
+                    and isinstance(previous_score, int)
+                    and score < previous_score
+                )
+                or int(row.get("finding_count", 0)) > int(previous.get("finding_count", 0))
+            )
+        )
+        previous_by_service[service] = row
+
+
+def _run_summary_cards(rows: list[dict[str, Any]]) -> dict[str, int]:
+    terminal = {"completed", "failed", "cancelled"}
+    return {
+        "active": sum(str(row.get("state")) not in terminal for row in rows),
+        "failed": sum(
+            str(row.get("status")) in {"failed", "not_ready", "preflight_failed"} for row in rows
+        ),
+        "regressed": sum(bool(row.get("regressed")) for row in rows),
+        "inconclusive": sum(str(row.get("status")) == "inconclusive" for row in rows),
+        "cleanup_attention": sum(
+            str(row.get("state")) in terminal and row.get("cleanup_verified") is False
+            for row in rows
+        ),
+    }
+
+
+def _run_matches(
+    row: dict[str, Any],
+    *,
+    search: str,
+    state: str,
+    outcome: str,
+    environment: str,
+    coverage: str,
+    fault: str,
+    date_from: str,
+    date_to: str,
+    view: str,
+) -> bool:
+    searchable = " ".join(
+        str(value)
+        for value in (
+            row.get("run_id"),
+            row.get("service_name"),
+            row.get("scenario_id"),
+            row.get("scenario_revision"),
+            row.get("commit"),
+            row.get("owner"),
+            *row.get("tags", ()),
+        )
+    ).lower()
+    if search.strip().lower() not in searchable:
+        return False
+    if state and row.get("state") != state:
+        return False
+    if outcome and row.get("status") != outcome:
+        return False
+    if environment and row.get("environment") != environment:
+        return False
+    coverage_value = int(row.get("evidence_coverage_percent", 0))
+    if coverage == "complete" and coverage_value < 100:
+        return False
+    if coverage == "partial" and not 0 < coverage_value < 100:
+        return False
+    if coverage == "missing" and coverage_value != 0:
+        return False
+    if fault and fault not in row.get("fault_types", ()):
+        return False
+    created_date = str(row.get("created_at", ""))[:10]
+    if date_from and created_date < date_from:
+        return False
+    if date_to and created_date > date_to:
+        return False
+    if view == "needs_attention" and not (
+        row.get("status") in {"failed", "not_ready", "preflight_failed", "inconclusive"}
+        or row.get("cleanup_verified") is False
+    ):
+        return False
+    if view == "recent_regressions" and not row.get("regressed"):
+        return False
+    if view == "my_services" and row.get("owner") == "unassigned":
+        return False
+    return True
+
+
+def _service_trend(rows: list[dict[str, Any]]) -> str:
+    if any(row.get("regressed") for row in rows):
+        return "regressed"
+    scores = [row["readiness_score"] for row in rows if isinstance(row.get("readiness_score"), int)]
+    if len(scores) >= 2 and scores[0] > scores[-1]:
+        return "improved"
+    return "stable" if scores else "unscored"
+
+
+def _comparison_context(run_id: str, run: dict[str, Any]) -> dict[str, Any]:
+    config = _mapping(run.get("config"))
+    scenario = _mapping(config.get("scenario"))
+    runtime = _mapping(config.get("runtime"))
+    result = _mapping(run.get("result"))
+    metadata = _mapping(run.get("metadata"))
+    service = _mapping(config.get("service"))
+    return {
+        "run_id": run_id,
+        "service_name": str(service.get("name", "unknown")),
+        "created_at": str(_mapping(run.get("run")).get("created_at", "unrecorded")),
+        "commit": str(service.get("commit") or metadata.get("commit") or "unrecorded"),
+        "scenario_id": str(scenario.get("id") or config.get("scenarioId") or "unrecorded"),
+        "scenario_revision": str(scenario.get("revision") or "unrecorded"),
+        "environment": str(runtime.get("provider") or metadata.get("mode") or "unknown"),
+        "runtime_mode": str(runtime.get("mode") or metadata.get("runtime_mode") or "unknown"),
+        "namespace": str(runtime.get("namespace") or metadata.get("namespace") or "unrecorded"),
+        "outcome": str(result.get("status", "pending")),
+        "evidence_coverage_percent": int(result.get("evidence_coverage_percent", 0) or 0),
+        "readiness_score": result.get("readiness_score"),
+        "url": f"/runs/{run_id}",
+    }
+
+
+def _compatibility_reasons(
+    baseline: dict[str, Any], candidate: dict[str, Any]
+) -> tuple[dict[str, Any], ...]:
+    left = _comparison_context("baseline", baseline)
+    right = _comparison_context("candidate", candidate)
+    checks = (
+        ("service", left["service_name"], right["service_name"]),
+        ("scenario contract", left["scenario_id"], right["scenario_id"]),
+        ("scenario revision", left["scenario_revision"], right["scenario_revision"]),
+        ("environment provider", left["environment"], right["environment"]),
+        ("runtime mode", left["runtime_mode"], right["runtime_mode"]),
+    )
+    return tuple(
+        {
+            "dimension": name,
+            "compatible": baseline_value == candidate_value,
+            "baseline": baseline_value,
+            "candidate": candidate_value,
+            "detail": (
+                f"{name.title()} matches ({baseline_value})."
+                if baseline_value == candidate_value
+                else f"{name.title()} differs: {baseline_value} vs {candidate_value}."
+            ),
+        }
+        for name, baseline_value, candidate_value in checks
+    )
+
+
+def _signal_snapshot(run: dict[str, Any]) -> dict[str, float | int | None]:
+    run_dir = Path(str(run.get("run_dir", "")))
+    k6 = _mapping(_json_or_default(run_dir / "evidence/k6-summary.json", {}))
+    metrics = _mapping(k6.get("metrics"))
+    latency = _metric_value(metrics, "http_req_duration", "p(95)")
+    failure_rate = _metric_value(metrics, "http_req_failed", "value")
+    recovery_time = _metric_value(metrics, "recovery_time", "value")
+    prometheus = _mapping(run.get("prometheus"))
+    workloads = prometheus.get("workloads")
+    workload_items = (
+        [item for item in workloads if isinstance(item, dict)]
+        if isinstance(workloads, list)
+        else []
+    )
+    relayna = _mapping(run.get("relayna"))
+    tasks = relayna.get("tasks")
+    task_items = (
+        [item for item in tasks if isinstance(item, dict)] if isinstance(tasks, list) else []
+    )
+    return {
+        "latency_p95_ms": latency,
+        "error_rate_percent": failure_rate * 100 if failure_rate is not None else None,
+        "peak_memory_mib": _maximum(workload_items, "memory_mib"),
+        "peak_cpu_millicores": _maximum(workload_items, "cpu_millicores"),
+        "max_restarts": _maximum(workload_items, "restarts"),
+        "recovery_time_seconds": recovery_time,
+        "successful_tasks": sum(bool(item.get("success")) for item in task_items)
+        if task_items
+        else None,
+        "failed_tasks": sum(not bool(item.get("success")) for item in task_items)
+        if task_items
+        else None,
+    }
+
+
+def _metric_value(metrics: dict[str, Any], metric: str, key: str) -> float | None:
+    item = _mapping(metrics.get(metric))
+    values = _mapping(item.get("values"))
+    return _number(item.get(key) if key in item else values.get(key) if key in values else None)
+
+
+def _maximum(items: list[dict[str, Any]], key: str) -> float | int | None:
+    values = [_number(item.get(key)) for item in items]
+    present = [value for value in values if value is not None]
+    return max(present) if present else None
+
+
+def _signal_deltas(
+    baseline: dict[str, Any], candidate: dict[str, Any], *, compatible: bool
+) -> tuple[dict[str, Any], ...]:
+    left = _signal_snapshot(baseline)
+    right = _signal_snapshot(candidate)
+    specs = (
+        ("latency_p95_ms", "P95 latency", "ms", "lower"),
+        ("error_rate_percent", "Error rate", "%", "lower"),
+        ("peak_memory_mib", "Peak memory", "MiB", "lower"),
+        ("peak_cpu_millicores", "Peak CPU", "m", "lower"),
+        ("max_restarts", "Restarts", "", "lower"),
+        ("recovery_time_seconds", "Recovery time", "s", "lower"),
+        ("successful_tasks", "Successful tasks", "", "higher"),
+        ("failed_tasks", "Failed tasks", "", "lower"),
+    )
+    deltas = []
+    for key, label, unit, preferred in specs:
+        baseline_value = left[key]
+        candidate_value = right[key]
+        comparable = compatible and baseline_value is not None and candidate_value is not None
+        delta = candidate_value - baseline_value if comparable else None
+        direction = "unavailable"
+        if comparable and delta is not None:
+            direction = (
+                "unchanged"
+                if delta == 0
+                else "improved"
+                if (delta < 0) == (preferred == "lower")
+                else "worsened"
+            )
+        deltas.append(
+            {
+                "key": key,
+                "label": label,
+                "unit": unit,
+                "baseline": baseline_value,
+                "candidate": candidate_value,
+                "delta": delta,
+                "comparable": comparable,
+                "direction": direction,
+                "reason": None if comparable else "Both compatible runs need this evidence.",
+            }
+        )
+    return tuple(deltas)
+
+
+def _finding_changes(
+    baseline: dict[str, Any], candidate: dict[str, Any]
+) -> tuple[dict[str, Any], ...]:
+    left = {
+        str(item.get("finding_id")): item
+        for item in baseline.get("findings", [])
+        if isinstance(item, dict) and item.get("finding_id")
+    }
+    right = {
+        str(item.get("finding_id")): item
+        for item in candidate.get("findings", [])
+        if isinstance(item, dict) and item.get("finding_id")
+    }
+    ranks = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
+    baseline_run_id = str(_mapping(baseline.get("run")).get("run_id", ""))
+    candidate_run_id = str(_mapping(candidate.get("run")).get("run_id", ""))
+    changes = []
+    for finding_id in sorted(left.keys() | right.keys()):
+        before = left.get(finding_id)
+        after = right.get(finding_id)
+        if before is None:
+            change = "added"
+        elif after is None:
+            change = "resolved"
+        else:
+            delta = ranks.get(str(after.get("severity", "info")), 0) - ranks.get(
+                str(before.get("severity", "info")), 0
+            )
+            if delta == 0:
+                continue
+            change = "worsened" if delta > 0 else "improved"
+        item = after or before or {}
+        changes.append(
+            {
+                "finding_id": finding_id,
+                "title": str(item.get("title") or item.get("signal_type") or finding_id),
+                "change": change,
+                "baseline_url": f"/runs/{baseline_run_id}?tab=findings",
+                "candidate_url": f"/runs/{candidate_run_id}?tab=findings",
+            }
+        )
+    return tuple(changes)
+
+
+def _config_changes(
+    baseline: dict[str, Any], candidate: dict[str, Any]
+) -> tuple[dict[str, Any], ...]:
+    left = _config_summary(_mapping(baseline.get("config")))
+    right = _config_summary(_mapping(candidate.get("config")))
+    return tuple(
+        {"path": key, "baseline": left.get(key), "candidate": right.get(key)}
+        for key in sorted(left.keys() | right.keys())
+        if left.get(key) != right.get(key)
+    )
+
+
+def _config_summary(config: dict[str, Any]) -> dict[str, Any]:
+    service = _mapping(config.get("service"))
+    scenario = _mapping(config.get("scenario"))
+    runtime = _mapping(config.get("runtime"))
+    traffic = _mapping(config.get("traffic"))
+    journeys = traffic.get("journeys")
+    journey_items = (
+        [item for item in journeys if isinstance(item, dict)] if isinstance(journeys, list) else []
+    )
+    faults = runtime.get("faults")
+    fault_items = (
+        [item for item in faults if isinstance(item, dict)] if isinstance(faults, list) else []
+    )
+    return {
+        "service.name": service.get("name"),
+        "scenario.id": scenario.get("id") or config.get("scenarioId"),
+        "scenario.revision": scenario.get("revision"),
+        "runtime.provider": runtime.get("provider"),
+        "runtime.mode": runtime.get("mode"),
+        "runtime.namespace": runtime.get("namespace"),
+        "traffic.journeyNames": tuple(str(item.get("name", "unnamed")) for item in journey_items),
+        "runtime.faultTypes": tuple(str(item.get("type", "unknown")) for item in fault_items),
+    }
+
+
+def _now() -> str:
+    return datetime.now(UTC).isoformat()
 
 
 def _mapping(value: Any) -> dict[str, Any]:

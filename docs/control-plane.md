@@ -131,6 +131,47 @@ custom security/resource settings are needed.
    actions, then validate findings on the synchronized evidence timeline.
    Compare compatible runs or export HTML, Markdown, or JSON.
 
+### Operational run workspace
+
+The Runs page is the default operational workspace. Summary cards identify
+active, failed, regressed, inconclusive, and cleanup-attention work. Saved views
+cover all current runs, needs attention, recent regressions, owned services, and
+archived history. Search matches service, scenario, run ID, commit, owner, and
+tags; state, outcome, environment, evidence coverage, fault type, and date are
+independent URL-backed filters that can be bookmarked or shared.
+
+Runs are grouped into service history cards with the latest outcome and a
+stable, improved, regressed, or unscored trend. The bounded index and paginated
+table keep large workspaces predictable. Active rows link to live progress and
+safe cancellation; completed rows provide direct Overview and comparison
+actions. Archive is reversible and retains the run workspace. Tags are local
+searchable metadata and never change the tested configuration.
+
+### Overview, reports, and comparisons
+
+Overview leads with an operational verdict, confidence, tested scope, the most
+important risk or missing evidence, and the next action. A conclusive run shows
+top cited findings; an inconclusive run explicitly states that no findings does
+not mean success. Configuration and raw implementation metadata remain
+available through progressive disclosure instead of competing with the
+decision.
+
+The structured HTML report uses the persisted result, finding, evidence, and
+run projections. It includes stable section navigation, executive verdict,
+tested scenario and environment, coverage and limitations, cited findings,
+correlated runtime signals, remediation and retest actions, and cleanup and
+rollback verification. Low-level Prometheus and reproduction data stays in
+technical disclosures. HTML and JSON rendering does not regenerate Markdown,
+so retained legacy runs remain readable; the Markdown export preserves the
+existing report contract.
+
+Comparison recommends only earlier runs that match service, scenario ID and
+revision, provider, and runtime mode. It shows both contexts before presenting
+score, evidence, p95 latency, error-rate, resource, restart, recovery, Relayna,
+finding, and material configuration changes. Missing signals display `N/A`.
+Incompatible runs explain every mismatch and suppress numeric deltas so absent
+evidence cannot appear to be an improvement.
+
 ### Goal-first scenario builder
 
 Basic mode offers bounded presets for baseline readiness, pod recovery,
@@ -144,6 +185,21 @@ Advanced modes edit the same journey controls, and imported fields that the
 guided UI does not understand are retained when switching modes. A new goal
 selection is the only action that replaces the proposal. Server-side
 `ChamberConfig` validation remains authoritative when the plan is created.
+
+### Accessibility and responsive behavior
+
+The main control-plane paths use semantic headings, labels, tables, status
+regions, and progress state. Wizard steps restore focus to the new heading;
+validation focuses the first invalid field. Job polling announces meaningful
+state changes, failures, and reconnection instead of repeating unchanged log
+output. Visible focus rings, a 44-pixel default target size, textual mobile
+status, scroll affordances for tabs and wide tables, and restrained status
+coloring support keyboard and low-vision use.
+
+At narrow viewports and 400% browser zoom, navigation, cards, forms, report
+sections, and actions reflow vertically while intentionally wide data tables
+remain labeled horizontal scroll regions. Report print styles remove application
+navigation and retain the decision, evidence, and remediation hierarchy.
 
 ### Runtime evidence in the assessment UI
 
@@ -517,6 +573,12 @@ repository inspection, plan creation, asynchronous run control, SSE run events,
 result retrieval, evidence access, reports, and comparison. Mutating requests
 require a same-site CSRF token. Responses include a strict content security
 policy, anti-framing, no-sniff, and no-referrer headers.
+
+`GET /api/v1/runs` returns the shared run-workspace projection and accepts
+`q`, `state`, `outcome`, `environment`, `coverage`, `fault`, `date_from`,
+`date_to`, `view`, `page`, `page_size`, and `archived`. The legacy `runs` array
+and `limit` parameter remain available. `GET /api/v1/runs/{run_id}/report`
+supports Markdown by default plus `format=html` and `format=json`.
 
 ## Real kind example
 

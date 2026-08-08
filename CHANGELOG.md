@@ -2,6 +2,47 @@
 
 All notable changes to Ampule Chamber are documented in this file.
 
+## 1.9.0 - 2026-08-08
+
+### Added
+
+- Added an operational Runs workspace with attention summaries, saved views,
+  URL-backed search and filters, service trends, pagination, reversible archive
+  metadata, tags, and live-job actions.
+- Added structured HTML reliability reports with report navigation, verdict and
+  confidence, tested scope, finding citations, evidence coverage, limitations,
+  correlated signals, remediation, retest, cleanup, and rollback sections.
+- Added detailed compatible-run comparison for latency, error rate, resources,
+  restarts, recovery, Relayna outcomes, finding movement, and material scenario
+  or environment changes.
+- Added designed Overview states for conclusive and inconclusive results,
+  including the most important risk or evidence gap and direct investigation
+  actions.
+
+### Changed
+
+- Basic goal-first editing now exposes bounded request, traffic, fault, required
+  evidence, and generated-config details while preserving the same values when
+  switching to the complete Advanced editor.
+- HTML and JSON reports render from persisted structured projections and no
+  longer require Markdown report regeneration; Markdown export remains
+  backward compatible.
+- Recommended comparison baselines are restricted to compatible runs created
+  before the selected candidate.
+
+### Accessibility
+
+- Added visible focus treatment, 44-pixel default targets, semantic status and
+  progress announcements, keyboard focus restoration between wizard steps,
+  horizontal tab and table affordances, textual mobile status, responsive
+  reflow, and print-safe report styles.
+
+### Documentation
+
+- Documented the run workspace, structured report, comparison semantics,
+  editor parity, accessibility contracts, API filters, and Computer Use design
+  QA evidence for GitHub enhancements #34 through #39.
+
 ## 1.8.0 - 2026-08-08
 
 ### Added

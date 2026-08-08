@@ -89,6 +89,17 @@ class AssessmentJobManager:
                 raise KeyError(job_id)
             return job.summary()
 
+    def list(self) -> tuple[dict[str, Any], ...]:
+        """Return current jobs newest first for the operational dashboard."""
+
+        with self._lock:
+            return tuple(
+                job.summary()
+                for job in sorted(
+                    self._jobs.values(), key=lambda item: item.created_at, reverse=True
+                )
+            )
+
     def cancel(self, job_id: str) -> dict[str, Any]:
         with self._lock:
             job = self._jobs.get(job_id)

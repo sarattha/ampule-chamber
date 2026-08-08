@@ -20,5 +20,11 @@ boundary and must retain its upload-safety and content-safety guarantees.
   and Relayna lifecycle evidence with honest exact/run-window/inferred labels.
 - Keep projections bounded and content-safe while retaining verified raw
   artifact downloads for expert inspection.
+- Operate across service history with URL-backed run filters, attention and
+  regression views, reversible archival, tags, and bounded pagination.
+- Present structured Overview, report, and compatible-run comparison surfaces
+  without weakening persisted result, evidence, or Markdown export contracts.
+- Keep keyboard focus, announcements, target sizes, high-zoom reflow, and print
+  output usable across the complete control-plane journey.
 - Preserve released `result/v1`, scenario, JSON Relayna, HTTP multipart, and
   multipart Relayna artifact compatibility.
