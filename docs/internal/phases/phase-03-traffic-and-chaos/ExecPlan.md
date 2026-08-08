@@ -458,3 +458,9 @@ through SSE, and produce content-safe lifecycle evidence.
   tests; 90% combined branch/line coverage; all 10 scenarios; deployment and
   release metadata at `1.9.0`; strict MkDocs; and source-distribution and wheel
   builds for `ampule_chamber-1.9.0`.
+- The first Codex review follow-up made HTML/JSON report reads non-mutating,
+  rejected unknown compatibility dimensions, suppressed all finding movement
+  for incompatible runs, included archived and older runs in the bounded
+  comparison selector, and preserved legacy API limits through 1,000 rows.
+  `make check` passed again with 256 tests and 90% coverage after five new
+  regressions and the updated legacy comparison/report contracts.

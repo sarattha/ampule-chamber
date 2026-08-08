@@ -1526,7 +1526,10 @@ class ApplicationFacadeTests(unittest.TestCase):
             listed = {item["run_id"]: item for item in application.list_runs()}
             self.assertEqual(listed[first.name]["readiness_score"], 82)
             comparison = application.compare(first.name, second.name)
-            self.assertTrue(comparison.compatible)
+            self.assertFalse(comparison.compatible)
+            self.assertTrue(
+                any("unavailable" in item["detail"] for item in comparison.compatibility_reasons)
+            )
             with self.assertRaises(ValueError):
                 application.run_path("../escape")
 

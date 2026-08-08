@@ -96,6 +96,35 @@ class RunWorkspaceProjectionTests(unittest.TestCase):
             self.assertEqual(api["pagination"]["total_items"], 1)
             self.assertEqual(api["filters"]["outcome"], "inconclusive")
 
+    def test_legacy_limit_can_return_more_than_the_interactive_page_cap(self) -> None:
+        with TemporaryDirectory() as tmp:
+            app = create_app(Path(tmp) / ".chamber")
+            rows = tuple(
+                {
+                    "run_id": f"run-{index:03d}",
+                    "run_dir": f"/workspace/run-{index:03d}",
+                    "service_name": "payments",
+                    "state": "completed",
+                    "status": "ready",
+                    "readiness_score": 90,
+                    "evidence_coverage_percent": 100,
+                    "cleanup_verified": True,
+                    "finding_count": 0,
+                    "environment": "kubernetes",
+                    "fault_types": (),
+                    "archived": False,
+                    "created_at": f"2026-08-08T00:{index % 60:02d}:00+00:00",
+                    "tags": (),
+                }
+                for index in range(150)
+            )
+            with patch.object(app.state.chamber, "list_runs", return_value=rows):
+                response = TestClient(app).get("/api/v1/runs?limit=150")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(len(response.json()["runs"]), 150)
+            self.assertEqual(response.json()["pagination"]["page_size"], 150)
+
 
 class DetailedComparisonTests(unittest.TestCase):
     def test_recommended_baselines_are_compatible_and_older_than_candidate(self) -> None:
@@ -127,6 +156,67 @@ class DetailedComparisonTests(unittest.TestCase):
 
             self.assertIn(f'value="{older.name}"   data-recommended="true"', page.text)
             self.assertNotIn(f'value="{newer.name}"   data-recommended="true"', page.text)
+
+    def test_compare_selector_includes_archived_runs_and_requests_full_index(self) -> None:
+        with TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / ".chamber"
+            candidate = _run(
+                workspace,
+                "archived-candidate",
+                created_at="2026-08-02T00:00:00+00:00",
+                score=92,
+                coverage=100,
+            )
+            app = create_app(workspace)
+            app.state.chamber.set_run_archived(candidate.name, archived=True)
+            with patch.object(
+                app.state.chamber,
+                "query_runs",
+                wraps=app.state.chamber.query_runs,
+            ) as query_runs:
+                page = TestClient(app).get(f"/compare?candidate={candidate.name}")
+
+            self.assertEqual(page.status_code, 200)
+            self.assertIn(f'value="{candidate.name}"', page.text)
+            query_runs.assert_called_once_with(
+                page_size=1000,
+                include_archived=True,
+                max_page_size=1000,
+            )
+
+    def test_unknown_dimensions_are_incompatible_and_not_recommended(self) -> None:
+        with TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / ".chamber"
+            baseline = _run(
+                workspace,
+                "legacy-baseline",
+                created_at="2026-08-01T00:00:00+00:00",
+                score=90,
+                coverage=100,
+            )
+            candidate = _run(
+                workspace,
+                "legacy-candidate",
+                created_at="2026-08-02T00:00:00+00:00",
+                score=92,
+                coverage=100,
+            )
+            for run_dir in (baseline, candidate):
+                config = yaml.safe_load((run_dir / "chamber.yaml").read_text(encoding="utf-8"))
+                config["scenario"].pop("revision")
+                (run_dir / "chamber.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
+
+            comparison = ChamberApplication(workspace).compare(baseline.name, candidate.name)
+            page = TestClient(create_app(workspace)).get(f"/compare?candidate={candidate.name}")
+
+            self.assertFalse(comparison.compatible)
+            self.assertTrue(
+                any(
+                    item["dimension"] == "scenario revision" and "unavailable" in item["detail"]
+                    for item in comparison.compatibility_reasons
+                )
+            )
+            self.assertNotIn(f'value="{baseline.name}"   data-recommended="true"', page.text)
 
     def test_compatible_runs_include_signal_finding_and_config_deltas(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -178,6 +268,7 @@ class DetailedComparisonTests(unittest.TestCase):
                 score=90,
                 coverage=100,
                 latency=220,
+                finding_severity="high",
             )
             candidate = _run(
                 workspace,
@@ -192,6 +283,10 @@ class DetailedComparisonTests(unittest.TestCase):
 
             self.assertFalse(comparison.compatible)
             self.assertIsNone(comparison.score_delta)
+            self.assertIsNone(comparison.evidence_coverage_delta)
+            self.assertEqual(comparison.added_finding_ids, ())
+            self.assertEqual(comparison.resolved_finding_ids, ())
+            self.assertEqual(comparison.finding_changes, ())
             self.assertTrue(all(not item["comparable"] for item in comparison.signal_deltas))
             self.assertTrue(
                 any(

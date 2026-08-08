@@ -46,7 +46,6 @@ from chamber.control_plane.security import (
 )
 from chamber.load import validate_relayna_journey
 from chamber.runs import registered_evidence
-from chamber.workflow import WorkflowError
 
 PACKAGE_DIR = Path(__file__).resolve().parent
 TEMPLATE_DIR = PACKAGE_DIR / "templates"
@@ -537,7 +536,11 @@ def create_app(
                 comparison = asdict(application.compare(baseline, candidate))
             except (FileNotFoundError, ValueError) as exc:
                 error = str(exc)
-        run_workspace = application.query_runs(page_size=100)
+        run_workspace = application.query_runs(
+            page_size=1000,
+            include_archived=True,
+            max_page_size=1000,
+        )
         candidate_item = next(
             (item for item in run_workspace["runs"] if item["run_id"] == candidate), None
         )
@@ -547,7 +550,9 @@ def create_app(
                 and item["run_id"] != candidate
                 and str(item.get("created_at") or "") < str(candidate_item.get("created_at") or "")
                 and all(
-                    item.get(key) == candidate_item.get(key)
+                    _known_comparison_dimension(item.get(key))
+                    and _known_comparison_dimension(candidate_item.get(key))
+                    and item.get(key) == candidate_item.get(key)
                     for key in (
                         "service_name",
                         "scenario_id",
@@ -702,6 +707,7 @@ def create_app(
             page=page,
             page_size=page_size,
             include_archived=archived,
+            max_page_size=1000 if limit is not None else 100,
         )
 
     @app.post("/api/v1/runs", status_code=202)
@@ -808,12 +814,9 @@ def create_app(
     async def report_api(request: Request, run_id: str, format: str = "markdown") -> Response:
         try:
             run_dir = application.run_path(run_id)
-            report_path: Path | None = None
-            try:
+            report_path = None
+            if format == "markdown":
                 report_path = application.report(run_dir)
-            except WorkflowError:
-                if format == "markdown":
-                    raise
             run = application.get_run(run_id)
         except (FileNotFoundError, ValueError):
             raise HTTPException(status_code=404, detail="run not found") from None
@@ -1650,3 +1653,7 @@ def _json_file(path: Path) -> dict[str, Any]:
 
 def _mapping(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def _known_comparison_dimension(value: Any) -> bool:
+    return str(value).strip().lower() not in {"", "unknown", "unrecorded", "none", "null"}

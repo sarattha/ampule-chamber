@@ -31,7 +31,7 @@ class RunComparison:
     candidate_run_id: str
     compatible: bool
     score_delta: int | None
-    evidence_coverage_delta: int
+    evidence_coverage_delta: int | None
     added_finding_ids: tuple[str, ...]
     resolved_finding_ids: tuple[str, ...]
     notes: tuple[str, ...]
@@ -132,6 +132,7 @@ class ChamberApplication:
         page: int = 1,
         page_size: int = 25,
         include_archived: bool = False,
+        max_page_size: int = 100,
     ) -> dict[str, Any]:
         """Return the URL-filterable operational run workspace projection."""
 
@@ -155,7 +156,7 @@ class ChamberApplication:
                 view=view,
             )
         ]
-        bounded_page_size = max(1, min(page_size, 100))
+        bounded_page_size = max(1, min(page_size, max(1, min(max_page_size, 1000))))
         total_pages = max(1, (len(filtered) + bounded_page_size - 1) // bounded_page_size)
         selected_page = max(1, min(page, total_pages))
         start = (selected_page - 1) * bounded_page_size
@@ -358,16 +359,26 @@ class ChamberApplication:
         baseline_context = _comparison_context(baseline_run_id, baseline)
         candidate_context = _comparison_context(candidate_run_id, candidate)
         signal_deltas = _signal_deltas(baseline, candidate, compatible=compatible)
-        finding_changes = _finding_changes(baseline, candidate)
+        finding_changes = _finding_changes(baseline, candidate) if compatible else ()
+        added_finding_ids = (
+            tuple(sorted(candidate_findings - baseline_findings)) if compatible else ()
+        )
+        resolved_finding_ids = (
+            tuple(sorted(baseline_findings - candidate_findings)) if compatible else ()
+        )
         return RunComparison(
             baseline_run_id=baseline_run_id,
             candidate_run_id=candidate_run_id,
             compatible=compatible,
             score_delta=score_delta,
-            evidence_coverage_delta=int(candidate_result.get("evidence_coverage_percent", 0))
-            - int(baseline_result.get("evidence_coverage_percent", 0)),
-            added_finding_ids=tuple(sorted(candidate_findings - baseline_findings)),
-            resolved_finding_ids=tuple(sorted(baseline_findings - candidate_findings)),
+            evidence_coverage_delta=(
+                int(candidate_result.get("evidence_coverage_percent", 0))
+                - int(baseline_result.get("evidence_coverage_percent", 0))
+                if compatible
+                else None
+            ),
+            added_finding_ids=added_finding_ids,
+            resolved_finding_ids=resolved_finding_ids,
             notes=notes,
             baseline=baseline_context,
             candidate=candidate_context,
@@ -931,17 +942,26 @@ def _compatibility_reasons(
     return tuple(
         {
             "dimension": name,
-            "compatible": baseline_value == candidate_value,
+            "compatible": _known_comparison_value(baseline_value)
+            and _known_comparison_value(candidate_value)
+            and baseline_value == candidate_value,
             "baseline": baseline_value,
             "candidate": candidate_value,
             "detail": (
-                f"{name.title()} matches ({baseline_value})."
+                f"{name.title()} is unavailable: {baseline_value} vs {candidate_value}."
+                if not _known_comparison_value(baseline_value)
+                or not _known_comparison_value(candidate_value)
+                else f"{name.title()} matches ({baseline_value})."
                 if baseline_value == candidate_value
                 else f"{name.title()} differs: {baseline_value} vs {candidate_value}."
             ),
         }
         for name, baseline_value, candidate_value in checks
     )
+
+
+def _known_comparison_value(value: Any) -> bool:
+    return str(value).strip().lower() not in {"", "unknown", "unrecorded", "none", "null"}
 
 
 def _signal_snapshot(run: dict[str, Any]) -> dict[str, float | int | None]:
