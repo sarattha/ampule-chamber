@@ -488,7 +488,7 @@ This PR implements the foundation slice; the larger assessment roadmap remains f
 - [x] Shorten Basic setup and clarify capabilities, local scope, and report UI.
 - [x] Add regression tests, verify Docker and Chrome, bump SemVer to 1.10.0,
       and pass `make check` (266 tests, 90% coverage).
-- [ ] Open the draft PR and run `make clean`.
+- [x] Open [draft PR #42](https://github.com/sarattha/ampule-chamber/pull/42) and run `make clean`. The temporary Docker verification container was removed.
 
 ### Acceptance Criteria
 
