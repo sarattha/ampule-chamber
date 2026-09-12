@@ -543,3 +543,10 @@ successful verdict through the normal metadata/result pipeline.
 - Remote CI will verify the pushed commit on Linux/amd64; local Docker
   verification ran on Linux/arm64. This updates the existing draft release
   1.10.0 rather than creating another release or PR.
+
+- Remote Trivy repository scan passed. The previously blocked Gitleaks step
+  then flagged the recorded local test job UUID as a generic API key in
+  historical commit `4f27239`. Verified it is an assessment identifier, not
+  a credential. Removed the redundant UUID from current documentation and
+  added one exact historical finding fingerprint to `.gitleaksignore`; no
+  file-wide, rule-wide, or credential pattern exclusions were introduced.

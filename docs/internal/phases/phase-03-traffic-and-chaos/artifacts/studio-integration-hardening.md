@@ -60,7 +60,7 @@ mounted. This validates local execution, not live Kubernetes fault injection.
 - Browser-created execution: `chamber-assessment-20260912115153478-a5c2bc9d` completed,
   local-only, no readiness score, execution coverage 0%, cleanup/rollback not applicable.
 - Final-source API execution: `chamber-assessment-20260912115541172-db74d6eb` completed;
-  retry returned the same job `5bb0fd25ae9b4f5583431425cf5fee8a`.
+  retry returned the same job ID.
 - Markdown, JSON, and HTML exports each returned 200 despite git being absent in the image.
 - Invalid test configuration produced a failed job and report-unavailable 409, not a
   misleading run-not-found 404. Chrome retained the failure page and inspection link.
