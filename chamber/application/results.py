@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -149,6 +150,11 @@ def build_assessment_result(
 ) -> dict[str, Any]:
     """Build a result that cannot report readiness without required evidence."""
 
+    failure_path = run_dir / "execution-failure.json"
+    if failure_path.exists():
+        metadata = {**metadata, **json.loads(failure_path.read_text())}
+        if metadata.get("cleanup_required"):
+            metadata.update(cleanup_performed=False, rollback={"verified": False})
     stage = str(metadata.get("stage", "planned"))
     mode = str(metadata.get("mode", "local"))
     runtime_value = config.get("runtime")
@@ -163,10 +169,33 @@ def build_assessment_result(
         or _requires_prometheus(config)
     ):
         required.append("prometheus-memory")
+    scenario = config.get("scenario", {})
+    signals = scenario.get("requiredSignals", []) if isinstance(scenario, dict) else []
+    supported = {
+        "request_latency",
+        "error_rate",
+        "cpu_usage",
+        "memory_usage",
+        "kubernetes_events",
+        "pod_restarts",
+        "pod_logs",
+        "pod_status",
+        "container_restarts",
+        "logs",
+    }
+    required.extend(
+        f"signal:{signal}"
+        for signal in signals
+        if signal not in supported or not _runtime_signal_present(run_dir, signal)
+    )
     required = list(dict.fromkeys(required))
     if runtime_mode == "attach":
         required.extend(("attach-discovery", "pre-test-state", "rollback"))
-    available = {str(item.get("evidence_id")) for item in registered_evidence(run_dir)}
+    available = {
+        str(item.get("evidence_id"))
+        for item in registered_evidence(run_dir)
+        if _has_evidence_content(run_dir / str(item["relative_path"]), str(item["evidence_id"]))
+    }
     prometheus_available, prometheus_limitations = _prometheus_evidence_status(
         run_dir, required="prometheus-memory" in required
     )
@@ -247,9 +276,11 @@ def build_assessment_result(
         "tested_scope": _tested_scope(config, metadata),
         "readiness_score": score,
         "evidence_coverage_percent": evidence_coverage,
-        "execution_coverage_percent": 100 if stage == "assessed" else 0,
-        "rollback_verified": rollback_verified,
-        "cleanup_verified": bool(metadata.get("cleanup_performed"))
+        "execution_coverage_percent": 100 if stage == "assessed" and mode == "kubernetes" else 0,
+        "rollback_verified": rollback_verified if mode == "kubernetes" else None,
+        "cleanup_verified": None
+        if mode != "kubernetes"
+        else bool(metadata.get("cleanup_performed"))
         if runtime_mode != "attach"
         else True,
         "required_evidence_ids": required,
@@ -268,6 +299,84 @@ def build_assessment_result(
         "finding_count": len(findings),
         "generated_at": _now(),
     }
+
+
+def _runtime_signal_present(run_dir: Path, signal: str) -> bool:
+    reads = {
+        "pod_status": "pods",
+        "container_restarts": "pods",
+        "pod_restarts": "pods",
+        "kubernetes_events": "events",
+        "logs": "logs",
+        "pod_logs": "logs",
+    }
+    resource = reads.get(signal)
+    if resource is None:
+        return True  # Traffic and Prometheus have their own content gates below.
+    try:
+        value = json.loads((run_dir / "evidence/kubernetes-commands.json").read_text())
+        for item in value.get("commands", []):
+            command = item.get("command", [])
+            if item.get("exit_status") != 0 or resource not in command:
+                continue
+            if resource == "logs":
+                return bool(item.get("stdout", "").strip())
+            payload = json.loads(item.get("stdout", ""))
+            if isinstance(payload.get("items"), list) and (
+                resource == "events" or payload["items"]
+            ):
+                return True
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
+    return False
+
+
+def _has_evidence_content(path: Path, evidence_id: str) -> bool:
+    """Validate collector content in addition to the registered artifact digest."""
+    try:
+        content = path.read_text(encoding="utf-8").strip()
+        if path.suffix != ".json":
+            return bool(content)
+        value = json.loads(content)
+        if not isinstance(value, dict) or not value:
+            return False
+        if evidence_id == "preflight":
+            return value.get("ready") is True
+        if evidence_id == "kubernetes-commands":
+            return any(
+                isinstance(item, dict)
+                and item.get("exit_status") == 0
+                and "get" in item.get("command", [])
+                and bool(item.get("stdout"))
+                for item in value.get("commands", [])
+            )
+        if evidence_id == "k6-summary":
+            metrics = value.get("metrics", {})
+            count = metrics.get("http_reqs", {}).get("values", {}).get("count")
+            rate = metrics.get("http_req_failed", {}).get("values", {}).get("rate")
+            latency = metrics.get("http_req_duration", {}).get("values", {}).get("p(95)")
+            return (
+                _finite_number(count)
+                and count > 0
+                and _finite_number(rate)
+                and 0 <= rate <= 1
+                and _finite_number(latency)
+                and latency >= 0
+            )
+        if evidence_id == "relayna-summary":
+            return (
+                _finite_number(value.get("task_count"))
+                and value["task_count"] > 0
+                and isinstance(value.get("tasks"), list)
+                and bool(value["tasks"])
+            )
+        return True
+    except (OSError, UnicodeError, ValueError, TypeError, AttributeError):
+        return False
+
+
+def _finite_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
 def _confidence_label(
@@ -325,7 +434,16 @@ def _evidence_requirements(
     present_ids = set(present)
     items = []
     for evidence_id in dict.fromkeys(required + missing):
-        spec = EVIDENCE_REQUIREMENTS[evidence_id]
+        spec = EVIDENCE_REQUIREMENTS.get(
+            evidence_id,
+            {
+                "name": "Required signal: " + evidence_id.removeprefix("signal:"),
+                "impact": "This required signal has no usable collected evidence.",
+                "likely_cause": "The collector is missing, incomplete, or not supported yet.",
+                "resolution": "Validate this signal collector before using a readiness score.",
+                "configuration_path": "scenario.requiredSignals",
+            },
+        )
         is_present = evidence_id in present_ids
         context = {
             "path": spec["configuration_path"],

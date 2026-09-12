@@ -21,6 +21,7 @@ from chamber.load import (
     validate_relayna_journey,
 )
 from chamber.runs import refresh_evidence_manifest
+from tests.evidence_fixtures import evidence_payload
 
 
 class _Response(io.BytesIO):
@@ -119,7 +120,7 @@ class RelaynaTrafficTests(unittest.TestCase):
             evidence = run_dir / "evidence"
             evidence.mkdir()
             for name in ("preflight.json", "kubernetes-commands.json", "relayna-summary.json"):
-                (evidence / name).write_text("{}", encoding="utf-8")
+                (evidence / name).write_text(json.dumps(evidence_payload(name)), encoding="utf-8")
             refresh_evidence_manifest(run_dir)
 
             result = build_assessment_result(

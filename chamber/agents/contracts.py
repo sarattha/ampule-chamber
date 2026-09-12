@@ -142,6 +142,8 @@ def validate_evidence_bound_output(output: object, *, available_evidence_ids: se
     """Reject outputs that cite evidence outside the supplied artifact set."""
 
     cited = _collect_evidence_ids(output)
+    if available_evidence_ids and not cited:
+        raise AgentValidationError("agent output must cite supplied evidence")
     missing = sorted(cited - available_evidence_ids)
     if missing:
         raise AgentValidationError("agent output cites unavailable evidence: " + ", ".join(missing))

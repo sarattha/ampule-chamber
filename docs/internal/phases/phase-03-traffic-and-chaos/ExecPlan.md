@@ -464,3 +464,57 @@ through SSE, and produce content-safe lifecycle evidence.
   comparison selector, and preserved legacy API limits through 1,000 rows.
   `make check` passed again with 256 tests and 90% coverage after five new
   regressions and the updated legacy comparison/report contracts.
+
+## Studio Integration Assessment Follow-up (2026-09-12)
+
+### Scope And Order
+
+Implement the assessment's trust/lifecycle foundation, backend integration
+primitives, and existing UI/agent/report improvements on
+`codex/studio-integration-hardening`, created before implementation. Preserve the
+existing single-operator deployment boundary; Studio identity federation and
+new experiment families require their own contracts and acceptance evidence.
+This PR implements the foundation slice; the larger assessment roadmap remains follow-up work.
+
+### Checklist
+
+- [x] Gate required signals and reject insufficient artifact content.
+- [x] Allocate immutable run/job associations, persist job state, drain bounded
+      output, and bound cancellation with explicit interrupted cleanup state.
+- [x] Preserve report provenance and expose reporting failures consistently.
+- [x] Add plan-ID starts, idempotent submissions, and resumable run events;
+      distinguish bearer API authentication from cookie CSRF protection.
+- [x] Render useful agent summaries with stage history and validated citations.
+- [x] Shorten Basic setup and clarify capabilities, local scope, and report UI.
+- [x] Add regression tests, verify Docker and Chrome, bump SemVer to 1.10.0,
+      and pass `make check` (266 tests, 90% coverage).
+- [ ] Open the draft PR and run `make clean`.
+
+### Acceptance Criteria
+
+Missing or empty required evidence cannot produce readiness. Concurrent jobs
+retain their allocated run IDs. Verbose children complete without pipe stalls;
+cancellation is bounded and never implies unverified cleanup succeeded. A
+restarted manager retains history and identifies interrupted execution.
+Reports remain readable without git/source checkout and preserve captured
+identity. API retries do not launch duplicate work. Browser cookie writes
+remain CSRF-protected. Chrome verifies the wizard, agents, reports, failure
+states, and narrow layout. Final release checks must all pass before the PR.
+
+### Evidence And Decisions
+
+Acceptance evidence and the integration contract are recorded in
+[the hardening artifact](artifacts/studio-integration-hardening.md).
+
+Report exports preserve recorded results and captured provenance. Collector gates
+validate structural content and required-signal availability; citation validation
+checks presence and allowed IDs, not semantic truth. POSIX job leases cover one
+host. An interrupted Kubernetes supervisor requires cleanup review; automatic
+orphan cleanup and distributed scheduling are outside this foundation slice.
+
+The first full check caught deployment version pins still at 1.9.0; Helm and raw
+Deployment metadata were aligned to 1.10.0. Subsequent full checks passed. Chrome
+confirmed the actual sample readiness path is `/readyz`, and exposed a lingering
+local cleanup claim in agent summaries; it now says not applicable. Failed jobs
+retain a permanent interruption marker so later child writes cannot restore a
+successful verdict through the normal metadata/result pipeline.

@@ -23,6 +23,7 @@ from chamber.report import (
     render_markdown_report,
 )
 from chamber.runs import initialize_run_record, refresh_evidence_manifest, write_json_atomic
+from tests.evidence_fixtures import evidence_payload
 
 STATE_FIXTURES = (
     ("ready", {"stage": "assessed", "mode": "kubernetes", "success": True}, "ready"),
@@ -147,7 +148,9 @@ class DecisionResultProjectionTests(unittest.TestCase):
             run_dir = workspace / "runs" / "linked-finding"
             evidence = run_dir / "evidence"
             evidence.mkdir(parents=True)
-            (evidence / "kubernetes-commands.json").write_text("{}", encoding="utf-8")
+            (evidence / "kubernetes-commands.json").write_text(
+                json.dumps(evidence_payload("kubernetes-commands")), encoding="utf-8"
+            )
             refresh_evidence_manifest(run_dir)
             write_json_atomic(
                 run_dir / "findings.json",
@@ -416,7 +419,7 @@ def _write_required_evidence(run_dir: Path) -> None:
     evidence = run_dir / "evidence"
     evidence.mkdir(parents=True, exist_ok=True)
     for name in ("preflight", "kubernetes-commands", "k6-summary"):
-        (evidence / f"{name}.json").write_text("{}", encoding="utf-8")
+        (evidence / f"{name}.json").write_text(json.dumps(evidence_payload(name)), encoding="utf-8")
     refresh_evidence_manifest(run_dir)
 
 

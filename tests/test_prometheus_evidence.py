@@ -28,6 +28,7 @@ from chamber.report import (
     render_markdown_report,
 )
 from chamber.runs import refresh_evidence_manifest
+from tests.evidence_fixtures import evidence_payload
 
 REQUIRED_QUERIES = (
     "container_memory_working_set_bytes",
@@ -449,7 +450,7 @@ class PrometheusEvidenceGateTests(unittest.TestCase):
             any("failed: connection refused" in item for item in result["evidence_limitations"])
         )
 
-    def test_report_regeneration_recomputes_changed_prometheus_evidence(self) -> None:
+    def test_report_export_preserves_recorded_result(self) -> None:
         changed_queries = (
             (REQUIRED_QUERIES[1], None),
             (None, REQUIRED_QUERIES[0]),
@@ -487,11 +488,7 @@ class PrometheusEvidenceGateTests(unittest.TestCase):
                 workflow.render_report_from_run(run_dir)
                 recomputed = json.loads((run_dir / "result.json").read_text(encoding="utf-8"))
 
-                self.assertEqual(recomputed["status"], "inconclusive")
-                self.assertFalse(recomputed["conclusive"])
-                self.assertIsNone(recomputed["readiness_score"])
-                self.assertEqual(recomputed["evidence_coverage_percent"], 75)
-                self.assertIn("prometheus-memory", recomputed["missing_evidence_ids"])
+                self.assertEqual(recomputed, ready)
                 self.assertEqual(
                     _event_count(run_dir, "analysis_completed"),
                     analysis_event_count,
@@ -567,7 +564,7 @@ class PrometheusEvidenceGateTests(unittest.TestCase):
 
 
 class PrometheusReportTests(unittest.TestCase):
-    def test_only_markdown_export_recomputes_stale_prometheus_results(self) -> None:
+    def test_all_export_formats_preserve_recorded_results(self) -> None:
         for report_format in ("json", "html", "markdown"):
             with self.subTest(report_format=report_format), TemporaryDirectory() as tmp:
                 workspace = Path(tmp)
@@ -595,11 +592,10 @@ class PrometheusReportTests(unittest.TestCase):
                     analysis_event_count,
                 )
                 if report_format == "markdown":
-                    self.assertEqual(persisted["status"], "inconclusive")
-                    self.assertEqual(persisted["evidence_coverage_percent"], 75)
+                    self.assertEqual(persisted, ready)
                     self.assertEqual(_event_count(run_dir, "report_generated"), 1)
-                    self.assertIn("inconclusive", response.text.lower())
-                    self.assertIn("75%", response.text)
+                    self.assertIn("ready", response.text.lower())
+                    self.assertIn("100%", response.text)
                 else:
                     self.assertEqual(persisted["status"], "ready")
                     self.assertEqual(persisted["evidence_coverage_percent"], 100)
@@ -718,7 +714,7 @@ def _result_run(
     evidence = run_dir / "evidence"
     evidence.mkdir(parents=True)
     for name in ("preflight", "kubernetes-commands", "k6-summary"):
-        (evidence / f"{name}.json").write_text("{}", encoding="utf-8")
+        (evidence / f"{name}.json").write_text(json.dumps(evidence_payload(name)), encoding="utf-8")
     _write_prometheus_artifact(
         run_dir,
         failed_query=failed_query,

@@ -194,6 +194,7 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover
                 repo=Path(args.repo) if args.repo else None,
                 config=Path(args.config) if args.config else None,
                 resume=Path(args.resume) if args.resume else None,
+                run_dir=Path(args.run_dir) if args.run_dir else None,
                 mode=args.mode,
                 agents_mode=args.agents_mode,
                 agents_exclude=tuple(args.agents_exclude or ()),
@@ -276,7 +277,7 @@ def infer_config(repo: Path) -> dict[str, Any]:
                 {
                     "name": "baseline",
                     "method": "GET",
-                    "path": "/health",
+                    "path": _inferred_readiness_path(repo, manifests),
                     "expectedStatus": 200,
                 }
             ],
@@ -532,6 +533,7 @@ def assess(
     repo: Path | None = None,
     config: Path | None = None,
     resume: Path | None = None,
+    run_dir: Path | None = None,
     mode: str = "local",
     agents_mode: str | None = None,
     agents_exclude: tuple[str, ...] = (),
@@ -550,6 +552,7 @@ def assess(
             context=context,
             prometheus_url=prometheus_url,
             runner=WorkflowSubprocessRunner(),
+            run_dir=run_dir,
         )
     if mode != "local":
         raise WorkflowError("only --mode local is supported by the guided workflow")
@@ -558,7 +561,7 @@ def assess(
     if repo is None and config is None:
         raise WorkflowError("assess requires --repo, --config, or --resume")
     init_workspace()
-    run_dir = _new_run_dir((repo or config or Path("assessment")).stem)
+    run_dir = _assessment_directory((repo or config or Path("assessment")).stem, run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
     if repo is not None:
         generated = infer_config(repo)
@@ -604,6 +607,7 @@ def _assess_kubernetes_config(
     context: str | None,
     prometheus_url: str | None,
     runner: KubernetesCommandRunner,
+    run_dir: Path | None = None,
 ) -> Path:
     """Run a config-driven live Kubernetes assessment."""
 
@@ -623,11 +627,12 @@ def _assess_kubernetes_config(
             context=context,
             prometheus_url=prometheus_url,
             runner=runner,
+            run_dir=run_dir,
         )
     selected_context = context or str(runtime["kubernetesContext"])
     selected_prometheus = prometheus_url or runtime.get("prometheusUrl")
     init_workspace()
-    run_dir = _new_run_dir(str(config["service"]["name"]))
+    run_dir = _assessment_directory(str(config["service"]["name"]), run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
     config_copy = run_dir / "chamber.yaml"
     save_config(config, config_copy)
@@ -765,6 +770,7 @@ def _assess_kubernetes_attach_config(
     context: str | None,
     prometheus_url: str | None,
     runner: KubernetesCommandRunner,
+    run_dir: Path | None = None,
 ) -> Path:
     """Run an in-place assessment against existing Kubernetes resources."""
 
@@ -774,7 +780,7 @@ def _assess_kubernetes_attach_config(
     namespace = str(runtime["namespace"])
     selected_prometheus = prometheus_url or runtime.get("prometheusUrl")
     init_workspace()
-    run_dir = _new_run_dir(str(config["service"]["name"]))
+    run_dir = _assessment_directory(str(config["service"]["name"]), run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
     config_copy = run_dir / "chamber.yaml"
     save_config(config, config_copy)
@@ -993,12 +999,8 @@ def render_report_from_run(run_dir: Path) -> Path:
     config = load_config(run_dir / "chamber.yaml", require_repo=False)
     plan = _read_json(run_dir / "plan.json")
     metadata = _read_json(run_dir / "run-metadata.json")
-    _finalize_guided_result(
-        run_dir,
-        config=config,
-        metadata=metadata,
-        record_event=False,
-    )
+    if not (run_dir / "result.json").exists():
+        _finalize_guided_result(run_dir, config=config, metadata=metadata, record_event=False)
     report = _report_input(run_dir, config=config, plan=plan, metadata=metadata)
     report_path = run_dir / "report.md"
     report_path.write_text(render_markdown_report(report), encoding="utf-8")
@@ -1037,6 +1039,9 @@ def _parser() -> argparse.ArgumentParser:
     source.add_argument("--config")
     source.add_argument("--resume")
     assess_parser.add_argument("--mode", default="local")
+    assess_parser.add_argument(
+        "--run-dir", help="Reserved empty run directory for supervised execution"
+    )
     assess_parser.add_argument("--agents-mode", choices=sorted(AGENT_MODES))
     assess_parser.add_argument(
         "--agents-exclude",
@@ -2833,7 +2838,21 @@ def _write_agents(
 ) -> tuple[ReportSection, ...]:
     mode = _agent_mode(config, None)
     agent_dir = run_dir / "agent"
-    shutil.rmtree(agent_dir, ignore_errors=True)
+    if agent_dir.exists() and any(agent_dir.iterdir()):
+        history = run_dir / "agent-history" / datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+        history.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(agent_dir), str(history))
+        if (run_dir / "agent-stage.json").exists():
+            shutil.copyfile(run_dir / "agent-stage.json", history / "provenance.json")
+    _write_json(
+        run_dir / "agent-stage.json",
+        {
+            "stage": stage,
+            "mode": mode,
+            "generated_at": datetime.now(UTC).isoformat(),
+            "evidence_ids": list(evidence_ids),
+        },
+    )
     agent_dir.mkdir(parents=True, exist_ok=True)
     if mode == "off":
         return ()
@@ -2934,7 +2953,9 @@ def _agent_evidence_summaries(run_dir: Path, evidence_ids: tuple[str, ...]) -> t
                 summaries.append(f"traffic success: {bool(traffic['success'])}")
             if traffic.get("exit_status") is not None:
                 summaries.append(f"traffic exit status: {traffic['exit_status']}")
-        if "cleanup_performed" in metadata:
+        if metadata.get("mode") == "local":
+            summaries.append("Live cleanup: not applicable to local inspection.")
+        elif "cleanup_performed" in metadata:
             summaries.append(f"cleanup performed: {bool(metadata['cleanup_performed'])}")
         if metadata.get("runtime_mode"):
             summaries.append(f"runtime mode: {metadata['runtime_mode']}")
@@ -3501,11 +3522,11 @@ def _report_input(
             name=str(service["name"]),
             owner=str(config.get("owner", "unknown")),
             repository=str(service["repo"]),
-            commit=_git_commit(Path(service["repo"])),
+            commit=str(metadata.get("source_commit", "unknown")),
         ),
         run=RunMetadata(
             run_id=str(metadata.get("run_id", run_dir.name)),
-            test_date=datetime.now(UTC).date().isoformat(),
+            test_date=str(metadata.get("captured_at", "unknown"))[:10],
             duration_seconds=int(metadata.get("duration_seconds", 1)),
             namespace=str(metadata.get("namespace", plan.get("namespace", ""))),
             provider=str(
@@ -3876,6 +3897,17 @@ def _current_kube_context() -> str | None:
     return completed.stdout.strip() or None
 
 
+def _assessment_directory(name: str, reserved: Path | None) -> Path:
+    if reserved is None:
+        return _new_run_dir(name)
+    if reserved.exists() and any(
+        path.name not in {"run.json", "events.jsonl"} for path in reserved.iterdir()
+    ):
+        raise WorkflowError("Assessment run directory already contains execution artifacts")
+    reserved.mkdir(parents=True, exist_ok=True)
+    return reserved
+
+
 def _new_run_dir(name: str) -> Path:
     init_workspace()
     return new_run_directory(Path(WORKSPACE_DIR) / RUNS_DIR, name)
@@ -3888,6 +3920,21 @@ def _ensure_run_subdirs(run_dir: Path) -> None:
 
 
 def _write_metadata(run_dir: Path, payload: dict[str, Any]) -> None:
+    failure_path = run_dir / "execution-failure.json"
+    if failure_path.exists():
+        payload = {**payload, **_read_json(failure_path)}
+        if payload.get("cleanup_required"):
+            payload.update(cleanup_performed=False, rollback={"verified": False})
+    previous = (
+        _read_json(run_dir / "run-metadata.json")
+        if (run_dir / "run-metadata.json").exists()
+        else {}
+    )
+    payload = {
+        **payload,
+        "captured_at": previous.get("captured_at", datetime.now(UTC).isoformat()),
+        "source_commit": previous.get("source_commit", "unknown"),
+    }
     if (run_dir / "chamber.yaml").exists():
         try:
             config = yaml.safe_load((run_dir / "chamber.yaml").read_text(encoding="utf-8"))
@@ -3895,6 +3942,10 @@ def _write_metadata(run_dir: Path, payload: dict[str, Any]) -> None:
             config = None
         if isinstance(config, dict):
             additions: dict[str, Any] = {}
+            if "source_commit" not in previous:
+                additions["source_commit"] = _git_commit(
+                    Path(str(config.get("service", {}).get("repo", "")))
+                )
             if "service_name" not in payload and isinstance(config.get("service"), dict):
                 additions["service_name"] = str(config["service"].get("name", "unknown"))
             scenario = config.get("scenario")
@@ -3993,6 +4044,20 @@ def _manifest_paths(repo: Path) -> list[str]:
         for path in sorted(set(candidates))
         if WORKSPACE_DIR not in path.parts and _contains_kubernetes_resource(path)
     ]
+
+
+def _inferred_readiness_path(repo: Path, manifests: list[str]) -> str:
+    paths: set[str] = set()
+    for manifest in manifests:
+        for document in _yaml_documents(repo / manifest):
+            spec = document.get("spec", {})
+            template = spec.get("template", {}) if isinstance(spec, dict) else {}
+            containers = template.get("spec", {}).get("containers", [])
+            for container in containers:
+                path = container.get("readinessProbe", {}).get("httpGet", {}).get("path")
+                if isinstance(path, str) and path.startswith("/"):
+                    paths.add(path)
+    return next(iter(paths)) if len(paths) == 1 else "/health"
 
 
 def _workloads_from_manifests(repo: Path, manifests: list[str]) -> list[dict[str, Any]]:
@@ -4423,12 +4488,15 @@ def _external_line(item: dict[str, Any]) -> str:
 def _git_commit(repo: Path) -> str:
     if not repo.exists():
         return "unknown"
-    completed = subprocess.run(
-        ("git", "-C", str(repo), "rev-parse", "HEAD"),
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        completed = subprocess.run(
+            ("git", "-C", str(repo), "rev-parse", "HEAD"),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return "unknown"
     return completed.stdout.strip() if completed.returncode == 0 else "external-working-tree"
 
 
