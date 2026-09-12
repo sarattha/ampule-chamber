@@ -64,7 +64,8 @@ class PlanRequest(BaseModel):
 
 
 class RunStartRequest(BaseModel):
-    config_path: str
+    config_path: str | None = None
+    plan_id: str | None = None
     mode: str = Field(pattern="^(local|kubernetes)$")
     context: str | None = None
     prometheus_url: str | None = None
@@ -136,6 +137,10 @@ def create_app(
         token = request.cookies.get(CSRF_COOKIE) or secrets.token_urlsafe(32)
         request.state.csrf_token = token
         request.state.authenticated = auth.authenticates_request(request)
+        scheme, _, candidate = request.headers.get("Authorization", "").partition(" ")
+        request.state.bearer_authenticated = (
+            scheme.lower() == "bearer" and auth.authenticates_token(candidate.strip())
+        )
         if not request.state.authenticated and not _public_path(request.url.path):
             if request.url.path.startswith("/api/"):
                 response = JSONResponse(
@@ -713,13 +718,30 @@ def create_app(
     @app.post("/api/v1/runs", status_code=202)
     async def start_run_api(request: Request, payload: RunStartRequest) -> dict[str, Any]:
         _check_csrf(request, request.headers.get("X-CSRF-Token"))
-        config_path = _safe_config_path(workspace, payload.config_path)
-        return jobs.start(
-            config_path,
-            mode=payload.mode,
-            context=payload.context,
-            prometheus_url=payload.prometheus_url,
-        )
+        if bool(payload.plan_id) == bool(payload.config_path):
+            raise HTTPException(
+                status_code=400, detail="Supply exactly one of plan_id or config_path"
+            )
+        try:
+            config_path = (
+                application.run_path(payload.plan_id) / "chamber.yaml"
+                if payload.plan_id
+                else _safe_config_path(workspace, payload.config_path or "")
+            )
+            key = request.headers.get("Idempotency-Key")
+            if key is not None and (not key.strip() or len(key) > 200):
+                raise HTTPException(status_code=400, detail="Invalid Idempotency-Key")
+            return jobs.start(
+                config_path,
+                mode=payload.mode,
+                context=payload.context,
+                prometheus_url=payload.prometheus_url,
+                idempotency_key=key,
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="plan not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.get("/api/v1/runs/{run_id}")
     async def run_api(run_id: str) -> dict[str, Any]:
@@ -759,12 +781,20 @@ def create_app(
         return {"run_id": planned.name, "run_dir": str(planned)}
 
     @app.get("/api/v1/runs/{run_id}/events")
-    async def run_events_api(run_id: str) -> StreamingResponse:
+    async def run_events_api(request: Request, run_id: str) -> StreamingResponse:
         try:
             run_dir = application.run_path(run_id)
         except (FileNotFoundError, ValueError):
             raise HTTPException(status_code=404, detail="run not found") from None
-        return StreamingResponse(_run_event_stream(run_dir), media_type="text/event-stream")
+        try:
+            after = int(request.headers.get("Last-Event-ID", "0"))
+            if after < 0:
+                raise ValueError
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid Last-Event-ID") from exc
+        return StreamingResponse(
+            _run_event_stream(run_dir, after=after), media_type="text/event-stream"
+        )
 
     @app.get("/api/v1/jobs/{job_id}")
     async def job_api(job_id: str) -> dict[str, Any]:
@@ -815,11 +845,16 @@ def create_app(
         try:
             run_dir = application.run_path(run_id)
             report_path = None
-            if format == "markdown":
-                report_path = application.report(run_dir)
             run = application.get_run(run_id)
         except (FileNotFoundError, ValueError):
             raise HTTPException(status_code=404, detail="run not found") from None
+        if format == "markdown":
+            try:
+                report_path = application.report(run_dir)
+            except (OSError, ValueError, RuntimeError) as exc:
+                raise HTTPException(
+                    status_code=409, detail="Report is unavailable for this run"
+                ) from exc
         if format == "json":
             return JSONResponse(
                 {
@@ -1579,6 +1614,8 @@ def _safe_config_path(workspace: Path, value: str) -> Path:
 
 
 def _check_csrf(request: Request, supplied: str | None) -> None:
+    if getattr(request.state, "bearer_authenticated", False):
+        return
     expected = request.cookies.get(CSRF_COOKIE) or getattr(request.state, "csrf_token", None)
     if not supplied or not expected or not secrets.compare_digest(supplied, expected):
         raise HTTPException(status_code=403, detail="invalid CSRF token")
@@ -1629,14 +1666,14 @@ async def _job_event_stream(jobs: AssessmentJobManager, job_id: str) -> Any:
         await asyncio.sleep(0.5)
 
 
-async def _run_event_stream(run_dir: Path) -> Any:
+async def _run_event_stream(run_dir: Path, *, after: int = 0) -> Any:
     path = run_dir / "events.jsonl"
-    emitted = 0
+    emitted = after
     while True:
         lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
-        for line in lines[emitted:]:
-            yield f"event: run\ndata: {line}\n\n"
-        emitted = len(lines)
+        for index, line in enumerate(lines[emitted:], start=emitted + 1):
+            yield f"id: {index}\nevent: run\ndata: {line}\n\n"
+        emitted = max(emitted, len(lines))
         run = _json_file(run_dir / "run.json")
         if run.get("state") in {"completed", "failed", "cancelled"}:
             break

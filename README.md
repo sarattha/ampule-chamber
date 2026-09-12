@@ -1,6 +1,6 @@
 # Ampule Chamber
 
-Version: 1.9.0
+Version: 1.10.0
 
 Production-ready release for agent-driven reliability testing of Kubernetes
 services before production.
@@ -15,7 +15,7 @@ teams that need to answer:
 
 ## Release Status
 
-Ampule Chamber `1.9.0` adds an operational run workspace, structured reliability
+Ampule Chamber `1.10.0` adds an operational run workspace, structured reliability
 reports, richer baseline comparison, and accessible goal-first editing. Teams
 can now find regressions and evidence gaps across service history, compare only
 compatible earlier runs, and move from an executive verdict to cited technical

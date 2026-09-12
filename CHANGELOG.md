@@ -2,6 +2,22 @@
 
 All notable changes to Ampule Chamber are documented in this file.
 
+## 1.10.0 - 2026-09-12
+
+- Patch bundled Go tools and remove unused runtime pip to resolve CI vulnerability findings.
+
+- Persist assessment jobs, reserve unique run directories, snapshot configurations, drain
+  bounded process output, and escalate cancellation with explicit cleanup attention.
+- Support plan-ID starts, idempotency keys, resumable run events, and authenticated bearer
+  API writes while retaining CSRF protection for browser sessions.
+- Fail closed for unsupported required signals, empty collector artifacts, missing runtime
+  observations, and invalid traffic measurements.
+- Capture report provenance during execution and preserve recorded results during export.
+- Preserve agent output history, require citations when evidence is supplied, and display
+  advisory summaries, execution mode, and stage before structured details.
+- Clarify local-only review and results, retain failed jobs for inspection, infer unambiguous
+  readiness-probe paths, and improve report timeline readability.
+
 ## 1.9.0 - 2026-08-08
 
 ### Added

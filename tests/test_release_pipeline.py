@@ -10,7 +10,7 @@ class ReleasePipelineTest(unittest.TestCase):
     def test_container_builds_embedded_tools_from_source(self) -> None:
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
 
-        self.assertIn("ARG GO_VERSION=1.26.5", dockerfile)
+        self.assertIn("ARG GO_VERSION=1.26.7", dockerfile)
         self.assertIn("COPY tools/kubectl ./", dockerfile)
         self.assertIn("COPY tools/k6 ./", dockerfile)
         self.assertIn(
@@ -23,9 +23,11 @@ class ReleasePipelineTest(unittest.TestCase):
         kubectl_module = (ROOT / "tools/kubectl/go.mod").read_text(encoding="utf-8")
         k6_module = (ROOT / "tools/k6/go.mod").read_text(encoding="utf-8")
 
+        self.assertIn("golang.org/x/net v0.56.0", kubectl_module)
+        self.assertIn("golang.org/x/crypto v0.55.0", k6_module)
         self.assertIn("golang.org/x/text v0.39.0", kubectl_module)
-        self.assertIn("golang.org/x/text v0.39.0", k6_module)
-        self.assertIn("google.golang.org/grpc v1.82.1", k6_module)
+        self.assertIn("golang.org/x/text v0.41.0", k6_module)
+        self.assertIn("google.golang.org/grpc v1.83.2", k6_module)
 
     def test_release_scan_gates_registry_publication(self) -> None:
         workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")

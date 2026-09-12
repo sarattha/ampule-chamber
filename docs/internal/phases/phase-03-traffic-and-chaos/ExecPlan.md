@@ -464,3 +464,89 @@ through SSE, and produce content-safe lifecycle evidence.
   comparison selector, and preserved legacy API limits through 1,000 rows.
   `make check` passed again with 256 tests and 90% coverage after five new
   regressions and the updated legacy comparison/report contracts.
+
+## Studio Integration Assessment Follow-up (2026-09-12)
+
+### Scope And Order
+
+Implement the assessment's trust/lifecycle foundation, backend integration
+primitives, and existing UI/agent/report improvements on
+`codex/studio-integration-hardening`, created before implementation. Preserve the
+existing single-operator deployment boundary; Studio identity federation and
+new experiment families require their own contracts and acceptance evidence.
+This PR implements the foundation slice; the larger assessment roadmap remains follow-up work.
+
+### Checklist
+
+- [x] Gate required signals and reject insufficient artifact content.
+- [x] Allocate immutable run/job associations, persist job state, drain bounded
+      output, and bound cancellation with explicit interrupted cleanup state.
+- [x] Preserve report provenance and expose reporting failures consistently.
+- [x] Add plan-ID starts, idempotent submissions, and resumable run events;
+      distinguish bearer API authentication from cookie CSRF protection.
+- [x] Render useful agent summaries with stage history and validated citations.
+- [x] Shorten Basic setup and clarify capabilities, local scope, and report UI.
+- [x] Add regression tests, verify Docker and Chrome, bump SemVer to 1.10.0,
+      and pass `make check` (266 tests, 90% coverage).
+- [x] Open [draft PR #42](https://github.com/sarattha/ampule-chamber/pull/42) and run `make clean`. The temporary Docker verification container was removed.
+
+### Acceptance Criteria
+
+Missing or empty required evidence cannot produce readiness. Concurrent jobs
+retain their allocated run IDs. Verbose children complete without pipe stalls;
+cancellation is bounded and never implies unverified cleanup succeeded. A
+restarted manager retains history and identifies interrupted execution.
+Reports remain readable without git/source checkout and preserve captured
+identity. API retries do not launch duplicate work. Browser cookie writes
+remain CSRF-protected. Chrome verifies the wizard, agents, reports, failure
+states, and narrow layout. Final release checks must all pass before the PR.
+
+### Evidence And Decisions
+
+Acceptance evidence and the integration contract are recorded in
+[the hardening artifact](artifacts/studio-integration-hardening.md).
+
+Report exports preserve recorded results and captured provenance. Collector gates
+validate structural content and required-signal availability; citation validation
+checks presence and allowed IDs, not semantic truth. POSIX job leases cover one
+host. An interrupted Kubernetes supervisor requires cleanup review; automatic
+orphan cleanup and distributed scheduling are outside this foundation slice.
+
+The first full check caught deployment version pins still at 1.9.0; Helm and raw
+Deployment metadata were aligned to 1.10.0. Subsequent full checks passed. Chrome
+confirmed the actual sample readiness path is `/readyz`, and exposed a lingering
+local cleanup claim in agent summaries; it now says not applicable. Failed jobs
+retain a permanent interruption marker so later child writes cannot restore a
+successful verdict through the normal metadata/result pipeline.
+
+### PR #42 CI Remediation (2026-09-12)
+
+- Both failed CI jobs stopped at Trivy scans. Helm validation and image build
+  passed; the image smoke test was skipped after the scan failed.
+- Updated k6's x/crypto to 0.55.0 and gRPC to 1.83.2, including Go-selected
+  transitive updates; updated kubectl's x/net to 0.56.0.
+- Bumped the Docker Go compiler from 1.26.5 to 1.26.7.
+- Confirmed the Python image findings come from pip's vendored msgpack 1.1.2
+  and setuptools 70.3.0. Remove unused pip from the final runtime; retain it
+  in the build stage. No vulnerability suppressions or scanner-policy changes.
+- Local acceptance passed: Trivy 0.74.0 with refreshed database, severity
+  HIGH/CRITICAL, `--ignore-unfixed`, and failure exit code enabled reported
+  zero findings for both repository dependencies and the rebuilt image
+  (Debian 13.7, Python, k6, kubectl). No scan exclusions or ignores were added.
+- Docker `/readyz` returned ready; kubectl reported v1.36.2; k6 completed one
+  HTTP health request with a passing check and no failed requests. Runtime
+  Python imports succeeded and pip was absent. Image ID:
+  `sha256:e34eef64daf94efd675aa9375917fbb3a11a30e5498e2f692409e38521a3da51`.
+- Updated existing release dependency assertions to the patched versions.
+  `make check` passed: 266 tests, 90% coverage, scenario/deployment/release
+  validation, strict documentation, and package builds for 1.10.0.
+- Remote CI will verify the pushed commit on Linux/amd64; local Docker
+  verification ran on Linux/arm64. This updates the existing draft release
+  1.10.0 rather than creating another release or PR.
+
+- Remote Trivy repository scan passed. The previously blocked Gitleaks step
+  then flagged the recorded local test job UUID as a generic API key in
+  historical commit `4f27239`. Verified it is an assessment identifier, not
+  a credential. Removed the redundant UUID from current documentation and
+  added one exact historical finding fingerprint to `.gitleaksignore`; no
+  file-wide, rule-wide, or credential pattern exclusions were introduced.

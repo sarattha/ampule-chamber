@@ -22,7 +22,7 @@
   </section>
 
   <section class="wizard-panel" data-step="1" hidden>
-    <div class="page-heading split"><div><div class="eyebrow">Step 2 of 4</div><h1 tabindex="-1">Choose the chamber environment</h1><p>Every Kubernetes run requires an explicit context and passes preflight before mutation.</p></div><span class="pill {{ 'safe' if capabilities.ready_for_kubernetes_attach else 'warning' }}">{{ 'Ready for Kubernetes' if capabilities.ready_for_kubernetes_attach else 'kubectl required' }}</span></div>
+    <div class="page-heading split"><div><div class="eyebrow">Step 2 of 4</div><h1 tabindex="-1">Choose the chamber environment</h1><p>Every Kubernetes run requires an explicit context and passes preflight before mutation.</p></div><span class="pill {{ 'safe' if capabilities.ready_for_kubernetes_attach else 'warning' }}">{{ 'kubectl available · connection not checked' if capabilities.ready_for_kubernetes_attach else 'kubectl required' }}</span></div>
     <div class="mode-grid" role="radiogroup" aria-label="Execution environment">
       <label class="mode-card selected"><input type="radio" name="execution_mode" value="local" checked><strong>Local artifact assessment</strong><span>Inspect configuration and create a non-conclusive report without touching Kubernetes.</span></label>
       <label class="mode-card"><input type="radio" name="execution_mode" value="kubernetes"><strong>Kubernetes chamber</strong><span>Deploy into isolation or attach to an explicit non-production namespace.</span></label>
@@ -42,7 +42,7 @@
         </div>
       </section>
     </div>
-    <div class="capability-row">{% for tool, available in capabilities.tools.items() %}<span class="capability {{ 'ok' if available else 'missing' }}"><i></i>{{ tool }} {{ 'ready' if available else 'missing' }}</span>{% endfor %}</div>
+    <div class="capability-row">{% for tool, available in capabilities.tools.items() %}<span class="capability {{ 'ok' if available else 'missing' }}"><i></i>{{ tool }} {{ 'installed' if available else 'missing' }}</span>{% endfor %}</div>
   </section>
 
   <section class="wizard-panel" data-step="2" hidden>
@@ -83,10 +83,11 @@
         <section class="panel"><h2>Assumptions</h2><ul data-goal-assumptions></ul></section>
         <section class="panel gap-panel"><h2>Missing inputs</h2><ul data-goal-missing></ul></section>
       </div>
-      <div class="proposal-preview-grid">
+      <details class="panel"><summary>Request and configuration details</summary><div class="proposal-preview-grid">
         <section class="panel code-panel"><h2>Generated request preview</h2><pre data-goal-request-preview></pre></section>
         <section class="panel code-panel"><h2>Generated config diff</h2><p class="help">Shows the bounded values this proposal writes into the shared Advanced configuration.</p><pre data-goal-config-preview></pre></section>
       </div>
+      </details>
     </section>
     <section class="scenario-section" data-scenario-section data-advanced-only hidden>
       <div class="section-heading"><div><h2>Scenario</h2><p>Build a custom exercise, select a reusable scenario, or import supported YAML/JSON.</p></div><span class="pill safe">Review before execution</span></div>

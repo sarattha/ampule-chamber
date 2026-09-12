@@ -980,6 +980,12 @@
     try { signals = JSON.parse(data.get("required_signals_json") || "[]"); } catch (_) { signals = []; }
     try { warnings = JSON.parse(form.dataset.scenarioWarnings || "[]"); } catch (_) { warnings = []; }
     form.querySelector("[data-review-signals]").textContent = signals.join(", ") || "default Chamber evidence";
+    if (form.elements.execution_mode.value === "local") {
+      warnings.unshift("Local inspection only: traffic, faults, recovery, and cluster cleanup will not execute. No readiness score will be issued.");
+      form.querySelector("[data-review-vus]").textContent = "Not executed";
+      form.querySelector("[data-review-duration]").textContent = "Configuration inspection only";
+      form.querySelector("[data-review-rollback]").textContent = "Not applicable";
+    }
     form.querySelector("[data-review-limitations]").textContent = warnings.join(" ") || "none";
   }
 
@@ -995,7 +1001,7 @@
       page.querySelector("[data-run-id]").textContent = job.run_id || "Allocating…";
       page.querySelector("[data-job-output]").textContent = job.output || (job.error ? job.error : "Assessment process is running…");
       const stages = [...page.querySelectorAll(".stage-list li")];
-      const stageIndex = job.run_id ? 1 : 0;
+      const stageIndex = ["completed", "failed", "cancelled"].includes(job.state) ? 2 : job.state === "queued" ? 0 : 1;
       stages.forEach((stage, index) => {
         stage.classList.toggle("active", index <= stageIndex);
         if (index === stageIndex) stage.setAttribute("aria-current", "step");
@@ -1007,9 +1013,13 @@
       }
       if (["completed", "failed", "cancelled"].includes(job.state)) {
         source.close();
+        page.querySelector("[data-coverage]").textContent = job.mode === "local" ? "Not applicable" : job.state === "completed" ? "Review result" : "Incomplete";
+        page.querySelector("[data-job-message]").textContent = job.error || `Assessment ${job.state}.`;
+        const runLink = page.querySelector("[data-job-run-link]");
+        if (job.run_id) { runLink.href = `/runs/${job.run_id}`; runLink.hidden = false; }
         const button = page.querySelector("[data-cancel-form] button");
         button.disabled = true;
-        if (job.run_id) window.setTimeout(() => window.location.assign(`/runs/${job.run_id}`), 900);
+        if (job.run_id && job.state === "completed") window.setTimeout(() => window.location.assign(`/runs/${job.run_id}`), 900);
       }
     });
     source.onerror = () => {
