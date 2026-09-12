@@ -4,6 +4,8 @@ All notable changes to Ampule Chamber are documented in this file.
 
 ## 1.10.0 - 2026-09-12
 
+- Patch bundled Go tools and remove unused runtime pip to resolve CI vulnerability findings.
+
 - Persist assessment jobs, reserve unique run directories, snapshot configurations, drain
   bounded process output, and escalate cancellation with explicit cleanup attention.
 - Support plan-ID starts, idempotency keys, resumable run events, and authenticated bearer

@@ -518,3 +518,28 @@ confirmed the actual sample readiness path is `/readyz`, and exposed a lingering
 local cleanup claim in agent summaries; it now says not applicable. Failed jobs
 retain a permanent interruption marker so later child writes cannot restore a
 successful verdict through the normal metadata/result pipeline.
+
+### PR #42 CI Remediation (2026-09-12)
+
+- Both failed CI jobs stopped at Trivy scans. Helm validation and image build
+  passed; the image smoke test was skipped after the scan failed.
+- Updated k6's x/crypto to 0.55.0 and gRPC to 1.83.2, including Go-selected
+  transitive updates; updated kubectl's x/net to 0.56.0.
+- Bumped the Docker Go compiler from 1.26.5 to 1.26.7.
+- Confirmed the Python image findings come from pip's vendored msgpack 1.1.2
+  and setuptools 70.3.0. Remove unused pip from the final runtime; retain it
+  in the build stage. No vulnerability suppressions or scanner-policy changes.
+- Local acceptance passed: Trivy 0.74.0 with refreshed database, severity
+  HIGH/CRITICAL, `--ignore-unfixed`, and failure exit code enabled reported
+  zero findings for both repository dependencies and the rebuilt image
+  (Debian 13.7, Python, k6, kubectl). No scan exclusions or ignores were added.
+- Docker `/readyz` returned ready; kubectl reported v1.36.2; k6 completed one
+  HTTP health request with a passing check and no failed requests. Runtime
+  Python imports succeeded and pip was absent. Image ID:
+  `sha256:e34eef64daf94efd675aa9375917fbb3a11a30e5498e2f692409e38521a3da51`.
+- Updated existing release dependency assertions to the patched versions.
+  `make check` passed: 266 tests, 90% coverage, scenario/deployment/release
+  validation, strict documentation, and package builds for 1.10.0.
+- Remote CI will verify the pushed commit on Linux/amd64; local Docker
+  verification ran on Linux/arm64. This updates the existing draft release
+  1.10.0 rather than creating another release or PR.

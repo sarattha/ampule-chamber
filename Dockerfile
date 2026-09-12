@@ -1,4 +1,4 @@
-ARG GO_VERSION=1.26.5
+ARG GO_VERSION=1.26.7
 ARG KUBECTL_VERSION=v1.36.2
 ARG KUBECTL_MODULE_VERSION=v0.36.2
 
@@ -26,7 +26,9 @@ RUN python -m pip install --no-cache-dir uv==0.11.26 \
       --extra ui \
       --no-editable
 
+# The runtime uses the built virtualenv; omit pip and its vendored build dependencies.
 FROM python:3.13-slim AS runtime
+RUN python -m pip uninstall --yes pip
 RUN apt-get update \
     && apt-get upgrade --yes \
     && apt-get install --yes --no-install-recommends ca-certificates \
