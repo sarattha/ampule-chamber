@@ -11,6 +11,7 @@ import subprocess
 import sys
 import threading
 import time
+from copy import deepcopy
 from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -54,6 +55,7 @@ from chamber.environment.preflight import (
     run_kubernetes_attach_preflight,
 )
 from chamber.load import execute_relayna_journeys, validate_relayna_journey
+from chamber.load.suite import execute_suite, validate_suite
 from chamber.onboarding import (
     ExternalDependencyPolicy,
     FollowUpCheck,
@@ -394,6 +396,7 @@ def validate_config(
         _normalized_agent_names(_optional_string_tuple(agents, "exclude")),
         source=f"{source}.agents.exclude",
     )
+    validate_suite(traffic)
     validate_experiment(config)
     validate_budget(config)
     _validate_runtime(runtime, source=f"{source}.runtime")
@@ -888,6 +891,33 @@ def _assess_kubernetes_attach_config(
                 commands=commands,
             )
         if experiment:
+            if config["traffic"].get("load") and experiment.spec["family"] != "queue_drain":
+                baseline_config = json.loads(json.dumps(config))
+                load = baseline_config["traffic"]["load"]
+                load.update(
+                    model="arrival",
+                    phase="baseline",
+                    stages=[
+                        {
+                            "ratePerSecond": load.get("recoveryRate", 1),
+                            "durationSeconds": experiment.spec["recoverySeconds"],
+                        }
+                    ],
+                    warmupSeconds=0,
+                    recoverySeconds=0,
+                )
+                _ensure_run_subdirs(run_dir / "baseline")
+                _execute_kubernetes_traffic(
+                    config=baseline_config,
+                    run_dir=run_dir / "baseline",
+                    context=selected_context,
+                    namespace=namespace,
+                    runner=runner,
+                )
+                shutil.copyfile(
+                    run_dir / "baseline/evidence/load-summary.json",
+                    run_dir / "evidence/baseline-load-summary.json",
+                )
             experiment.start()
             if experiment.spec["family"] == "queue_drain":
 
@@ -899,8 +929,17 @@ def _assess_kubernetes_attach_config(
                 sampler = threading.Thread(target=sample_queue, daemon=True)
                 sampler.start()
         traffic_started_at = datetime.now(UTC)
+        traffic_config = deepcopy(config)
+        if (
+            experiment
+            and traffic_config["traffic"].get("load")
+            and experiment.spec["family"] != "queue_drain"
+        ):
+            traffic_config["traffic"]["load"].update(
+                phase="fault", warmupSeconds=0, recoverySeconds=0
+            )
         traffic_result = _execute_kubernetes_traffic(
-            config=config,
+            config=traffic_config,
             run_dir=run_dir,
             context=selected_context,
             namespace=namespace,
@@ -980,6 +1019,20 @@ def _assess_kubernetes_attach_config(
                         journey["stages"] = [
                             {"duration": f"{experiment.spec['recoverySeconds']}s", "targetVus": 1}
                         ]
+                if recovery_config["traffic"].get("load"):
+                    load = recovery_config["traffic"]["load"]
+                    load.update(
+                        model="arrival",
+                        phase="recovery",
+                        stages=[
+                            {
+                                "ratePerSecond": load.get("recoveryRate", 1),
+                                "durationSeconds": experiment.spec["recoverySeconds"],
+                            }
+                        ],
+                        warmupSeconds=0,
+                        recoverySeconds=0,
+                    )
                 recovery_dir = run_dir / "recovery"
                 _ensure_run_subdirs(recovery_dir)
                 try:
@@ -1678,7 +1731,7 @@ def _execute_kubernetes_traffic(
     relayna_journeys = tuple(
         journey for journey in journeys if str(journey.get("adapter", "http")) == "relayna"
     )
-    if relayna_journeys and len(relayna_journeys) != len(journeys):
+    if not traffic.get("load") and relayna_journeys and len(relayna_journeys) != len(journeys):
         raise WorkflowError("one traffic execution cannot mix Relayna and plain HTTP journeys")
     summary_path = run_dir / "evidence/relayna-summary.json"
     script_path: Path | None = None
@@ -1707,6 +1760,31 @@ def _execute_kubernetes_traffic(
         )
         time.sleep(2)
     try:
+        if traffic.get("load"):
+            summary_path = run_dir / "evidence/load-summary.json"
+            summary = execute_suite(
+                traffic,
+                base_url=base_url,
+                output=summary_path,
+                workspace=run_dir.parent.parent,
+                prometheus_url=config.get("runtime", {}).get("prometheusUrl"),
+                namespace=namespace,
+            )
+            if summary.get("tasks"):
+                _write_json(
+                    run_dir / "evidence/relayna-summary.json",
+                    {
+                        "task_count": len(summary["tasks"]),
+                        "tasks": summary["tasks"],
+                        "success": summary["success"],
+                    },
+                )
+            return {
+                "success": summary["success"],
+                "evidence_id": "load-summary",
+                "summary_path": str(summary_path),
+                "exit_status": 0 if summary["success"] else 1,
+            }
         if relayna_journeys:
             workspace = run_dir.parent.parent if run_dir.parent.name == RUNS_DIR else run_dir.parent
             summary = execute_relayna_journeys(
@@ -3559,6 +3637,7 @@ def _report_input(
     cleanup_notes = tuple(metadata.get("cleanup_notes") or ["Cleanup status was not recorded."])
     agent_sections = (
         _experiment_report_sections(run_dir)
+        + _load_report_sections(run_dir)
         + _prometheus_report_sections(run_dir)
         + _agent_sections(run_dir)
         + _relayna_input_sections(run_dir)
@@ -4628,3 +4707,52 @@ def _experiment_report_sections(run_dir: Path) -> tuple[ReportSection, ...]:
             f"· observed {assertion['observed']}"
         )
     return (ReportSection(heading="Experiment Assertions", lines=tuple(lines)),)
+
+
+def _load_report_sections(run_dir: Path) -> tuple[ReportSection, ...]:
+    summary = _read_json(run_dir / "result.json").get("load", {})
+    if not summary:
+        return ()
+    metrics = summary["metrics"]
+    lines = [
+        f"Load status: {summary['status']}",
+        f"Delivery: {metrics['started']} of {metrics['requested']} journeys started; "
+        f"{metrics['dropped']} dropped; {metrics['successful']} succeeded.",
+        f"End-to-end p95/p99: {metrics['p95Ms']} / {metrics['p99Ms']} ms.",
+        "Evidence: load-summary (plus baseline/recovery artifacts when faults are configured).",
+    ]
+    phases = summary.get("phases", [])
+    ordered = [p for p in phases if p["phase"] == "baseline"] + [summary]
+    ordered += [p for p in phases if p["phase"] == "recovery"]
+    for phase in ordered:
+        for window in phase["windows"]:
+            lines.append(
+                f"{window['phase']} step {window.get('step', 0)}: {window['state']} "
+                f"at {window['ratePerSecond']}/s; delivered {window['achievedStartsPerSecond']}/s."
+            )
+            for journey in window["journeys"]:
+                m = journey["metrics"]
+                lines.append(
+                    f"{journey['name']}: {m['started']} samples; "
+                    f"p95/p99 {m['p95Ms']}/{m['p99Ms']} ms; "
+                    f"error/completion fractions {m['errorRate']}/{m['completionRate']}; "
+                    f"queue/worker p95 {m['queueWaitP95Ms']}/{m['workerP95Ms']} ms "
+                    f"({m['queueTimingSamples']} queue timing samples)."
+                )
+                lines.extend(
+                    f"{a['name']}: {a['state']} expected={a['expected']} observed={a['observed']}"
+                    for a in journey["assertions"]
+                )
+    generator = summary["generator"]
+    lines.append(
+        f"Generator: limited={generator['limited']}; peak active requests "
+        f"{generator['peakActiveRequests']}; RSS high-water growth "
+        f"{generator['rssHighWaterGrowthMiB']} MiB."
+    )
+    for check in summary["targetMetrics"]["assertions"]:
+        lines.append(
+            f"{check['name']}: {check['state']}; observed {check['observed']}, "
+            f"budget {check['expected']}"
+        )
+    lines.append(summary["timingNote"])
+    return (ReportSection(heading="Load Performance", lines=tuple(lines)),)

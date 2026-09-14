@@ -25,7 +25,7 @@ class ChamberProfile(BaseModel):
     workload: str = Field(min_length=1, max_length=63, pattern=r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
     prometheus_url: str = ""
     max_vus: int = Field(default=25, ge=1, le=100)
-    max_duration_seconds: int = Field(default=300, ge=20, le=900)
+    max_duration_seconds: int = Field(default=300, ge=20, le=7200)
     allow_faults: bool = False
     chaos_mesh: bool = False
 
@@ -82,6 +82,29 @@ def validate_budget(config: dict[str, Any]) -> None:
         and not profile["chaos_mesh"]
     ):
         raise ValueError("This chamber has no configured Chaos Mesh capability")
+    if config["traffic"].get("load"):
+        from chamber.load.suite import validate_suite
+
+        validate_suite(config["traffic"])
+        load = config["traffic"]["load"]
+        if load["maxInFlight"] > profile["max_vus"]:
+            raise ValueError("Load suite exceeds the chamber in-flight budget")
+        duration = (
+            sum(stage["durationSeconds"] for stage in load["stages"])
+            + load["warmupSeconds"]
+            + load["recoverySeconds"]
+            + load["timeoutSeconds"]
+            * (
+                len(load["stages"]) + bool(load["warmupSeconds"]) + bool(load["recoverySeconds"])
+                if load["model"] == "capacity"
+                else 1
+            )
+        )
+        if config.get("experiment"):
+            duration += config["experiment"]["recoverySeconds"] * 2 + load["timeoutSeconds"] * 2
+        if duration > profile["max_duration_seconds"]:
+            raise ValueError("Load suite and drain exceed the chamber duration budget")
+        return
     duration = 0.0
     for journey in config["traffic"]["journeys"]:
         stages = journey.get("stages", [])

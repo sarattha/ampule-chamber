@@ -78,10 +78,15 @@ uv run ampule-chamber ui
 
 Open `http://127.0.0.1:8765` if browser launch is disabled. Use the wizard to
 inspect a repository, select local, isolated deploy, or attach mode, choose a
-traffic profile and optional attach fault template, review the generated plan,
+traffic profile or an arrival/capacity/soak suite and optional attach fault template, review the generated plan,
 then explicitly start execution. Remote binding is rejected unless
 `--allow-remote` is supplied and `AMPULE_CHAMBER_ADMIN_TOKEN` contains a valid
 `op_live_` operator token.
+
+Load suites support concurrent weighted HTTP/Relayna traffic, seeded payload
+sets, chained requests, per-journey performance gates, capacity stopping,
+recovery and soak diagnostics. Reports separate target failures from generator
+limits and missing lifecycle timing. See [load suite configuration](docs/scenarios.md#arrival-capacity-and-soak-load-suites).
 
 To run the UI inside Kubernetes with discovery limited to an existing
 non-production namespace:

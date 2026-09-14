@@ -1,0 +1,40 @@
+{% set load = result.get('load', {}) %}
+{% if config.get('traffic', {}).get('load') %}
+<section class="panel load-report experiment-assertions" id="load-performance">
+  <div class="section-heading"><h2>Load performance</h2><span class="pill">{{ load.get('status', 'untested') }}</span></div>
+  {% if load %}
+  {% set metrics = load.metrics %}
+  <div class="report-facts">
+    <article><span>Scheduled journeys</span><strong>{{ metrics.requested }}</strong><small>{{ metrics.started }} started · {{ metrics.dropped }} dropped</small></article>
+    <article><span>Successful journeys</span><strong>{{ metrics.successful }}</strong><small>{{ metrics.completed }} finished, including failures</small></article>
+    <article><span>End-to-end p95 / p99</span><strong>{{ metrics.p95Ms if metrics.p95Ms is not none else 'Unavailable' }} / {{ metrics.p99Ms if metrics.p99Ms is not none else 'Unavailable' }}</strong><small>milliseconds · {{ metrics.started }} samples</small></article>
+    <article><span>Highest passing tested rate</span><strong>{{ load.capacity.highestPassingRate if load.capacity.highestPassingRate is not none else 'Unavailable' }}</strong><small>journeys/s · within the tested steps only</small></article>
+  </div>
+  {% if load.generator.limited %}<p class="alert warning">The generator did not deliver the requested workload within its bounds. This run is inconclusive for target capacity.</p>{% endif %}
+  {% if load.capacity.stopReason %}<p>Stopped: {{ load.capacity.stopReason }}</p>{% endif %}
+  <p>{{ load.timingNote }}</p>
+  {% set summaries = (load.get('phases', []) | selectattr('phase', 'equalto', 'baseline') | list) + [load] + (load.get('phases', []) | selectattr('phase', 'equalto', 'recovery') | list) %}
+  {% for summary in summaries %}
+  {% for window in summary.windows %}
+  <details class="load-window"{% if summary == load and loop.first %} open{% endif %}>
+    <summary>{{ window.phase | title }} · step {{ window.get('step', 0) }} · {{ window.ratePerSecond }}/s · {{ window.durationSeconds }}s · {{ window.state }}</summary>
+    <p>Delivered {{ window.achievedStartsPerSecond }} starts/s; {{ window.successfulCompletionsPerSecond }} successful completions/s including drain. {{ window.started }} of {{ window.requested }} started. Observation: {{ window.actualSeconds | round(2) }}s.</p>
+    <div class="table-scroll"><table><thead><tr><th>Journey</th><th>p95 / p99 ms</th><th>Error / completion</th><th>Lifecycle p95 ms</th></tr></thead><tbody>
+    {% for journey in window.journeys %}{% set m = journey.metrics %}
+    <tr><td data-label="Journey">{{ journey.name }}<br><small>{{ m.started }} samples · {{ m.dropped }} dropped</small></td>
+      <td data-label="p95 / p99 ms">{{ m.p95Ms if m.p95Ms is not none else 'Unavailable' }} / {{ m.p99Ms if m.p99Ms is not none else 'Unavailable' }}</td>
+      <td data-label="Error / completion">{{ (m.errorRate * 100) | round(2) if m.errorRate is not none else 'Unavailable' }}% / {{ (m.completionRate * 100) | round(2) if m.completionRate is not none else 'Unavailable' }}%</td>
+      <td data-label="Lifecycle p95 ms">Admission {{ m.admissionP95Ms if m.admissionP95Ms is not none else 'Unavailable' }}<br>Queue estimate {{ m.queueWaitP95Ms if m.queueWaitP95Ms is not none else 'Unavailable' }}<br>Worker estimate {{ m.workerP95Ms if m.workerP95Ms is not none else 'Unavailable' }}<br><small>{{ m.queueTimingSamples }}/{{ m.started }} queue samples</small></td></tr>
+    <tr><td colspan="4"><ul class="load-checks">{% for check in journey.assertions %}<li><strong>{{ check.state }}</strong> · {{ check.name }} · budget {{ check.expected }} · observed {{ check.observed if check.observed is not none else 'Unavailable' }}</li>{% endfor %}</ul></td></tr>
+    {% endfor %}</tbody></table></div>
+  </details>
+  {% endfor %}{% endfor %}
+  <h3>Generator and soak diagnostics</h3>
+  <p>Peak active requests: {{ load.generator.peakActiveRequests }} · RSS high-water growth: {{ load.generator.rssHighWaterGrowthMiB }} MiB · Throughput change: {{ load.soak.throughputChangePerSecond if load.soak.throughputChangePerSecond is not none else 'Unavailable (one window)' }} journeys/s.</p>
+  {% for check in load.targetMetrics.assertions %}<p>{{ check.name }} · {{ check.state }} · budget {{ check.expected }} · observed {{ check.observed if check.observed is not none else 'Unavailable' }}</p>{% endfor %}
+  <details><summary>Generator samples</summary><div class="table-scroll"><table><thead><tr><th>Elapsed seconds</th><th>CPU % of one core</th><th>RSS high-water MiB</th><th>Scheduling lag ms</th><th>Active / in flight</th></tr></thead><tbody>{% for s in load.generator.samples %}<tr><td data-label="Elapsed seconds">{{ s.elapsedSeconds }}</td><td data-label="CPU %">{{ s.cpuPercentOneCore }}</td><td data-label="RSS MiB">{{ s.rssHighWaterMiB }}</td><td data-label="Lag ms">{{ s.schedulingLagMs }}</td><td data-label="Active / in flight">{{ s.activeRequests }} / {{ s.inFlight }}</td></tr>{% endfor %}</tbody></table></div></details>
+  <details><summary>Scoped target metric samples</summary><div class="table-scroll"><table><thead><tr><th>Elapsed seconds</th><th>Values</th><th>Unavailable</th></tr></thead><tbody>{% for s in load.targetMetrics.samples %}<tr><td data-label="Elapsed seconds">{{ s.elapsedSeconds }}</td><td data-label="Values">{{ s['values'] | tojson }}</td><td data-label="Unavailable">{{ s.errors | join(', ') or 'None' }}</td></tr>{% else %}<tr><td colspan="3">No scoped target queries configured.</td></tr>{% endfor %}</tbody></table></div></details>
+  <a href="/runs/{{ run_id }}?tab=evidence">Inspect load-summary and phase evidence</a>
+  {% else %}<p>Untested · execute this plan to collect rates, thresholds and generator diagnostics.</p>{% endif %}
+</section>
+{% endif %}

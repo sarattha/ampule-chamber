@@ -164,3 +164,188 @@ Existing bearer authentication and browser CSRF rules apply. Experiment settings
 are stored in `config.experiment`; use the UI to generate a validated example.
 Markdown, HTML and JSON reports include the same persisted assertions and
 registered evidence reference.
+
+## Arrival, capacity and soak load suites
+
+Add `traffic.load` to a **ChamberConfig**, or choose a load model in the UI's
+Exercise step. This opt-in suite replaces each journey's legacy VU/iteration
+schedule with one bounded arrival scheduler. Without it, existing k6 and Relayna
+scenarios keep their previous behavior. These fields are not part of the older
+`kind: Scenario` contract.
+
+```yaml
+traffic:
+  entrypoint: api
+  load:
+    model: capacity  # arrival, capacity, soak
+    ratePerSecond: 10
+    durationSeconds: 60
+    maxInFlight: 32
+    timeoutSeconds: 30
+    warmupSeconds: 10
+    recoverySeconds: 15
+    recoveryRate: 2
+    failureWindows: 2
+    seed: 42
+    stages:
+      - {ratePerSecond: 10, durationSeconds: 30}
+      - {ratePerSecond: 20, durationSeconds: 30}
+      - {ratePerSecond: 40, durationSeconds: 30}
+    thresholds:
+      p95Ms: 1000
+      p99Ms: 2000
+      maxErrorRate: 0.01
+      minCompletionRate: 0.99
+      maxDeadlineMissRate: 0
+    phaseThresholds:
+      recovery: {p95Ms: 500, maxErrorRate: 0}
+    datasets:
+      payloads:
+        - {text: "short sample"}
+        - {text: "a longer representative input for the task"}
+  journeys:
+    - name: health
+      method: GET
+      path: /health
+      expectedStatus: 200
+      weight: 1
+      thresholds: {p99Ms: 200}
+    - name: translation
+      adapter: relayna
+      method: POST
+      path: /translations
+      expectedStatus: 202
+      weight: 3
+      dataset: payloads
+      body: {text: "${text}", language_target: Thai}
+      headersFromEnv: {Authorization: LOAD_TEST_AUTHORIZATION}
+      thresholds: {maxQueueWaitMs: 1000, maxWorkerMs: 2000}
+      relayna:
+        taskIdPath: task_id
+        eventsPath: /events/{task_id}
+        timeoutSeconds: 30
+        terminalStatuses: [completed, failed]
+        successStatuses: [completed]
+```
+
+The rate counts **journey starts per second**: requests/s for a one-request HTTP
+journey, tasks/s for a Relayna lifecycle, or chain starts/s for a multistep HTTP
+journey. Weights split the shared arrival rate; they are relative, not exact
+per-window quotas. Increase duration for low-weight journeys: an unexercised
+journey makes its window inconclusive. Slower responses do not reduce the
+scheduled rate. Full in-flight capacity or missed scheduling slots are counted
+as dropped arrivals, without an unbounded executor queue or catch-up burst.
+
+A stage's arrivals remain on their original timeline even when earlier tasks
+are still finishing. Capacity mode holds and drains each step before evaluating
+it, stops subsequent load steps after `failureWindows` consecutive non-passing
+steps, and still executes configured recovery. `highestPassingRate` is the
+highest passing **tested** rate, not a proven production maximum. Short tests
+and small p99 sample counts should be interpreted accordingly. Soak mode splits
+stages into `windowSeconds` windows (default 30), preserving the arrival timeline
+and reporting completion-throughput change over the observed windows.
+
+Thresholds apply per journey and per window. The default error budget is zero;
+explicit error budgets may permit some failures. Completion fraction counts
+successful journeys / scheduled arrivals; error and deadline-miss fractions
+use started journeys. Precedence is suite thresholds, journey thresholds,
+suite phase thresholds, then journey phase thresholds. Warmup is reported but
+excluded from target performance gates. Generator delivery gaps anywhere still
+make the suite inconclusive. The HTTP deadline covers the entire chain, and the
+Relayna deadline covers admission plus streaming. HTTP redirects are rejected.
+
+Admission duration is measured around submission. Queue and worker intervals
+are **client-observed SSE estimates**: stream start to first running/processing
+transition, then running to successful terminal transition. They are not
+server-side execution spans, may include network/stream delays, and do not
+include the admission-to-stream-connect gap. Missing transitions remain null;
+queue/worker thresholds require timing coverage for every started journey.
+`runningStatuses` on a journey can override running/processing.
+
+For a non-queue fault experiment, suites collect a low-rate baseline before
+injection, mark the main workload as `fault`, restore the fault, and collect
+recovery. Baseline and recovery reuse `recoveryRate` and the experiment's
+`recoverySeconds`. Suite warmup/recovery settings are replaced in this path.
+All three phase summaries participate in the evidence gates. Missing restoration
+or phase evidence cannot produce a readiness pass.
+
+### Data, authentication and chained requests
+
+Datasets are inline object rows, selected with a seeded random generator. Repeat
+rows to represent a desired payload distribution. `${field}` and `${nested.key}`
+interpolate dataset values; `${iteration}` is a unique start sequence. A whole
+JSON field retains the value's type; values interpolated into paths are URL
+encoded. HTTP `steps` (maximum 20) run sequentially within each iteration:
+
+```yaml
+- name: create-and-read
+  path: /items
+  method: POST
+  expectedStatus: 201
+  weight: 1
+  dataset: payloads
+  headersFromEnv: {Authorization: LOAD_TEST_AUTHORIZATION}
+  steps:
+    - path: /items
+      method: POST
+      expectedStatus: 201
+      body: {text: "${text}"}
+      extract: {item_id: id}
+    - path: /items/${item_id}
+      expectedStatus: 200
+      assertJson: {status: ready}
+```
+
+`extract` maps iteration-local variable names to JSON object paths; `assertJson`
+checks business values. JSON, raw, form and multipart encodings are supported.
+Existing workspace-scoped multipart file rules apply. Environment mappings
+contain names only; provision their values in the execution backend. Missing
+or malformed authentication configuration fails before scheduling. Response
+bodies and extracted values are not written to load evidence; failures retain
+only exception classes. Never put secrets in scenario datasets or bodies.
+
+In the UI, advanced JSON options merge with the visible load fields and can
+supply stages, datasets and `journeyOverrides`, keyed by an existing journey
+name. Overrides support `weight`, `dataset`, `thresholds`, `phaseThresholds`,
+`headersFromEnv`, and `steps`. Saved/imported ChamberConfigs preserve the full
+load contract, and comparison rejects incompatible traffic contracts.
+
+### Generator and target diagnostics
+
+Every suite records generator CPU seconds / percent of one core, process RSS
+high-water memory, scheduling lag, active requests, in-flight journeys and
+load drops. `maxGeneratorMemoryGrowthMiB` can bound RSS high-water growth; a
+breach marks target capacity inconclusive. This is process-wide high-water
+memory, not current RSS or isolated per-thread memory.
+
+Optional `targetMetrics` use `runtime.prometheusUrl` and require exactly one
+fresh numeric series with the runtime namespace plus every configured identity
+label. Aggregation must retain those labels. Queries run before/after load and
+about every five seconds. Missing, ambiguous, wrong-scope, stale or nonfinite
+samples are unavailable and make the result inconclusive.
+
+```yaml
+targetMetrics:
+  - name: memoryBytes
+    query: 'sum by (namespace, app) (container_memory_working_set_bytes{namespace="staging",app="api"})'
+    labels: {app: api}
+  - name: queueDepth
+    query: 'queue_depth{namespace="staging",queue="tasks"}'
+    labels: {queue: tasks}
+maxTargetMemoryGrowthMiB: 128
+maxFinalQueueDepth: 0
+```
+
+Use these fields inside `traffic.load`. `cpuThrottling` is also a supported
+metric name. Memory growth compares first/last samples; final queue depth needs
+complete coverage and at least two samples. These are observations and gates,
+not a statistical leak diagnosis. Raw scoped samples are retained for review.
+
+Suites bound scheduled time to one hour, starts to 100,000, concurrency to 128,
+and each journey deadline to 300 seconds. Named chambers impose their own
+stricter concurrency and scheduled-time-plus-drain budgets; their duration
+ceiling is 7,200 seconds to accommodate a one-hour soak and bounded drains.
+All iterations contribute to aggregates. Only the first 1,000 operational
+observations/task records and first 32 events per retained task are exported;
+truncation is explicit. Reports expose phase thresholds, delivery, lifecycle
+coverage, generator diagnostics and digest-verified evidence.

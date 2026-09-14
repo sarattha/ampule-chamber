@@ -23,6 +23,35 @@
       form.elements.runtime_mode.dispatchEvent(new Event("change", {bubbles:true}));
       form.querySelector('[name="target_source"][value="kubernetes"]').dispatchEvent(new Event("change", {bubbles:true}));
     });
+    const loadModel = form.querySelector("[data-load-model]");
+    const loadOptions = form.querySelector("[data-load-options]");
+    function updateLoad() {
+      form.querySelector("[data-load-fields]").hidden = !loadModel.value;
+      form.dataset.loadActive = String(Boolean(loadModel.value));
+      form.querySelector('[data-editor-mode="basic"]').disabled = Boolean(loadModel.value);
+      if (loadModel.value) form.querySelector('[data-editor-mode="advanced"]').click();
+      loadOptions.setCustomValidity("");
+      let value = {model: loadModel.value, thresholds: {}};
+      for (const input of form.querySelectorAll("[data-load-key]")) value[input.dataset.loadKey] = Number(input.value);
+      for (const input of form.querySelectorAll("[data-load-threshold]")) value.thresholds[input.dataset.loadThreshold] = Number(input.value);
+      try {
+        const extra = JSON.parse(loadOptions.value || "{}");
+        if (!extra || Array.isArray(extra) || typeof extra !== "object") throw new Error("Use a JSON object.");
+        value = {...value, ...extra, model: loadModel.value};
+        form.querySelector("[data-load-json]").value = loadModel.value ? JSON.stringify(value) : "";
+        const stages = value.stages || [{ratePerSecond: value.ratePerSecond, durationSeconds: value.durationSeconds}];
+        const description = `${value.model}: ${stages.map(s => `${s.ratePerSecond}/s for ${s.durationSeconds}s`).join(", ")} · ${value.maxInFlight} in flight · ${value.warmupSeconds || 0}s warmup · ${value.recoverySeconds || 0}s recovery`;
+        form.querySelector("[data-load-status]").textContent = description;
+        form.querySelector("[data-load-review]").textContent = loadModel.value ? description : "Journey VUs / iterations";
+      } catch (error) {
+        form.querySelector("[data-load-json]").value = loadModel.value ? "invalid" : "";
+        if (loadModel.value) loadOptions.setCustomValidity("Enter valid load options as a JSON object.");
+        form.querySelector("[data-load-status]").textContent = "Enter valid JSON before continuing.";
+      }
+    }
+    form.querySelector("[data-load-editor]").addEventListener("input", updateLoad);
+    loadModel.addEventListener("change", updateLoad);
+    updateLoad();
     const familySelect = form.querySelector("[data-experiment-family]");
     const experimentFields = form.querySelector("[data-experiment-fields]");
     function updateExperiment() {
@@ -309,6 +338,9 @@
       form.elements.fault_type.value = "none";
       journeyList.replaceChildren();
       projection.journeys.forEach(journey => addJourney({adapter: journey.adapter || "http", journey}));
+      loadModel.value = projection.load?.model || "";
+      loadOptions.value = JSON.stringify(projection.load || {}, null, 2);
+      updateLoad();
       scenarioWarnings = projection.warnings || [];
       form.dataset.scenarioWarnings = JSON.stringify(scenarioWarnings);
       goalProposal = null;
@@ -374,7 +406,7 @@
       const cards = [...journeyList.querySelectorAll("[data-journey]")];
       if (!cards.length) throw new Error("Add at least one traffic journey.");
       const adapters = new Set(cards.map(card => field(card, "adapter").value));
-      if (adapters.size > 1) throw new Error("One assessment cannot mix HTTP and Relayna journeys.");
+      if (adapters.size > 1 && !loadModel.value) throw new Error("One assessment cannot mix HTTP and Relayna journeys.");
       let uploadIndex = 0;
       const journeys = cards.map((card, index) => {
         const adapter = field(card, "adapter").value;
@@ -726,6 +758,9 @@
       form.dataset.scenarioWarnings = JSON.stringify(scenarioWarnings);
       journeyList.replaceChildren();
       projection.journeys.forEach(journey => addJourney({adapter: journey.adapter || "http", journey}));
+      loadModel.value = projection.load?.model || "";
+      loadOptions.value = JSON.stringify(projection.load || {}, null, 2);
+      updateLoad();
       syncBasicControls();
       renderGoalSummary();
       const gap = projection.missingInputs.length;
@@ -1021,6 +1056,15 @@
     try { experiment = JSON.parse(data.get("experiment_json") || "null"); } catch { /* Server validates malformed experiment input. */ }
     form.querySelector("[data-review-rollback]").textContent = experiment && experiment.family !== "queue_drain" ? "Controller restoration and recovery traffic required" : fault === "none" ? "Not required" : "Required and verified after injection";
     if (experiment) form.querySelector("[data-review-duration]").textContent = `${durationSeconds}s traffic + ${experiment.recoverySeconds}s recovery per journey`;
+    try {
+      const load = JSON.parse(data.get("load_json") || "null");
+      if (load) {
+        const stages = load.stages || [{durationSeconds: load.durationSeconds}];
+        const seconds = stages.reduce((total, s) => total + s.durationSeconds, 0) + (load.warmupSeconds || 0) + (load.recoverySeconds || 0);
+        form.querySelector("[data-review-vus]").textContent = `${load.maxInFlight} in-flight journeys`;
+        form.querySelector("[data-review-duration]").textContent = `${seconds}s scheduled + bounded deadline drain${experiment ? " + experiment baseline/recovery" : ""}`;
+      }
+    } catch { /* The load editor and server show validation errors. */ }
     const outcomeSummary = form.querySelector("[data-review-outcomes]");
     if (outcomeSummary) outcomeSummary.textContent = (form.querySelector("[data-goal-outcomes] li")?.textContent || "Review the configured journey outcomes");
     let signals = [];

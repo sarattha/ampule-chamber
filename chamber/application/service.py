@@ -952,6 +952,14 @@ def _compatibility_reasons(
                     right_config.get("chamber", {}).get(field),
                 ),
             )
+    if left_config.get("traffic", {}).get("load") or right_config.get("traffic", {}).get("load"):
+        checks += (
+            (
+                "load contract",
+                json.dumps(left_config.get("traffic"), sort_keys=True),
+                json.dumps(right_config.get("traffic"), sort_keys=True),
+            ),
+        )
     if left_config.get("experiment") or right_config.get("experiment"):
         checks += (
             (

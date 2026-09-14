@@ -569,3 +569,48 @@ health from task completion. Configured capabilities are not verified readiness.
 - [x] Verify Docker runtime and Chrome desktop/narrow UI, run make check, update PR.
 
 Acceptance and operational limits: [named chambers and experiments](artifacts/chambers-and-experiments.md). The existing draft PR is being updated; no new release version is introduced.
+
+## Load Testing Priorities 1–7 (2026-09-14)
+
+The user requested all seven priorities and authorized landing the PR after
+Codex review and CI. Extend the existing green draft PR #42; preserve its
+unreleased 1.10.0 version and existing scenarios. Implement one opt-in load-suite
+contract and scheduler shared by HTTP and Relayna. Legacy k6 journeys remain
+compatible. Browser/Docker acceptance and review fixes are part of delivery.
+
+- [x] Arrival-rate scheduling with bounded in-flight tasks and delivery accounting.
+- [x] Per-journey p95/p99, error/completion/deadline and lifecycle gates.
+- [x] Measured admission, queue, execution and total lifecycle timing; explicit gaps.
+- [x] Concurrent weighted HTTP/Relayna workload mixes.
+- [x] Seeded datasets, payload distributions, environment-bound authentication,
+      response extraction and chained requests without persisting response content.
+- [x] Capacity step holds, sustained failure stop, recovery and soak trends.
+- [x] Generator CPU/memory, scheduling lag, active requests and dropped admission.
+- [x] Structured UI/results, meaningful fixtures, Docker/Chrome and make check.
+- [ ] Request Codex review, resolve findings, verify CI and merge PR #42.
+
+Acceptance must distinguish sustainable throughput, fast admission with growing
+work latency, and an overloaded generator. Missing timing or insufficient target
+rate cannot become a pass. Scheduled load and recovery obey chamber budgets.
+
+Implementation decisions: opt-in `traffic.load` keeps legacy schedules compatible;
+normal stage boundaries preserve the arrival timeline, capacity steps drain before
+evaluation, missed/full slots are dropped without queuing, and target-rate gaps
+make results inconclusive. Queue/worker timings are client-observed SSE estimates,
+not server spans. Scoped Prometheus data retains namespace and workload identity.
+Baseline/fault/recovery artifacts all participate in result evidence gates.
+
+Evaluation: real loopback HTTP/SSE tests cover weighted concurrency, overload,
+fast admission with slower worker transitions, continuously dripping response
+deadlines, extraction/auth redaction, seeded distributions, capacity stopping,
+soak and scoped metric failure cases. Docker ran the real suite through a simulated
+Kubernetes controller and produced separate baseline/fault/recovery summaries.
+Chrome saved both capacity and mixed HTTP/Relayna soak plans and verified mobile
+report layout. Conflicting legacy VU controls were removed from suite mode.
+
+Acceptance evidence: [load suite delivery](artifacts/load-suite-acceptance.md).
+
+Final local acceptance: `make check` passed with 293 tests and 90% branch-aware
+aggregate coverage, plus scenario/deployment/release validation, strict docs and
+package build. All 16 load-suite tests passed inside the Docker runtime (20.128s).
+Chrome recorded no console errors during the final editor/report checks.

@@ -9,7 +9,7 @@
 {% for key, label in [('name','Chamber name'),('context','Kubernetes context'),('namespace','Namespace'),('service','Service'),('workload','Workload')] %}<label>{{ label }}<input name="{{ key }}" required value="{{ selected.get(key, '') }}"></label>{% endfor %}
 <label>Prometheus URL<input name="prometheus_url" type="url" value="{{ selected.get('prometheus_url', '') }}"></label>
 <label>Maximum VUs<input name="max_vus" type="number" min="1" max="100" value="{{ selected.get('max_vus',25) }}" required></label>
-<label>Maximum traffic and recovery seconds<input name="max_duration_seconds" type="number" min="20" max="900" value="{{ selected.get('max_duration_seconds',300) }}" required></label>
+<label>Maximum traffic and recovery seconds<input name="max_duration_seconds" type="number" min="20" max="7200" value="{{ selected.get('max_duration_seconds',300) }}" required></label>
 <label>Fault permission<select name="allow_faults"><option value="false">Observe only</option><option value="true" {{ 'selected' if selected.get('allow_faults') }}>Allow explicit faults</option></select></label>
 <label>Chaos Mesh capability<select name="chaos_mesh"><option value="false">Not configured</option><option value="true" {{ 'selected' if selected.get('chaos_mesh') }}>Configured · verify at execution</option></select></label>
 <button class="button primary" type="submit">Save chamber</button></form></section>

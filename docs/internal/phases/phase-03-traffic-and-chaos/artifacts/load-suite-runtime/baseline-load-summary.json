@@ -1,0 +1,328 @@
+{
+  "adapter": "mixed",
+  "capacity": {
+    "highestPassingRate": 1,
+    "stopReason": null
+  },
+  "generator": {
+    "limited": false,
+    "memoryAssertion": {
+      "expected": null,
+      "name": "Generator RSS high-water growth MiB",
+      "observed": 7.227,
+      "state": "not_configured"
+    },
+    "peakActiveRequests": 1,
+    "peakSchedulingLagMs": 0.872,
+    "rssHighWaterGrowthMiB": 7.227,
+    "samples": [
+      {
+        "activeRequests": 1,
+        "cpuPercentOneCore": 28.762,
+        "cpuSeconds": 0.0003,
+        "elapsedSeconds": 0.001,
+        "inFlight": 1,
+        "rssHighWaterMiB": 96.797,
+        "schedulingLagMs": 0.031
+      },
+      {
+        "activeRequests": 0,
+        "cpuPercentOneCore": 1.178,
+        "cpuSeconds": 0.0121,
+        "elapsedSeconds": 1.0,
+        "inFlight": 1,
+        "rssHighWaterMiB": 99.148,
+        "schedulingLagMs": 0.063
+      },
+      {
+        "activeRequests": 0,
+        "cpuPercentOneCore": 0.82,
+        "cpuSeconds": 0.0203,
+        "elapsedSeconds": 2.001,
+        "inFlight": 1,
+        "rssHighWaterMiB": 100.023,
+        "schedulingLagMs": 0.872
+      },
+      {
+        "activeRequests": 0,
+        "cpuPercentOneCore": 1.647,
+        "cpuSeconds": 0.0533,
+        "elapsedSeconds": 4.001,
+        "inFlight": 1,
+        "rssHighWaterMiB": 103.148,
+        "schedulingLagMs": 0.32
+      },
+      {
+        "activeRequests": 0,
+        "cpuPercentOneCore": 0.966,
+        "cpuSeconds": 0.063,
+        "elapsedSeconds": 5.001,
+        "inFlight": 0,
+        "rssHighWaterMiB": 104.023,
+        "schedulingLagMs": 0
+      }
+    ]
+  },
+  "metrics": {
+    "admissionP95Ms": 8.702,
+    "completed": 5,
+    "completionRate": 1.0,
+    "deadlineMissRate": 0.0,
+    "dropped": 0,
+    "errorRate": 0.0,
+    "p95Ms": 16.4,
+    "p99Ms": 16.4,
+    "queueTimingSamples": 2,
+    "queueWaitP95Ms": 7.367,
+    "requested": 5,
+    "started": 5,
+    "successful": 5,
+    "workerP95Ms": 0.008,
+    "workerTimingSamples": 2
+  },
+  "observations": [
+    {
+      "admission_ms": null,
+      "deadline_missed": false,
+      "journey": "health",
+      "phase": "baseline",
+      "queue_wait_ms": null,
+      "step": 1,
+      "success": true,
+      "timing_source": "unavailable",
+      "total_ms": 11.913,
+      "worker_ms": null
+    },
+    {
+      "admission_ms": null,
+      "deadline_missed": false,
+      "journey": "health",
+      "phase": "baseline",
+      "queue_wait_ms": null,
+      "step": 1,
+      "success": true,
+      "timing_source": "unavailable",
+      "total_ms": 7.9,
+      "worker_ms": null
+    },
+    {
+      "admission_ms": 8.702,
+      "deadline_missed": false,
+      "journey": "translation-lifecycle",
+      "phase": "baseline",
+      "queue_wait_ms": 7.367,
+      "step": 1,
+      "success": true,
+      "timing_source": "client_observed_stream_events",
+      "total_ms": 16.4,
+      "worker_ms": 0.008000000000000007
+    },
+    {
+      "admission_ms": 8.521,
+      "deadline_missed": false,
+      "journey": "translation-lifecycle",
+      "phase": "baseline",
+      "queue_wait_ms": 6.842,
+      "step": 1,
+      "success": true,
+      "timing_source": "client_observed_stream_events",
+      "total_ms": 15.74,
+      "worker_ms": 0.006000000000000227
+    },
+    {
+      "admission_ms": null,
+      "deadline_missed": false,
+      "journey": "health",
+      "phase": "baseline",
+      "queue_wait_ms": null,
+      "step": 1,
+      "success": true,
+      "timing_source": "unavailable",
+      "total_ms": 9.153,
+      "worker_ms": null
+    }
+  ],
+  "observationsTruncated": false,
+  "schema_version": "chamber.ampule.dev/load-suite/v1",
+  "seed": 1,
+  "soak": {
+    "throughputChangePerSecond": null,
+    "windowCount": 1
+  },
+  "status": "pass",
+  "success": true,
+  "targetMetrics": {
+    "assertions": [],
+    "samples": []
+  },
+  "tasks": [
+    {
+      "error": null,
+      "event_count": 3,
+      "events": [
+        {
+          "received_elapsed_ms": 7.354,
+          "sequence": 1,
+          "status": "queued",
+          "task_id": "one"
+        },
+        {
+          "received_elapsed_ms": 7.367,
+          "sequence": 2,
+          "status": "running",
+          "task_id": "one"
+        },
+        {
+          "received_elapsed_ms": 7.375,
+          "sequence": 3,
+          "status": "completed",
+          "task_id": "one"
+        }
+      ],
+      "events_truncated": false,
+      "failure_stage": null,
+      "iteration": 3,
+      "journey": "translation-lifecycle",
+      "statuses": [
+        "queued",
+        "running",
+        "completed"
+      ],
+      "stream_duration_ms": 7.424,
+      "submission_duration_ms": 8.702,
+      "submit_status": 202,
+      "success": true,
+      "task_id": "one",
+      "terminal_status": "completed",
+      "total_duration_ms": 16.284,
+      "uploads": []
+    },
+    {
+      "error": null,
+      "event_count": 3,
+      "events": [
+        {
+          "received_elapsed_ms": 6.832,
+          "sequence": 1,
+          "status": "queued",
+          "task_id": "one"
+        },
+        {
+          "received_elapsed_ms": 6.842,
+          "sequence": 2,
+          "status": "running",
+          "task_id": "one"
+        },
+        {
+          "received_elapsed_ms": 6.848,
+          "sequence": 3,
+          "status": "completed",
+          "task_id": "one"
+        }
+      ],
+      "events_truncated": false,
+      "failure_stage": null,
+      "iteration": 4,
+      "journey": "translation-lifecycle",
+      "statuses": [
+        "queued",
+        "running",
+        "completed"
+      ],
+      "stream_duration_ms": 6.92,
+      "submission_duration_ms": 8.521,
+      "submit_status": 202,
+      "success": true,
+      "task_id": "one",
+      "terminal_status": "completed",
+      "total_duration_ms": 15.63,
+      "uploads": []
+    }
+  ],
+  "timingNote": "Lifecycle intervals use client-observed stream transitions; missing transitions stay unavailable. Generator memory is RSS high-water growth.",
+  "windows": [
+    {
+      "achievedStartsPerSecond": 1.0,
+      "actualSeconds": 5,
+      "completed": 5,
+      "durationSeconds": 5,
+      "journeys": [
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "name": "maxErrorRate",
+              "observed": 0.0,
+              "state": "pass"
+            },
+            {
+              "expected": 1500,
+              "name": "p99Ms",
+              "observed": 11.913,
+              "state": "pass"
+            }
+          ],
+          "metrics": {
+            "admissionP95Ms": null,
+            "completed": 3,
+            "completionRate": 1.0,
+            "deadlineMissRate": 0.0,
+            "dropped": 0,
+            "errorRate": 0.0,
+            "p95Ms": 11.913,
+            "p99Ms": 11.913,
+            "queueTimingSamples": 0,
+            "queueWaitP95Ms": null,
+            "requested": 3,
+            "started": 3,
+            "successful": 3,
+            "workerP95Ms": null,
+            "workerTimingSamples": 0
+          },
+          "name": "health"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "name": "maxErrorRate",
+              "observed": 0.0,
+              "state": "pass"
+            },
+            {
+              "expected": 1500,
+              "name": "p99Ms",
+              "observed": 16.4,
+              "state": "pass"
+            }
+          ],
+          "metrics": {
+            "admissionP95Ms": 8.702,
+            "completed": 2,
+            "completionRate": 1.0,
+            "deadlineMissRate": 0.0,
+            "dropped": 0,
+            "errorRate": 0.0,
+            "p95Ms": 16.4,
+            "p99Ms": 16.4,
+            "queueTimingSamples": 2,
+            "queueWaitP95Ms": 7.367,
+            "requested": 2,
+            "started": 2,
+            "successful": 2,
+            "workerP95Ms": 0.008,
+            "workerTimingSamples": 2
+          },
+          "name": "translation-lifecycle"
+        }
+      ],
+      "phase": "baseline",
+      "ratePerSecond": 1,
+      "requested": 5,
+      "started": 5,
+      "state": "pass",
+      "step": 1,
+      "successfulCompletionsPerSecond": 1.0
+    }
+  ]
+}

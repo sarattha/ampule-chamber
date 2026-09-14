@@ -17,6 +17,7 @@
 </nav>
 
 {% if selected_tab == 'overview' %}
+{% set config = run_data.config %}{% include 'load_summary.html' %}
 {% if verdict %}
 <section class="verdict-banner outcome-{{ result.status }}" aria-labelledby="operational-verdict">
   <div><div class="eyebrow">Operational verdict</div><div class="verdict-title"><span class="pill outcome-{{ result.status }}">{{ result.status | replace('_', ' ') }}</span><span>{{ result.get('confidence', 'High' if result.conclusive else 'Limited') }} confidence</span></div><h2 id="operational-verdict">{{ verdict.what_happened }}</h2><p>{{ verdict.why }}</p>{% if scope %}<p class="verdict-scope"><strong>Tested scope:</strong> {{ scope.get('service', metadata.service_name or run_id) }} · {{ scope.get('scenario_id', record.get('scenario_id', 'unrecorded')) }} · {{ scope.get('provider', record.get('mode', 'unknown')) }} · {{ scope.get('journey_count', 0) }} journey{{ '' if scope.get('journey_count', 0) == 1 else 's' }}</p>{% endif %}<strong>Next: {{ verdict.next_step }}</strong></div>

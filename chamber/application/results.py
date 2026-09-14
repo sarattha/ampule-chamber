@@ -22,6 +22,13 @@ PROMETHEUS_REQUIRED_QUERIES = (
 PROMETHEUS_REQUIRED_SIGNALS = {"cpu_usage", "memory_usage"}
 
 EVIDENCE_REQUIREMENTS = {
+    "load-summary": {
+        "name": "Load delivery and performance",
+        "impact": "Load delivery or performance measurements are incomplete.",
+        "likely_cause": "Generator saturation, missing transitions, or interrupted traffic.",
+        "resolution": "Review requested rate, generator limits, and journey thresholds.",
+        "configuration_path": "traffic.load",
+    },
     "experiment": {
         "name": "Experiment assertions and restoration",
         "impact": "The selected experiment has incomplete injection, recovery or queue evidence.",
@@ -101,6 +108,12 @@ EVIDENCE_REQUIREMENTS = {
         "configuration_path": "runtime.provider",
     },
 }
+
+for _phase in ("baseline", "recovery"):
+    EVIDENCE_REQUIREMENTS[f"{_phase}-load-summary"] = {
+        **EVIDENCE_REQUIREMENTS["load-summary"],
+        "name": f"{_phase.title()} load delivery and performance",
+    }
 
 
 def analyze_guided_run(
@@ -197,6 +210,11 @@ def build_assessment_result(
     )
     if config.get("experiment"):
         required.append("experiment")
+    if config.get("traffic", {}).get("load") and config.get("experiment", {}).get("family") not in {
+        None,
+        "queue_drain",
+    }:
+        required.extend(("baseline-load-summary", "recovery-load-summary"))
     required = list(dict.fromkeys(required))
     if runtime_mode == "attach":
         required.extend(("attach-discovery", "pre-test-state", "rollback"))
@@ -244,6 +262,23 @@ def build_assessment_result(
             for item in required
             if item not in {"signal:queue_depth", "signal:queue_age", "signal:oldest_task_age"}
         ]
+    load_summary = {}
+    if "load-summary" in available:
+        load_summary = json.loads((run_dir / "evidence/load-summary.json").read_text())
+        if load_summary.get("status") == "inconclusive":
+            present = [item for item in present if item != "load-summary"]
+    if load_summary:
+        load_summary["phases"] = []
+        for phase in ("baseline", "recovery"):
+            evidence_id = f"{phase}-load-summary"
+            if evidence_id in available:
+                phase_summary = json.loads((run_dir / f"evidence/{evidence_id}.json").read_text())
+                load_summary["phases"].append({"phase": phase, **phase_summary})
+                if phase_summary.get("status") == "inconclusive":
+                    present = [item for item in present if item != evidence_id]
+                elif phase_summary.get("status") == "fail":
+                    load_summary["status"] = "fail"
+                    load_summary["success"] = False
     missing = [item for item in required if item not in present]
     evidence_coverage = round(100 * len(present) / len(required)) if required else 100
     rollback_value = metadata.get("rollback")
@@ -274,6 +309,8 @@ def build_assessment_result(
         status = "not_ready"
         conclusive = True
         score = 0
+    elif load_summary.get("status") == "fail":
+        status, conclusive, score = "not_ready", True, 0
     elif not traffic_success:
         status = "failed"
     else:
@@ -312,6 +349,7 @@ def build_assessment_result(
     )
 
     return {
+        "load": load_summary,
         "experiment": experiment_result,
         "chamber": config.get("chamber"),
         "schema_version": "chamber.ampule.dev/result/v1",
@@ -386,6 +424,8 @@ def _has_evidence_content(path: Path, evidence_id: str) -> bool:
         value = json.loads(content)
         if not isinstance(value, dict) or not value:
             return False
+        if evidence_id in {"load-summary", "baseline-load-summary", "recovery-load-summary"}:
+            return _load_evidence_complete(value)
         if evidence_id == "preflight":
             return value.get("ready") is True
         if evidence_id == "kubernetes-commands":
@@ -419,6 +459,62 @@ def _has_evidence_content(path: Path, evidence_id: str) -> bool:
         return True
     except (OSError, UnicodeError, ValueError, TypeError, AttributeError):
         return False
+
+
+def _load_evidence_complete(value: dict[str, Any]) -> bool:
+    if value.get("schema_version") != "chamber.ampule.dev/load-suite/v1" or value.get(
+        "status"
+    ) not in {"pass", "fail", "inconclusive"}:
+        return False
+    windows = value.get("windows")
+    if not isinstance(windows, list) or not windows:
+        return False
+    aggregate = value.get("metrics", {})
+    for metric in [
+        aggregate,
+        *[j.get("metrics", {}) for w in windows for j in w.get("journeys", [])],
+    ]:
+        for key in ("requested", "started", "completed", "successful", "dropped"):
+            if type(metric.get(key)) is not int or metric[key] < 0:
+                return False
+        if not (
+            metric["requested"] == metric["started"] + metric["dropped"]
+            and metric["started"] == metric["completed"]
+            and metric["successful"] <= metric["completed"]
+        ):
+            return False
+        if metric["started"] and any(
+            not _finite_number(metric.get(key)) or metric[key] < 0
+            for key in ("p95Ms", "p99Ms", "errorRate", "completionRate", "deadlineMissRate")
+        ):
+            return False
+    if aggregate["requested"] <= 0 or aggregate["requested"] != sum(
+        w.get("requested", -1) for w in windows
+    ):
+        return False
+    for window in windows:
+        if window.get("state") not in {"pass", "fail", "inconclusive"} or not window.get(
+            "journeys"
+        ):
+            return False
+        if window.get("requested") != sum(j["metrics"]["requested"] for j in window["journeys"]):
+            return False
+        if not all(
+            j.get("assertions")
+            and all(a.get("state") in {"pass", "fail", "missing"} for a in j["assertions"])
+            for j in window["journeys"]
+        ):
+            return False
+        if window["state"] == "pass" and any(
+            a["state"] != "pass" for j in window["journeys"] for a in j["assertions"]
+        ):
+            return False
+    if value["status"] == "pass" and (
+        aggregate["dropped"]
+        or any(w["state"] != "pass" for w in windows if w.get("phase") != "warmup")
+    ):
+        return False
+    return True
 
 
 def _finite_number(value: Any) -> bool:
@@ -868,6 +964,8 @@ def _k6_summary_path(run_dir: Path, metadata: dict[str, Any]) -> Path | None:
 
 def _traffic_evidence_id(config: dict[str, Any]) -> str:
     traffic = config.get("traffic")
+    if isinstance(traffic, dict) and traffic.get("load"):
+        return "load-summary"
     journeys = traffic.get("journeys") if isinstance(traffic, dict) else None
     if (
         isinstance(journeys, list)

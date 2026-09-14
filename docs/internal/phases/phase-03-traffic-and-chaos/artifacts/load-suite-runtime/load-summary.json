@@ -1,0 +1,1023 @@
+{
+  "adapter": "mixed",
+  "capacity": {
+    "highestPassingRate": 10,
+    "stopReason": null
+  },
+  "generator": {
+    "limited": false,
+    "memoryAssertion": {
+      "expected": null,
+      "name": "Generator RSS high-water growth MiB",
+      "observed": 12.125,
+      "state": "not_configured"
+    },
+    "peakActiveRequests": 1,
+    "peakSchedulingLagMs": 0.498,
+    "rssHighWaterGrowthMiB": 12.125,
+    "samples": [
+      {
+        "activeRequests": 1,
+        "cpuPercentOneCore": 25.683,
+        "cpuSeconds": 0.0003,
+        "elapsedSeconds": 0.0,
+        "inFlight": 1,
+        "rssHighWaterMiB": 104.023,
+        "schedulingLagMs": 0.017
+      },
+      {
+        "activeRequests": 0,
+        "cpuPercentOneCore": 13.898,
+        "cpuSeconds": 0.1394,
+        "elapsedSeconds": 1.001,
+        "inFlight": 1,
+        "rssHighWaterMiB": 115.648,
+        "schedulingLagMs": 0.498
+      },
+      {
+        "activeRequests": 0,
+        "cpuPercentOneCore": 12.344,
+        "cpuSeconds": 0.2628,
+        "elapsedSeconds": 2.0,
+        "inFlight": 0,
+        "rssHighWaterMiB": 116.148,
+        "schedulingLagMs": 0
+      }
+    ]
+  },
+  "metrics": {
+    "admissionP95Ms": 18.475,
+    "completed": 20,
+    "completionRate": 1.0,
+    "deadlineMissRate": 0.0,
+    "dropped": 0,
+    "errorRate": 0.0,
+    "p95Ms": 16.054,
+    "p99Ms": 24.476,
+    "queueTimingSamples": 15,
+    "queueWaitP95Ms": 7.686,
+    "requested": 20,
+    "started": 20,
+    "successful": 20,
+    "workerP95Ms": 0.011,
+    "workerTimingSamples": 15
+  },
+  "observations": [
+    {
+      "admission_ms": null,
+      "deadline_missed": false,
+      "journey": "health",
+      "phase": "fault",
+      "queue_wait_ms": null,
+      "step": 1,
+      "success": true,
+      "timing_source": "unavailable",
+      "total_ms": 7.483,
+      "worker_ms": null
+    },
+    {
+      "admission_ms": null,
+      "deadline_missed": false,
+      "journey": "health",
+      "phase": "fault",
+      "queue_wait_ms": null,
+      "step": 1,
+      "success": true,
+      "timing_source": "unavailable",
+      "total_ms": 8.119,
+      "worker_ms": null
+    },
+    {
+      "admission_ms": 6.84,
+      "deadline_missed": false,
+      "journey": "translation-lifecycle",
+      "phase": "fault",
+      "queue_wait_ms": 6.807,
+      "step": 1,
+      "success": true,
+      "timing_source": "client_observed_stream_events",
+      "total_ms": 13.907,
+      "worker_ms": 0.005999999999999339
+    },
+    {
+      "admission_ms": 7.027,
+      "deadline_missed": false,
+      "journey": "translation-lifecycle",
+      "phase": "fault",
+      "queue_wait_ms": 6.606,
+      "step": 1,
+      "success": true,
+      "timing_source": "client_observed_stream_events",
+      "total_ms": 13.91,
+      "worker_ms": 0.006000000000000227
+    },
+    {
+      "admission_ms": null,
+      "deadline_missed": false,
+      "journey": "health",
+      "phase": "fault",
+      "queue_wait_ms": null,
+      "step": 1,
+      "success": true,
+      "timing_source": "unavailable",
+      "total_ms": 7.693,
+      "worker_ms": null
+    },
+    {
+      "admission_ms": 7.436,
+      "deadline_missed": false,
+      "journey": "translation-lifecycle",
+      "phase": "fault",
+      "queue_wait_ms": 7.632,
+      "step": 1,
+      "success": true,
+      "timing_source": "client_observed_stream_events",
+      "total_ms": 15.319,
+      "worker_ms": 0.006000000000000227
+    },
+    {
+      "admission_ms": 7.184,
+      "deadline_missed": false,
+      "journey": "translation-lifecycle",
+      "phase": "fault",
+      "queue_wait_ms": 7.113,
+      "step": 1,
+      "success": true,
+      "timing_source": "client_observed_stream_events",
+      "total_ms": 14.716,
+      "worker_ms": 0.005999999999999339
+    },
+    {
+      "admission_ms": 8.195,
+      "deadline_missed": false,
+      "journey": "translation-lifecycle",
+      "phase": "fault",
+      "queue_wait_ms": 7.601,
+      "step": 1,
+      "success": true,
+      "timing_source": "client_observed_stream_events",
+      "total_ms": 16.054,
+      "worker_ms": 0.006000000000000227
+    },
+    {
+      "admission_ms": 18.475,
+      "deadline_missed": false,
+      "journey": "translation-lifecycle",
+      "phase": "fault",
+      "queue_wait_ms": 5.76,
+      "step": 1,
+      "success": true,
+      "timing_source": "client_observed_stream_events",
+      "total_ms": 24.476,
+      "worker_ms": 0.006000000000000227
+    },
+    {
+      "admission_ms": 6.662,
+      "deadline_missed": false,
+      "journey": "translation-lifecycle",
+      "phase": "fault",
+      "queue_wait_ms": 6.424,
+      "step": 1,
+      "success": true,
+      "timing_source": "client_observed_stream_events",
+      "total_ms": 13.324,
+      "worker_ms": 0.005999999999999339
+    },
+    {
+      "admission_ms": 6.019,
+      "deadline_missed": false,
+      "journey": "translation-lifecycle",
+      "phase": "fault",
+      "queue_wait_ms": 5.715,
+      "step": 1,
+      "success": true,
+      "timing_source": "client_observed_stream_events",
+      "total_ms": 11.935,
+      "worker_ms": 0.006000000000000227
+    },
+    {
+      "admission_ms": null,
+      "deadline_missed": false,
+      "journey": "health",
+      "phase": "fault",
+      "queue_wait_ms": null,
+      "step": 1,
+      "success": true,
+      "timing_source": "unavailable",
+      "total_ms": 6.483,
+      "worker_ms": null
+    },
+    {
+      "admission_ms": 6.112,
+      "deadline_missed": false,
+      "journey": "translation-lifecycle",
+      "phase": "fault",
+      "queue_wait_ms": 5.639,
+      "step": 1,
+      "success": true,
+      "timing_source": "client_observed_stream_events",
+      "total_ms": 11.945,
+      "worker_ms": 0.004999999999999893
+    },
+    {
+      "admission_ms": 7.331,
+      "deadline_missed": false,
+      "journey": "translation-lifecycle",
+      "phase": "fault",
+      "queue_wait_ms": 7.686,
+      "step": 1,
+      "success": true,
+      "timing_source": "client_observed_stream_events",
+      "total_ms": 15.35,
+      "worker_ms": 0.01100000000000012
+    },
+    {
+      "admission_ms": 6.126,
+      "deadline_missed": false,
+      "journey": "translation-lifecycle",
+      "phase": "fault",
+      "queue_wait_ms": 5.83,
+      "step": 1,
+      "success": true,
+      "timing_source": "client_observed_stream_events",
+      "total_ms": 12.177,
+      "worker_ms": 0.006000000000000227
+    },
+    {
+      "admission_ms": 6.391,
+      "deadline_missed": false,
+      "journey": "translation-lifecycle",
+      "phase": "fault",
+      "queue_wait_ms": 5.709,
+      "step": 1,
+      "success": true,
+      "timing_source": "client_observed_stream_events",
+      "total_ms": 12.368,
+      "worker_ms": 0.006000000000000227
+    },
+    {
+      "admission_ms": 7.474,
+      "deadline_missed": false,
+      "journey": "translation-lifecycle",
+      "phase": "fault",
+      "queue_wait_ms": 6.306,
+      "step": 1,
+      "success": true,
+      "timing_source": "client_observed_stream_events",
+      "total_ms": 14.049,
+      "worker_ms": 0.006000000000000227
+    },
+    {
+      "admission_ms": null,
+      "deadline_missed": false,
+      "journey": "health",
+      "phase": "fault",
+      "queue_wait_ms": null,
+      "step": 1,
+      "success": true,
+      "timing_source": "unavailable",
+      "total_ms": 7.104,
+      "worker_ms": null
+    },
+    {
+      "admission_ms": 6.733,
+      "deadline_missed": false,
+      "journey": "translation-lifecycle",
+      "phase": "fault",
+      "queue_wait_ms": 5.942,
+      "step": 1,
+      "success": true,
+      "timing_source": "client_observed_stream_events",
+      "total_ms": 12.982,
+      "worker_ms": 0.006000000000000227
+    },
+    {
+      "admission_ms": 7.178,
+      "deadline_missed": false,
+      "journey": "translation-lifecycle",
+      "phase": "fault",
+      "queue_wait_ms": 7.444,
+      "step": 1,
+      "success": true,
+      "timing_source": "client_observed_stream_events",
+      "total_ms": 14.894,
+      "worker_ms": 0.006000000000000227
+    }
+  ],
+  "observationsTruncated": false,
+  "schema_version": "chamber.ampule.dev/load-suite/v1",
+  "seed": 1,
+  "soak": {
+    "throughputChangePerSecond": null,
+    "windowCount": 1
+  },
+  "status": "pass",
+  "success": true,
+  "targetMetrics": {
+    "assertions": [],
+    "samples": []
+  },
+  "tasks": [
+    {
+      "error": null,
+      "event_count": 3,
+      "events": [
+        {
+          "received_elapsed_ms": 6.798,
+          "sequence": 1,
+          "status": "queued",
+          "task_id": "one"
+        },
+        {
+          "received_elapsed_ms": 6.807,
+          "sequence": 2,
+          "status": "running",
+          "task_id": "one"
+        },
+        {
+          "received_elapsed_ms": 6.813,
+          "sequence": 3,
+          "status": "completed",
+          "task_id": "one"
+        }
+      ],
+      "events_truncated": false,
+      "failure_stage": null,
+      "iteration": 3,
+      "journey": "translation-lifecycle",
+      "statuses": [
+        "queued",
+        "running",
+        "completed"
+      ],
+      "stream_duration_ms": 6.857,
+      "submission_duration_ms": 6.84,
+      "submit_status": 202,
+      "success": true,
+      "task_id": "one",
+      "terminal_status": "completed",
+      "total_duration_ms": 13.837,
+      "uploads": []
+    },
+    {
+      "error": null,
+      "event_count": 3,
+      "events": [
+        {
+          "received_elapsed_ms": 6.597,
+          "sequence": 1,
+          "status": "queued",
+          "task_id": "one"
+        },
+        {
+          "received_elapsed_ms": 6.606,
+          "sequence": 2,
+          "status": "running",
+          "task_id": "one"
+        },
+        {
+          "received_elapsed_ms": 6.612,
+          "sequence": 3,
+          "status": "completed",
+          "task_id": "one"
+        }
+      ],
+      "events_truncated": false,
+      "failure_stage": null,
+      "iteration": 4,
+      "journey": "translation-lifecycle",
+      "statuses": [
+        "queued",
+        "running",
+        "completed"
+      ],
+      "stream_duration_ms": 6.692,
+      "submission_duration_ms": 7.027,
+      "submit_status": 202,
+      "success": true,
+      "task_id": "one",
+      "terminal_status": "completed",
+      "total_duration_ms": 13.835,
+      "uploads": []
+    },
+    {
+      "error": null,
+      "event_count": 3,
+      "events": [
+        {
+          "received_elapsed_ms": 7.621,
+          "sequence": 1,
+          "status": "queued",
+          "task_id": "one"
+        },
+        {
+          "received_elapsed_ms": 7.632,
+          "sequence": 2,
+          "status": "running",
+          "task_id": "one"
+        },
+        {
+          "received_elapsed_ms": 7.638,
+          "sequence": 3,
+          "status": "completed",
+          "task_id": "one"
+        }
+      ],
+      "events_truncated": false,
+      "failure_stage": null,
+      "iteration": 6,
+      "journey": "translation-lifecycle",
+      "statuses": [
+        "queued",
+        "running",
+        "completed"
+      ],
+      "stream_duration_ms": 7.675,
+      "submission_duration_ms": 7.436,
+      "submit_status": 202,
+      "success": true,
+      "task_id": "one",
+      "terminal_status": "completed",
+      "total_duration_ms": 15.252,
+      "uploads": []
+    },
+    {
+      "error": null,
+      "event_count": 3,
+      "events": [
+        {
+          "received_elapsed_ms": 7.103,
+          "sequence": 1,
+          "status": "queued",
+          "task_id": "one"
+        },
+        {
+          "received_elapsed_ms": 7.113,
+          "sequence": 2,
+          "status": "running",
+          "task_id": "one"
+        },
+        {
+          "received_elapsed_ms": 7.119,
+          "sequence": 3,
+          "status": "completed",
+          "task_id": "one"
+        }
+      ],
+      "events_truncated": false,
+      "failure_stage": null,
+      "iteration": 7,
+      "journey": "translation-lifecycle",
+      "statuses": [
+        "queued",
+        "running",
+        "completed"
+      ],
+      "stream_duration_ms": 7.149,
+      "submission_duration_ms": 7.184,
+      "submit_status": 202,
+      "success": true,
+      "task_id": "one",
+      "terminal_status": "completed",
+      "total_duration_ms": 14.537,
+      "uploads": []
+    },
+    {
+      "error": null,
+      "event_count": 3,
+      "events": [
+        {
+          "received_elapsed_ms": 7.591,
+          "sequence": 1,
+          "status": "queued",
+          "task_id": "one"
+        },
+        {
+          "received_elapsed_ms": 7.601,
+          "sequence": 2,
+          "status": "running",
+          "task_id": "one"
+        },
+        {
+          "received_elapsed_ms": 7.607,
+          "sequence": 3,
+          "status": "completed",
+          "task_id": "one"
+        }
+      ],
+      "events_truncated": false,
+      "failure_stage": null,
+      "iteration": 8,
+      "journey": "translation-lifecycle",
+      "statuses": [
+        "queued",
+        "running",
+        "completed"
+      ],
+      "stream_duration_ms": 7.646,
+      "submission_duration_ms": 8.195,
+      "submit_status": 202,
+      "success": true,
+      "task_id": "one",
+      "terminal_status": "completed",
+      "total_duration_ms": 15.982,
+      "uploads": []
+    },
+    {
+      "error": null,
+      "event_count": 3,
+      "events": [
+        {
+          "received_elapsed_ms": 5.751,
+          "sequence": 1,
+          "status": "queued",
+          "task_id": "one"
+        },
+        {
+          "received_elapsed_ms": 5.76,
+          "sequence": 2,
+          "status": "running",
+          "task_id": "one"
+        },
+        {
+          "received_elapsed_ms": 5.766,
+          "sequence": 3,
+          "status": "completed",
+          "task_id": "one"
+        }
+      ],
+      "events_truncated": false,
+      "failure_stage": null,
+      "iteration": 9,
+      "journey": "translation-lifecycle",
+      "statuses": [
+        "queued",
+        "running",
+        "completed"
+      ],
+      "stream_duration_ms": 5.791,
+      "submission_duration_ms": 18.475,
+      "submit_status": 202,
+      "success": true,
+      "task_id": "one",
+      "terminal_status": "completed",
+      "total_duration_ms": 24.403,
+      "uploads": []
+    },
+    {
+      "error": null,
+      "event_count": 3,
+      "events": [
+        {
+          "received_elapsed_ms": 6.414,
+          "sequence": 1,
+          "status": "queued",
+          "task_id": "one"
+        },
+        {
+          "received_elapsed_ms": 6.424,
+          "sequence": 2,
+          "status": "running",
+          "task_id": "one"
+        },
+        {
+          "received_elapsed_ms": 6.43,
+          "sequence": 3,
+          "status": "completed",
+          "task_id": "one"
+        }
+      ],
+      "events_truncated": false,
+      "failure_stage": null,
+      "iteration": 10,
+      "journey": "translation-lifecycle",
+      "statuses": [
+        "queued",
+        "running",
+        "completed"
+      ],
+      "stream_duration_ms": 6.469,
+      "submission_duration_ms": 6.662,
+      "submit_status": 202,
+      "success": true,
+      "task_id": "one",
+      "terminal_status": "completed",
+      "total_duration_ms": 13.245,
+      "uploads": []
+    },
+    {
+      "error": null,
+      "event_count": 3,
+      "events": [
+        {
+          "received_elapsed_ms": 5.707,
+          "sequence": 1,
+          "status": "queued",
+          "task_id": "one"
+        },
+        {
+          "received_elapsed_ms": 5.715,
+          "sequence": 2,
+          "status": "running",
+          "task_id": "one"
+        },
+        {
+          "received_elapsed_ms": 5.721,
+          "sequence": 3,
+          "status": "completed",
+          "task_id": "one"
+        }
+      ],
+      "events_truncated": false,
+      "failure_stage": null,
+      "iteration": 11,
+      "journey": "translation-lifecycle",
+      "statuses": [
+        "queued",
+        "running",
+        "completed"
+      ],
+      "stream_duration_ms": 5.742,
+      "submission_duration_ms": 6.019,
+      "submit_status": 202,
+      "success": true,
+      "task_id": "one",
+      "terminal_status": "completed",
+      "total_duration_ms": 11.867,
+      "uploads": []
+    },
+    {
+      "error": null,
+      "event_count": 3,
+      "events": [
+        {
+          "received_elapsed_ms": 5.63,
+          "sequence": 1,
+          "status": "queued",
+          "task_id": "one"
+        },
+        {
+          "received_elapsed_ms": 5.639,
+          "sequence": 2,
+          "status": "running",
+          "task_id": "one"
+        },
+        {
+          "received_elapsed_ms": 5.644,
+          "sequence": 3,
+          "status": "completed",
+          "task_id": "one"
+        }
+      ],
+      "events_truncated": false,
+      "failure_stage": null,
+      "iteration": 13,
+      "journey": "translation-lifecycle",
+      "statuses": [
+        "queued",
+        "running",
+        "completed"
+      ],
+      "stream_duration_ms": 5.667,
+      "submission_duration_ms": 6.112,
+      "submit_status": 202,
+      "success": true,
+      "task_id": "one",
+      "terminal_status": "completed",
+      "total_duration_ms": 11.883,
+      "uploads": []
+    },
+    {
+      "error": null,
+      "event_count": 3,
+      "events": [
+        {
+          "received_elapsed_ms": 7.674,
+          "sequence": 1,
+          "status": "queued",
+          "task_id": "one"
+        },
+        {
+          "received_elapsed_ms": 7.686,
+          "sequence": 2,
+          "status": "running",
+          "task_id": "one"
+        },
+        {
+          "received_elapsed_ms": 7.697,
+          "sequence": 3,
+          "status": "completed",
+          "task_id": "one"
+        }
+      ],
+      "events_truncated": false,
+      "failure_stage": null,
+      "iteration": 14,
+      "journey": "translation-lifecycle",
+      "statuses": [
+        "queued",
+        "running",
+        "completed"
+      ],
+      "stream_duration_ms": 7.767,
+      "submission_duration_ms": 7.331,
+      "submit_status": 202,
+      "success": true,
+      "task_id": "one",
+      "terminal_status": "completed",
+      "total_duration_ms": 15.227,
+      "uploads": []
+    },
+    {
+      "error": null,
+      "event_count": 3,
+      "events": [
+        {
+          "received_elapsed_ms": 5.822,
+          "sequence": 1,
+          "status": "queued",
+          "task_id": "one"
+        },
+        {
+          "received_elapsed_ms": 5.83,
+          "sequence": 2,
+          "status": "running",
+          "task_id": "one"
+        },
+        {
+          "received_elapsed_ms": 5.836,
+          "sequence": 3,
+          "status": "completed",
+          "task_id": "one"
+        }
+      ],
+      "events_truncated": false,
+      "failure_stage": null,
+      "iteration": 15,
+      "journey": "translation-lifecycle",
+      "statuses": [
+        "queued",
+        "running",
+        "completed"
+      ],
+      "stream_duration_ms": 5.864,
+      "submission_duration_ms": 6.126,
+      "submit_status": 202,
+      "success": true,
+      "task_id": "one",
+      "terminal_status": "completed",
+      "total_duration_ms": 12.103,
+      "uploads": []
+    },
+    {
+      "error": null,
+      "event_count": 3,
+      "events": [
+        {
+          "received_elapsed_ms": 5.699,
+          "sequence": 1,
+          "status": "queued",
+          "task_id": "one"
+        },
+        {
+          "received_elapsed_ms": 5.709,
+          "sequence": 2,
+          "status": "running",
+          "task_id": "one"
+        },
+        {
+          "received_elapsed_ms": 5.715,
+          "sequence": 3,
+          "status": "completed",
+          "task_id": "one"
+        }
+      ],
+      "events_truncated": false,
+      "failure_stage": null,
+      "iteration": 16,
+      "journey": "translation-lifecycle",
+      "statuses": [
+        "queued",
+        "running",
+        "completed"
+      ],
+      "stream_duration_ms": 5.79,
+      "submission_duration_ms": 6.391,
+      "submit_status": 202,
+      "success": true,
+      "task_id": "one",
+      "terminal_status": "completed",
+      "total_duration_ms": 12.294,
+      "uploads": []
+    },
+    {
+      "error": null,
+      "event_count": 3,
+      "events": [
+        {
+          "received_elapsed_ms": 6.298,
+          "sequence": 1,
+          "status": "queued",
+          "task_id": "one"
+        },
+        {
+          "received_elapsed_ms": 6.306,
+          "sequence": 2,
+          "status": "running",
+          "task_id": "one"
+        },
+        {
+          "received_elapsed_ms": 6.312,
+          "sequence": 3,
+          "status": "completed",
+          "task_id": "one"
+        }
+      ],
+      "events_truncated": false,
+      "failure_stage": null,
+      "iteration": 17,
+      "journey": "translation-lifecycle",
+      "statuses": [
+        "queued",
+        "running",
+        "completed"
+      ],
+      "stream_duration_ms": 6.339,
+      "submission_duration_ms": 7.474,
+      "submit_status": 202,
+      "success": true,
+      "task_id": "one",
+      "terminal_status": "completed",
+      "total_duration_ms": 13.957,
+      "uploads": []
+    },
+    {
+      "error": null,
+      "event_count": 3,
+      "events": [
+        {
+          "received_elapsed_ms": 5.933,
+          "sequence": 1,
+          "status": "queued",
+          "task_id": "one"
+        },
+        {
+          "received_elapsed_ms": 5.942,
+          "sequence": 2,
+          "status": "running",
+          "task_id": "one"
+        },
+        {
+          "received_elapsed_ms": 5.948,
+          "sequence": 3,
+          "status": "completed",
+          "task_id": "one"
+        }
+      ],
+      "events_truncated": false,
+      "failure_stage": null,
+      "iteration": 19,
+      "journey": "translation-lifecycle",
+      "statuses": [
+        "queued",
+        "running",
+        "completed"
+      ],
+      "stream_duration_ms": 6.004,
+      "submission_duration_ms": 6.733,
+      "submit_status": 202,
+      "success": true,
+      "task_id": "one",
+      "terminal_status": "completed",
+      "total_duration_ms": 12.896,
+      "uploads": []
+    },
+    {
+      "error": null,
+      "event_count": 3,
+      "events": [
+        {
+          "received_elapsed_ms": 7.434,
+          "sequence": 1,
+          "status": "queued",
+          "task_id": "one"
+        },
+        {
+          "received_elapsed_ms": 7.444,
+          "sequence": 2,
+          "status": "running",
+          "task_id": "one"
+        },
+        {
+          "received_elapsed_ms": 7.45,
+          "sequence": 3,
+          "status": "completed",
+          "task_id": "one"
+        }
+      ],
+      "events_truncated": false,
+      "failure_stage": null,
+      "iteration": 20,
+      "journey": "translation-lifecycle",
+      "statuses": [
+        "queued",
+        "running",
+        "completed"
+      ],
+      "stream_duration_ms": 7.517,
+      "submission_duration_ms": 7.178,
+      "submit_status": 202,
+      "success": true,
+      "task_id": "one",
+      "terminal_status": "completed",
+      "total_duration_ms": 14.82,
+      "uploads": []
+    }
+  ],
+  "timingNote": "Lifecycle intervals use client-observed stream transitions; missing transitions stay unavailable. Generator memory is RSS high-water growth.",
+  "windows": [
+    {
+      "achievedStartsPerSecond": 10.0,
+      "actualSeconds": 2,
+      "completed": 20,
+      "durationSeconds": 2,
+      "journeys": [
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "name": "maxErrorRate",
+              "observed": 0.0,
+              "state": "pass"
+            },
+            {
+              "expected": 1500,
+              "name": "p99Ms",
+              "observed": 8.119,
+              "state": "pass"
+            }
+          ],
+          "metrics": {
+            "admissionP95Ms": null,
+            "completed": 5,
+            "completionRate": 1.0,
+            "deadlineMissRate": 0.0,
+            "dropped": 0,
+            "errorRate": 0.0,
+            "p95Ms": 8.119,
+            "p99Ms": 8.119,
+            "queueTimingSamples": 0,
+            "queueWaitP95Ms": null,
+            "requested": 5,
+            "started": 5,
+            "successful": 5,
+            "workerP95Ms": null,
+            "workerTimingSamples": 0
+          },
+          "name": "health"
+        },
+        {
+          "assertions": [
+            {
+              "expected": 0,
+              "name": "maxErrorRate",
+              "observed": 0.0,
+              "state": "pass"
+            },
+            {
+              "expected": 1500,
+              "name": "p99Ms",
+              "observed": 24.476,
+              "state": "pass"
+            }
+          ],
+          "metrics": {
+            "admissionP95Ms": 18.475,
+            "completed": 15,
+            "completionRate": 1.0,
+            "deadlineMissRate": 0.0,
+            "dropped": 0,
+            "errorRate": 0.0,
+            "p95Ms": 24.476,
+            "p99Ms": 24.476,
+            "queueTimingSamples": 15,
+            "queueWaitP95Ms": 7.686,
+            "requested": 15,
+            "started": 15,
+            "successful": 15,
+            "workerP95Ms": 0.011,
+            "workerTimingSamples": 15
+          },
+          "name": "translation-lifecycle"
+        }
+      ],
+      "phase": "fault",
+      "ratePerSecond": 10,
+      "requested": 20,
+      "started": 20,
+      "state": "pass",
+      "step": 1,
+      "successfulCompletionsPerSecond": 10.0
+    }
+  ]
+}

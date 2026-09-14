@@ -4,6 +4,13 @@ All notable changes to Ampule Chamber are documented in this file.
 
 ## 1.10.0 - 2026-09-12
 
+- Add bounded arrival-rate, capacity-step and soak suites with weighted mixed HTTP/Relayna
+  journeys, deadlines, per-journey and phase thresholds, and generator delivery diagnostics.
+- Add seeded payload datasets, environment-bound authentication, chained HTTP extraction and
+  business assertions, scoped target memory/queue observations, and explicit lifecycle timing gaps.
+- Add load-suite editing, saved scenario round trips, contract-aware comparison, and structured
+  load performance reports with baseline/fault/recovery evidence gates.
+
 - Add named chamber profiles, cloning, immutable plan snapshots, enforced traffic budgets,
   namespace admission exclusion, history, and explicit cleanup acknowledgement.
 - Execute dependency delay/outage and CPU/memory pressure through bounded Chaos Mesh

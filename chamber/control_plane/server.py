@@ -47,6 +47,7 @@ from chamber.control_plane.security import (
 )
 from chamber.environment.chambers import ChamberProfile, ChamberStore, target_key
 from chamber.load import validate_relayna_journey
+from chamber.load.suite import validate_suite
 from chamber.runs import registered_evidence
 
 PACKAGE_DIR = Path(__file__).resolve().parent
@@ -400,6 +401,7 @@ def create_app(
         csrf: Annotated[str, Form(alias="_csrf")],
         chamber_id: Annotated[str, Form()] = "",
         experiment_json: Annotated[str, Form()] = "",
+        load_json: Annotated[str, Form()] = "",
         repo: Annotated[str, Form()] = "",
         service_name: Annotated[str, Form()] = "",
         workload_name: Annotated[str, Form()] = "",
@@ -446,6 +448,7 @@ def create_app(
                 workspace=workspace,
                 chamber_id=chamber_id,
                 experiment_json=experiment_json,
+                load_json=load_json,
                 repo=Path(repo) if repo.strip() else None,
                 service_name=service_name,
                 workload_name=workload_name,
@@ -1060,6 +1063,7 @@ def _plan_from_values(
     catalog: ScenarioCatalog | None = None,
     chamber_id: str = "",
     experiment_json: str = "",
+    load_json: str = "",
 ) -> Path:
     config: dict[str, Any]
     if repo is not None and not repo.is_dir():
@@ -1110,7 +1114,9 @@ def _plan_from_values(
     traffic = cast(dict[str, Any], config["traffic"])
     traffic["entrypoint"] = name
     if journeys_json.strip():
-        traffic["journeys"] = _ui_journeys(journeys_json, workspace=workspace)
+        traffic["journeys"] = _ui_journeys(
+            journeys_json, workspace=workspace, allow_mixed=bool(load_json.strip())
+        )
     elif journey_type == "relayna":
         try:
             body = json.loads(request_body)
@@ -1279,6 +1285,23 @@ def _plan_from_values(
     ):
         scenario_metadata["origin"] = dict(matching_user_scenario["origin"])
     config["scenario"] = scenario_metadata
+    if load_json.strip():
+        load = json.loads(load_json)
+        if not isinstance(load, dict):
+            raise ValueError("Load settings must be an object")
+        overrides = load.pop("journeyOverrides", {})
+        if not isinstance(overrides, dict) or set(overrides) - {
+            j["name"] for j in traffic["journeys"]
+        }:
+            raise ValueError("Journey overrides must use existing journey names")
+        allowed = {"weight", "dataset", "thresholds", "phaseThresholds", "headersFromEnv", "steps"}
+        for journey in traffic["journeys"]:
+            extra = overrides.get(journey["name"], {})
+            if not isinstance(extra, dict) or set(extra) - allowed:
+                raise ValueError("Unsupported journey override field")
+            journey.update(extra)
+        traffic["load"] = load
+        validate_suite(traffic)
     normalized = normalize_document(config, source="custom", validate_journeys=_ui_journeys)
     if matching_user_scenario is not None and normalized["revision"] != scenario_revision.strip():
         scenario_metadata["source"] = "derived"
@@ -1367,7 +1390,9 @@ def _matching_user_scenario(
     return selected if matches else None
 
 
-def _ui_journeys(raw: str, *, workspace: Path | None = None) -> list[dict[str, Any]]:
+def _ui_journeys(
+    raw: str, *, workspace: Path | None = None, allow_mixed: bool = False
+) -> list[dict[str, Any]]:
     try:
         value = json.loads(raw)
     except json.JSONDecodeError as exc:
@@ -1422,7 +1447,7 @@ def _ui_journeys(raw: str, *, workspace: Path | None = None) -> list[dict[str, A
         journey["method"] = method
         journey["path"] = path
         journeys.append(journey)
-    if len(adapters) > 1:
+    if len(adapters) > 1 and not allow_mixed:
         raise ValueError("One assessment cannot mix HTTP and Relayna traffic journeys")
     return journeys
 

@@ -267,7 +267,9 @@ def _execute_task(
                     response,
                     task_id=task_id,
                     terminal_statuses=contract["terminal_statuses"],
-                    timeout_seconds=contract["timeout_seconds"],
+                    timeout_seconds=max(
+                        0, contract["timeout_seconds"] - (stream_started - started)
+                    ),
                     started=stream_started,
                 )
         finally:
@@ -669,7 +671,7 @@ def _consume_sse(
     *,
     task_id: str,
     terminal_statuses: tuple[str, ...],
-    timeout_seconds: int,
+    timeout_seconds: float,
     started: float,
 ) -> tuple[str | None, tuple[str, ...], int, tuple[dict[str, Any], ...]]:
     data_lines: list[str] = []
@@ -686,7 +688,9 @@ def _consume_sse(
                 data = "\n".join(data_lines)
                 status = _event_status(data)
                 if len(events) < MAX_RELAYNA_EVENTS_PER_TASK:
-                    events.append(_safe_event(data, task_id=task_id, sequence=event_count))
+                    event = _safe_event(data, task_id=task_id, sequence=event_count)
+                    event["received_elapsed_ms"] = round((time.monotonic() - started) * 1000, 3)
+                    events.append(event)
                 if status:
                     statuses.append(status)
                     if status in terminal_statuses:
