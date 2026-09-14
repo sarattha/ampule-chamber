@@ -62,7 +62,7 @@ passed inside Docker (30.229s). Chrome captured no console errors in the final
 editor/report check. Latest-head CI and Codex review must pass before merge;
 their outcome is recorded in the phase execution plan.
 
-Codex review identified and verified the fix for the effective Prometheus URL
-override. Regression coverage also rejects cached timestamp growth claims and
+Codex review identified the effective Prometheus URL override issue; regression
+tests verified its fix. Regression coverage also rejects cached timestamp growth claims and
 requires post-drain queue observations. See the phase execution plan for review
 and CI commit evidence.
