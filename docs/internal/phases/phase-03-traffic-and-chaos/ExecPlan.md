@@ -620,3 +620,16 @@ expected HTTP rejection statuses (such as 503), and resolve the upload workspace
 from the original run for baseline/recovery traffic. Regression checks passed;
 `make check` passed with 294 tests and 90% coverage. CI on `ad36d48` passed all
 Python, security and Kubernetes deployment checks; Codex review is running.
+
+Codex reviewed `9a351d2` and reported one P1: execution-time Prometheus overrides
+were not propagated to experiment/load sampling. The effective validated URL is
+now captured in the execution configuration before snapshots or samplers are
+created, in both deploy and attach paths. An integration regression proves the
+queue sampler, load configuration, general collector and saved snapshot use the
+selected server, while the source file remains unchanged.
+
+Additional telemetry verification rejects repeated cached timestamps for memory
+growth and requires a post-drain queue sample, with a bounded refresh window.
+Provider timestamps are retained and query-body reads share the deadline bound.
+Stable final `make check` passed with 297 tests and 90% coverage; all 20 load-suite
+tests passed in Docker (30.229s). No test/lint/typecheck/coverage gate was relaxed.

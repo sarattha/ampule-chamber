@@ -639,6 +639,9 @@ def _assess_kubernetes_config(
         )
     selected_context = context or str(runtime["kubernetesContext"])
     selected_prometheus = prometheus_url or runtime.get("prometheusUrl")
+    if selected_prometheus:
+        _require_http_url(str(selected_prometheus), "effective prometheus URL")
+        runtime["prometheusUrl"] = str(selected_prometheus)
     init_workspace()
     run_dir = _assessment_directory(str(config["service"]["name"]), run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -782,11 +785,15 @@ def _assess_kubernetes_attach_config(
 ) -> Path:
     """Run an in-place assessment against existing Kubernetes resources."""
 
+    config = deepcopy(config)
     runtime = _mapping(config["runtime"], "runtime")
     deployment = _mapping(config["deployment"], "deployment")
     selected_context = context or str(runtime["kubernetesContext"])
     namespace = str(runtime["namespace"])
     selected_prometheus = prometheus_url or runtime.get("prometheusUrl")
+    if selected_prometheus:
+        _require_http_url(str(selected_prometheus), "effective prometheus URL")
+        runtime["prometheusUrl"] = str(selected_prometheus)
     init_workspace()
     run_dir = _assessment_directory(str(config["service"]["name"]), run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)

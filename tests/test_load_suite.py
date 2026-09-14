@@ -27,6 +27,11 @@ from chamber.load.suite import (
 from tests.test_relayna_traffic import _journey
 
 
+class MetricResponse(io.BytesIO):
+    status = 200
+    fp = None
+
+
 class Target(BaseHTTPRequestHandler):
     requests: list[dict[str, Any]] = []
 
@@ -289,7 +294,7 @@ class LoadSuiteTests(unittest.TestCase):
         query = {"name": "memoryBytes", "query": "memory", "labels": {"app": "api"}}
 
         def response(item: Any) -> Any:
-            return io.BytesIO(json.dumps(item).encode())
+            return MetricResponse(json.dumps(item).encode())
 
         payload: dict[str, Any] = {
             "status": "success",
@@ -335,6 +340,7 @@ class LoadSuiteTests(unittest.TestCase):
                         "queueDepth": 0,
                     },
                     "errors": [],
+                    "timestamps": {"memoryBytes": time.time(), "queueDepth": time.time()},
                 }
             )
 
@@ -344,6 +350,54 @@ class LoadSuiteTests(unittest.TestCase):
         self.assertEqual(
             [a["state"] for a in result["targetMetrics"]["assertions"]], ["fail", "pass"]
         )
+
+    def test_final_queue_waits_for_a_post_drain_sample(self) -> None:
+        initial = time.time() - 1
+
+        def sample(generator: Generator, *args: Any) -> None:
+            timestamp = initial if len(generator.target_samples) < 2 else time.time()
+            generator.target_samples.append(
+                {
+                    "elapsedSeconds": 0,
+                    "values": {"queueDepth": 0},
+                    "timestamps": {"queueDepth": timestamp},
+                    "errors": [],
+                }
+            )
+
+        config = traffic(
+            targetMetrics=[{"name": "queueDepth", "query": "queue", "labels": {"queue": "tasks"}}],
+            maxFinalQueueDepth=0,
+        )
+        with patch.object(Generator, "sample_targets", sample):
+            result = self.run_suite(config)
+        self.assertEqual(result["status"], "pass")
+        samples = result["targetMetrics"]["samples"]
+        self.assertGreaterEqual(len(samples), 3)
+        self.assertGreaterEqual(
+            samples[-1]["timestamps"]["queueDepth"], result["targetMetrics"]["trafficFinishedAt"]
+        )
+
+    def test_cached_prometheus_values_cannot_prove_memory_growth(self) -> None:
+        payload = {
+            "status": "success",
+            "data": {
+                "result": [
+                    {"metric": {"namespace": "test", "app": "api"}, "value": [time.time(), "100"]}
+                ]
+            },
+        }
+        config = traffic(
+            targetMetrics=[{"name": "memoryBytes", "query": "memory", "labels": {"app": "api"}}],
+            maxTargetMemoryGrowthMiB=0,
+        )
+        with patch(
+            "chamber.load.suite.urlopen",
+            side_effect=lambda *a, **k: MetricResponse(json.dumps(payload).encode()),
+        ):
+            result = self.run_suite(config, prometheus_url="http://prom", namespace="test")
+        self.assertEqual(result["status"], "inconclusive")
+        self.assertEqual(result["targetMetrics"]["assertions"][0]["state"], "missing")
 
     def test_fast_admission_does_not_hide_slow_worker_and_memory_limit(self) -> None:
         journey = _journey()
@@ -587,6 +641,88 @@ class LoadIntegrationTests(unittest.TestCase):
             refresh_evidence_manifest(run)
             self.assertEqual(result()["load"]["status"], "fail")
             self.assertIn("recovery-load-summary", result()["missing_evidence_ids"])
+
+    def test_prometheus_override_reaches_experiment_load_and_snapshot(self) -> None:
+        import yaml
+
+        from chamber import workflow
+        from tests.evidence_fixtures import evidence_payload
+        from tests.test_chambers_experiments import config_for
+        from tests.test_phase11_12_13_workflow import (
+            _attach_kubernetes_config,
+            _attach_runner,
+            _fixture_repo,
+        )
+
+        with TemporaryDirectory() as root:
+            root_path = Path(root)
+            config: dict[str, Any] = _attach_kubernetes_config(_fixture_repo(root_path))
+            config["runtime"]["prometheusUrl"] = "http://old-environment:9090"
+            config["experiment"] = config_for("queue_drain")["experiment"]
+            config["experiment"]["recoverySeconds"] = 5
+            config["traffic"].update(traffic())
+            path = root_path / "config.yaml"
+            workflow.save_config(config, path)
+            sampled_urls = []
+            load_urls = []
+
+            def query(url: str, **kwargs: Any) -> Any:
+                sampled_urls.append(url)
+                return io.BytesIO(
+                    json.dumps(
+                        {
+                            "status": "success",
+                            "data": {
+                                "result": [
+                                    {
+                                        "metric": {
+                                            "queue": "tasks",
+                                            "namespace": "translation-test",
+                                        },
+                                        "value": [time.time(), "0"],
+                                    }
+                                ]
+                            },
+                        }
+                    ).encode()
+                )
+
+            def run_traffic(**kwargs: Any) -> dict[str, Any]:
+                load_urls.append(kwargs["config"]["runtime"]["prometheusUrl"])
+                (kwargs["run_dir"] / "evidence/k6-summary.json").write_text(
+                    json.dumps(evidence_payload("k6-summary"))
+                )
+                return {"success": True, "evidence_id": "k6-summary"}
+
+            with (
+                patch("chamber.workflow.Path.cwd", return_value=root_path),
+                patch("chamber.chaos.experiments.urlopen", side_effect=query),
+                patch("chamber.workflow._execute_kubernetes_traffic", side_effect=run_traffic),
+                patch("chamber.workflow._collect_prometheus_memory_evidence") as general,
+            ):
+                run = workflow._assess_kubernetes_config(
+                    path,
+                    agents_mode="off",
+                    context="dev-cluster",
+                    prometheus_url="http://selected-environment:9090",
+                    runner=_attach_runner(),
+                )
+            self.assertTrue(sampled_urls)
+            self.assertTrue(
+                all(url.startswith("http://selected-environment:9090/") for url in sampled_urls)
+            )
+            self.assertEqual(load_urls, ["http://selected-environment:9090"])
+            self.assertEqual(
+                general.call_args.kwargs["prometheus_url"], "http://selected-environment:9090"
+            )
+            self.assertEqual(
+                yaml.safe_load((run / "chamber.yaml").read_text())["runtime"]["prometheusUrl"],
+                "http://selected-environment:9090",
+            )
+            self.assertEqual(
+                yaml.safe_load(path.read_text())["runtime"]["prometheusUrl"],
+                "http://old-environment:9090",
+            )
 
     def test_phase_traffic_keeps_the_original_upload_workspace(self) -> None:
         from chamber.workflow import _execute_kubernetes_traffic

@@ -338,7 +338,11 @@ maxFinalQueueDepth: 0
 
 Use these fields inside `traffic.load`. `cpuThrottling` is also a supported
 metric name. Memory growth compares first/last samples; final queue depth needs
-complete coverage and at least two samples. These are observations and gates,
+complete coverage and at least two distinct provider timestamps. Cached repeated
+values cannot establish growth. Final queue depth must be sampled after traffic
+has drained; the collector waits up to 15 seconds for a fresh scrape (plus bounded
+query time), otherwise that assertion remains unavailable. Provider timestamps
+are retained alongside values for inspection. These are observations and gates,
 not a statistical leak diagnosis. Raw scoped samples are retained for review.
 
 Suites bound scheduled time to one hour, starts to 100,000, concurrency to 128,

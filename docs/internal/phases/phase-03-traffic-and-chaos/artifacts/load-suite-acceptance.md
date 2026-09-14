@@ -56,8 +56,13 @@ No live Chaos Mesh acceptance or production workload benchmark is claimed.
 
 ## Release checks
 
-Final `make check` passed: 293 tests, 90% aggregate coverage, scenario/deployment/
-release validation, strict docs and package builds. The 16 load-suite tests also
-passed inside Docker (20.128s). Chrome captured no console errors in the final
+Final `make check` passed: 297 tests, 90% aggregate coverage, scenario/deployment/
+release validation, strict docs and package builds. The 20 load-suite tests also
+passed inside Docker (30.229s). Chrome captured no console errors in the final
 editor/report check. Latest-head CI and Codex review must pass before merge;
 their outcome is recorded in the phase execution plan.
+
+Codex review identified and verified the fix for the effective Prometheus URL
+override. Regression coverage also rejects cached timestamp growth claims and
+requires post-drain queue observations. See the phase execution plan for review
+and CI commit evidence.

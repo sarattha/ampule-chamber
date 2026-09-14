@@ -399,6 +399,7 @@ class Generator:
         self.peak_active = 0
         self.peak_lag = 0.0
         self.started = time.monotonic()
+        self.started_wall = time.time()
         self.cpu = time.process_time()
         self.initial_memory = self.memory()
         self.samples: list[dict[str, Any]] = []
@@ -439,6 +440,7 @@ class Generator:
         sample: dict[str, Any] = {
             "elapsedSeconds": round(time.monotonic() - self.started, 3),
             "values": {},
+            "timestamps": {},
             "errors": [],
         }
         for metric in metrics:
@@ -448,8 +450,9 @@ class Generator:
                 query_url = (
                     url.rstrip("/") + "/api/v1/query?" + urlencode({"query": metric["query"]})
                 )
+                deadline = time.monotonic() + 2
                 with urlopen(query_url, timeout=2) as response:
-                    payload = json.loads(response.read(1024 * 1024))
+                    payload = json.loads(DeadlineResponse(response, deadline).read())
                 series = payload["data"]["result"]
                 if payload.get("status") != "success" or len(series) != 1:
                     raise ValueError("Expected one series")
@@ -466,6 +469,7 @@ class Generator:
                 ):
                     raise ValueError("Stale or nonfinite metric")
                 sample["values"][metric["name"]] = value
+                sample["timestamps"][metric["name"]] = timestamp
             except Exception:
                 sample["errors"].append(metric["name"])
         self.target_samples.append(sample)
@@ -872,8 +876,21 @@ def execute_suite(
                     spec,
                 )
             )
+    traffic_finished_at = time.time()
     if target_metrics:
         generator.sample_targets(target_metrics, prometheus_url, namespace)
+        # A pre-drain cached queue value cannot establish the final queue depth.
+        refresh_deadline = time.monotonic() + 15
+        if "maxFinalQueueDepth" in spec and any(m["name"] == "queueDepth" for m in target_metrics):
+            while (
+                generator.target_samples[-1].get("timestamps", {}).get("queueDepth", 0)
+                < traffic_finished_at
+                and time.monotonic() < refresh_deadline
+            ):
+                if generator.target_samples[-1]["errors"]:
+                    break
+                time.sleep(min(2, max(0, refresh_deadline - time.monotonic())))
+                generator.sample_targets(target_metrics, prometheus_url, namespace)
     generator.sample(0, 0)
     total_requested = sum(t["requested"] for t in totals.values())
     dropped = sum(t["dropped"] for t in totals.values())
@@ -915,7 +932,14 @@ def execute_suite(
         if key not in spec:
             continue
         samples = generator.target_samples
-        complete = len(samples) >= 2 and all(metric in sample["values"] for sample in samples)
+        complete = (
+            len(samples) >= 2
+            and all(metric in sample["values"] for sample in samples)
+            and all(metric in sample.get("timestamps", {}) for sample in samples)
+            and samples[-1]["timestamps"][metric] > samples[0]["timestamps"][metric]
+            and samples[-1]["timestamps"][metric]
+            >= (traffic_finished_at if metric == "queueDepth" else generator.started_wall)
+        )
         value = None
         if complete:
             value = (
@@ -938,7 +962,11 @@ def execute_suite(
     elif status == "pass" and any(a["state"] == "fail" for a in target_assertions):
         status = "fail"
     summary = {
-        "targetMetrics": {"samples": generator.target_samples, "assertions": target_assertions},
+        "targetMetrics": {
+            "samples": generator.target_samples,
+            "assertions": target_assertions,
+            "trafficFinishedAt": traffic_finished_at,
+        },
         "schema_version": "chamber.ampule.dev/load-suite/v1",
         "adapter": "mixed",
         "status": status,
