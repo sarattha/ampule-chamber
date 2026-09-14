@@ -123,12 +123,14 @@ class StudioHardeningTests(unittest.TestCase):
             config = workspace / "chamber.yaml"
             config.write_text("test")
             manager = AssessmentJobManager(workspace)
+            ready = workspace / "child-ready"
             command = [
                 sys.executable,
                 "-c",
-                "import signal,time; signal.signal(signal.SIGINT,signal.SIG_IGN); "
+                "import signal,time; from pathlib import Path; "
+                "signal.signal(signal.SIGINT,signal.SIG_IGN); "
                 "signal.signal(signal.SIGTERM,signal.SIG_IGN); "
-                "print('ready',flush=True); time.sleep(20)",
+                f"Path({str(ready)!r}).touch(); time.sleep(20)",
             ]
             with (
                 patch("chamber.control_plane.jobs._command", return_value=command),
@@ -136,7 +138,10 @@ class StudioHardeningTests(unittest.TestCase):
                 patch("chamber.control_plane.jobs.KILL_GRACE_SECONDS", 0.2),
             ):
                 job = manager.start(config, mode="kubernetes")
-                time.sleep(0.3)
+                deadline = time.monotonic() + 10
+                while not ready.exists() and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                self.assertTrue(ready.exists(), "Child did not install its signal handlers")
                 other = AssessmentJobManager(workspace)
                 other.cancel(job["job_id"])
                 result = wait_job(manager, job["job_id"])

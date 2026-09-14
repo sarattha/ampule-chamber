@@ -663,3 +663,12 @@ retains conservative cleanup handling. Comparisons include the effective metrics
 source and read load p95/error measurements. Regression tests cover actual upload
 validation, job/run events, profile tampering, cleanup states and metric deltas.
 `make check` passed with 305 tests and 90% coverage; no acceptance gate was relaxed.
+
+The expanded 49-test Docker run on `9d96603` exposed shared-runtime scheduling
+misses (correctly classified inconclusive) and a cancellation-test startup race.
+A second run still had two timing-sensitive load failures; all four new execution
+boundary/comparison regressions passed. These expanded runs are not counted as
+full Docker acceptance. The cancellation test now waits for a child-ready file
+after installing signal handlers. Final local `make check` passed: 305 tests,
+90% coverage, all validation/docs/build steps. Runtime code remains `9d96603`
+while Codex verifies that patch.
