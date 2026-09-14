@@ -66,3 +66,12 @@ Codex review identified the effective Prometheus URL override issue; regression
 tests verified its fix. Regression coverage also rejects cached timestamp growth claims and
 requires post-drain queue observations. See the phase execution plan for review
 and CI commit evidence.
+
+Final review and regression acceptance: Codex cleared runtime commit `d8b2d22991`
+on 2026-09-14 after all 13 reported threads were addressed. `make check` passed
+with 306 tests and 90% coverage. Docker passed 30 chamber/Studio/execution tests
+and all 20 load-suite tests on that commit, in separate runs. Earlier expanded
+runs under shared-runtime contention were inconclusive and remain documented
+in ExecPlan; the final separate load run passed without relaxing its gates.
+See [PR #42](https://github.com/sarattha/ampule-chamber/pull/42) for CI, review
+threads and the landing record.

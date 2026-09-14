@@ -587,7 +587,7 @@ compatible. Browser/Docker acceptance and review fixes are part of delivery.
 - [x] Capacity step holds, sustained failure stop, recovery and soak trends.
 - [x] Generator CPU/memory, scheduling lag, active requests and dropped admission.
 - [x] Structured UI/results, meaningful fixtures, Docker/Chrome and make check.
-- [ ] Request Codex review, resolve findings, verify CI and merge PR #42.
+- [x] Request Codex review, resolve findings, and verify CI for PR #42.
 
 Acceptance must distinguish sustainable throughput, fast admission with growing
 work latency, and an overloaded generator. Missing timing or insufficient target
@@ -689,3 +689,15 @@ or ambiguous command failure; unresolved pod mutations keep verification false.
 Full-workflow regressions cover a successful scale followed by an undiscovered
 pod, failed restoration, ambiguous deletion and ambiguous scaling. `make check`
 passed with 306 tests and 90% coverage.
+
+Final acceptance (2026-09-14): Codex reviewed `d8b2d22991` and reported no major
+issues, with a thumbs-up at 14:39:12 UTC. All 13 review threads are resolved. CI
+passed across Python 3.11/3.13/3.14, security, Kubernetes deployment, metadata and
+docs. Docker on that runtime commit passed 30 functional tests (3.678s) and all
+20 load-suite tests (31.058s) in separate runs. Local `make check` passed with
+306 tests and 90% coverage; Chrome acceptance and limitations remain recorded in
+the linked artifact. This final update changes documentation only.
+
+Implementation and review are complete. The authoritative landing record is
+[PR #42](https://github.com/sarattha/ampule-chamber/pull/42); merge is gated on the
+final documentation commit's CI checks.
