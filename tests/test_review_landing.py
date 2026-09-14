@@ -20,7 +20,11 @@ from chamber.control_plane.jobs import AssessmentJob, AssessmentJobManager, _com
 from chamber.environment.chambers import ChamberProfile, ChamberStore
 from chamber.runs import write_json_atomic
 from tests.test_control_plane_enhancements import _run
-from tests.test_phase11_12_13_workflow import _attach_kubernetes_config, _fixture_repo
+from tests.test_phase11_12_13_workflow import (
+    _attach_kubernetes_config,
+    _attach_runner,
+    _fixture_repo,
+)
 
 
 class ReviewLandingTests(unittest.TestCase):
@@ -178,6 +182,60 @@ class ReviewLandingTests(unittest.TestCase):
                 self.assertEqual(json.loads((run_dir / "run-metadata.json").read_text()), metadata)
                 self.assertEqual(json.loads((run_dir / "result.json").read_text()), result)
                 self.assertFalse((run_dir / "execution-failure.json").exists())
+
+    def test_partial_fault_sequences_restore_and_keep_uncertain_mutations_blocked(self):
+        for fail_at, pod, verified in (
+            ("", "undiscovered", True),
+            ("restore", "undiscovered", False),
+            ("delete", "translation-service-abc", False),
+            ("scale", "undiscovered", True),
+        ):
+            with self.subTest(fail_at=fail_at), TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                config: dict[str, Any] = _attach_kubernetes_config(_fixture_repo(root))
+                config["runtime"]["faults"] = [
+                    {"type": "deployment_scale", "replicas": 0},
+                    {"type": "pod_kill", "pod": pod},
+                ]
+                path = root / "config.yaml"
+                workflow.save_config(config, path)
+                base = _attach_runner(allow_faults=True)
+
+                class Runner:
+                    def run(self, command, base=base, fail_at=fail_at, **kwargs):
+                        result = base.run(command, **kwargs)
+                        if (
+                            (fail_at == "restore" and "--replicas=2" in command)
+                            or (
+                                fail_at == "delete"
+                                and command[3:6] == ("-n", "translation-test", "delete")
+                            )
+                            or (fail_at == "scale" and "--replicas=0" in command)
+                        ):
+                            return subprocess.CompletedProcess(command, 1, "", "ambiguous failure")
+                        return result
+
+                run_dir = root / "runs/run"
+                runner: Any = Runner()
+                with patch("chamber.workflow.init_workspace", return_value=root):
+                    with self.assertRaises(workflow.WorkflowError):
+                        workflow._assess_kubernetes_config(
+                            path,
+                            agents_mode="off",
+                            context=None,
+                            prometheus_url=None,
+                            runner=runner,
+                            run_dir=run_dir,
+                        )
+                metadata = json.loads((run_dir / "run-metadata.json").read_text())
+                rollback = metadata["rollback"]
+                self.assertTrue(rollback["faults_requested"])
+                self.assertEqual(rollback["verified"], verified)
+                self.assertTrue(any("--replicas=2" in command for command in base.commands))
+                manager = AssessmentJobManager(root)
+                job = AssessmentJob("job", path, "kubernetes", None, None, "now", run_id="run")
+                self.assertTrue(manager._preserve_child_result(job))
+                self.assertEqual(job.cleanup_required, not verified)
 
     def test_comparison_uses_load_metrics_and_rejects_different_metrics_sources(self):
         with TemporaryDirectory() as tmp:

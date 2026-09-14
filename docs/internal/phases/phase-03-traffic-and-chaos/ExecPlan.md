@@ -679,3 +679,13 @@ next Codex pass found one remaining no-fault attach cleanup mismatch. The
 supervisor now accepts an explicit `faults_requested: false` when verification
 is absent; explicit `verified: false` still requires cleanup. Both cases are
 covered. `make check` again passed with 305 tests and 90% coverage.
+
+Docker passed 29 functional tests on `77c183d` (4.024s). Codex then identified
+that a partially failed legacy fault sequence could leave the initial no-fault
+placeholder. Attach faults now share their action/restore ledger with the caller,
+register each action before a mutation command, and compute verification from
+all recorded actions. Finally restores pending scales even after a later fault
+or ambiguous command failure; unresolved pod mutations keep verification false.
+Full-workflow regressions cover a successful scale followed by an undiscovered
+pod, failed restoration, ambiguous deletion and ambiguous scaling. `make check`
+passed with 306 tests and 90% coverage.

@@ -897,8 +897,9 @@ def _assess_kubernetes_attach_config(
         _write_json(run_dir / "evidence/pre-test-state.json", discovery)
         faults = tuple(_mapping(item, "runtime.faults[]") for item in runtime.get("faults", ()))
         if faults:
-            rollback_evidence = _run_attach_faults(
+            _run_attach_faults(
                 faults,
+                evidence=rollback_evidence,
                 discovery=discovery,
                 context=selected_context,
                 namespace=namespace,
@@ -2191,46 +2192,46 @@ def _run_attach_faults(
     namespace: str,
     runner: KubernetesCommandRunner,
     commands: list[dict[str, object]],
+    evidence: dict[str, object] | None = None,
 ) -> dict[str, object]:
+    # Share the ledger with the caller so finally can restore partial sequences.
+    evidence = {} if evidence is None else evidence
+    actions: list[dict[str, object]] = []
+    pending: list[dict[str, object]] = []
+    evidence.update(faults_requested=True, verified=True, pending_restore=pending, actions=actions)
     if not _attach_faults_allowed(discovery):
         raise WorkflowError(
             "attach faults require chamber.ampule.dev/allow-faults=true on the namespace "
             "or selected workload"
         )
-    evidence: dict[str, object] = {
-        "faults_requested": True,
-        "verified": True,
-        "pending_restore": [],
-        "actions": [],
-    }
-    for fault in faults:
-        fault_type = str(fault["type"])
-        if fault_type == "pod_kill":
-            action = _run_attach_pod_kill(
-                fault,
-                discovery=discovery,
-                context=context,
-                namespace=namespace,
-                runner=runner,
-                commands=commands,
-            )
-        elif fault_type == "deployment_scale":
-            action = _run_attach_deployment_scale(
-                fault,
-                discovery=discovery,
-                context=context,
-                namespace=namespace,
-                runner=runner,
-                commands=commands,
-            )
-            pending = evidence["pending_restore"]
-            if isinstance(pending, list):
-                pending.append(action)
-        else:  # pragma: no cover - validate_config rejects this first
-            raise WorkflowError(f"unsupported attach fault type {fault_type!r}")
-        actions = evidence["actions"]
-        if isinstance(actions, list):
-            actions.append(action)
+    try:
+        for fault in faults:
+            fault_type = str(fault["type"])
+            if fault_type == "pod_kill":
+                _run_attach_pod_kill(
+                    fault,
+                    discovery=discovery,
+                    context=context,
+                    namespace=namespace,
+                    runner=runner,
+                    commands=commands,
+                    actions=actions,
+                )
+            elif fault_type == "deployment_scale":
+                _run_attach_deployment_scale(
+                    fault,
+                    discovery=discovery,
+                    context=context,
+                    namespace=namespace,
+                    runner=runner,
+                    commands=commands,
+                    actions=actions,
+                    pending=pending,
+                )
+            else:  # pragma: no cover - validate_config rejects this first
+                raise WorkflowError(f"unsupported attach fault type {fault_type!r}")
+    finally:
+        evidence["verified"] = all(action.get("restored") is True for action in actions)
     return evidence
 
 
@@ -2294,7 +2295,12 @@ def _restore_attach_faults(
         if status.returncode != 0:
             verified = False
         action_payload["restored"] = status.returncode == 0
-    evidence["verified"] = verified
+    actions = evidence.get("actions", [])
+    evidence["verified"] = (
+        verified
+        and isinstance(actions, list)
+        and all(isinstance(action, dict) and action.get("restored") is True for action in actions)
+    )
     evidence["pending_restore"] = []
     return evidence
 
@@ -2307,6 +2313,7 @@ def _run_attach_pod_kill(
     namespace: str,
     runner: KubernetesCommandRunner,
     commands: list[dict[str, object]],
+    actions: list[dict[str, object]],
 ) -> dict[str, object]:
     pods = [item for item in discovery.get("pods", []) if isinstance(item, dict)]
     if not pods:
@@ -2325,7 +2332,9 @@ def _run_attach_pod_kill(
         "type": "pod_kill",
         "pod": pod_name,
         "restore_snapshot": {"pod": selected_pod},
+        "restored": False,
     }
+    actions.append(action)
     completed = _run_kubernetes_recorded(
         runner,
         ("kubectl", "--context", context, "-n", namespace, "delete", "pod", pod_name),
@@ -2379,6 +2388,8 @@ def _run_attach_deployment_scale(
     namespace: str,
     runner: KubernetesCommandRunner,
     commands: list[dict[str, object]],
+    actions: list[dict[str, object]],
+    pending: list[dict[str, object]],
 ) -> dict[str, object]:
     deployments = [
         item
@@ -2409,6 +2420,9 @@ def _run_attach_deployment_scale(
         "fault_replicas": replicas,
         "restored": False,
     }
+    # Register restoration before a command whose outcome may be ambiguous.
+    actions.append(action)
+    pending.append(action)
     completed = _run_kubernetes_recorded(
         runner,
         (
