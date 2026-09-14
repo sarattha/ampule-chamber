@@ -668,7 +668,7 @@ class LoadIntegrationTests(unittest.TestCase):
 
             def query(url: str, **kwargs: Any) -> Any:
                 sampled_urls.append(url)
-                return io.BytesIO(
+                return MetricResponse(
                     json.dumps(
                         {
                             "status": "success",

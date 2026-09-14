@@ -8,8 +8,10 @@ import subprocess
 import threading
 import time
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Any
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -43,6 +45,11 @@ def config_for(family="dependency_delay"):
     }
     validate_experiment(config)
     return config
+
+
+class MetricResponse(io.BytesIO):
+    status = 200
+    fp = None
 
 
 class Controller:
@@ -281,7 +288,7 @@ class ChamberExperimentTests(unittest.TestCase):
                 }
                 with patch(
                     "chamber.chaos.experiments.urlopen",
-                    side_effect=lambda *a, payload=payload, **k: io.BytesIO(
+                    side_effect=lambda *a, payload=payload, **k: MetricResponse(
                         json.dumps(payload).encode()
                     ),
                 ):
@@ -289,6 +296,75 @@ class ChamberExperimentTests(unittest.TestCase):
                 self.assertEqual(session.evidence["samples"][0]["depth"] is not None, valid)
                 if valid:
                     self.assertEqual(session.evidence["samples"][0]["depth_timestamp"], timestamp)
+
+    def test_queue_dripping_metric_body_obeys_total_deadline(self):
+        class Drip(BaseHTTPRequestHandler):
+            def log_message(self, format: str, *args: Any) -> None:
+                pass
+
+            def do_GET(self):
+                self.send_response(200)
+                self.end_headers()
+                try:
+                    for _ in range(100):
+                        self.wfile.write(b" ")
+                        self.wfile.flush()
+                        time.sleep(0.02)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Drip)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with TemporaryDirectory() as tmp:
+                config = config_for("queue_drain")
+                config["runtime"]["prometheusUrl"] = f"http://127.0.0.1:{server.server_port}"
+                session = ExperimentSession(config, Path(tmp), Controller(), "test")
+                started = time.monotonic()
+                with patch("chamber.chaos.experiments.QUEUE_QUERY_TIMEOUT_SECONDS", 0.15):
+                    session.sample("baseline")
+                self.assertLess(time.monotonic() - started, 2)
+                sample = session.evidence["samples"][0]
+                for name in ("depth", "age"):
+                    self.assertIsNone(sample[name])
+                    self.assertRegex(sample[name + "_error"].lower(), "deadline|timed out")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
+
+    def test_cli_rejects_named_chamber_context_before_any_kubernetes_command(self):
+        from chamber import workflow
+        from tests.test_phase11_12_13_workflow import _attach_kubernetes_config, _fixture_repo
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config: dict[str, Any] = _attach_kubernetes_config(_fixture_repo(root))
+            config["chamber"] = ChamberProfile(
+                name="Staging",
+                context=config["runtime"]["kubernetesContext"],
+                namespace=config["runtime"]["namespace"],
+                service=config["service"]["name"],
+                workload=config["deployment"]["workloads"][0]["name"],
+                prometheus_url=config["runtime"].get("prometheusUrl", ""),
+                max_duration_seconds=7200,
+            ).model_dump()
+            path = root / "config.yaml"
+            for mode in ("attach", "deploy"):
+                config["runtime"]["mode"] = mode
+                controller: Any = Controller()
+                workflow.save_config(config, path)
+                with patch("chamber.workflow.load_config", return_value=config):
+                    with self.assertRaisesRegex(workflow.WorkflowError, "Context override"):
+                        workflow._assess_kubernetes_config(
+                            path,
+                            agents_mode="off",
+                            context="other",
+                            prometheus_url=None,
+                            runner=controller,
+                        )
+                self.assertEqual(controller.commands, [])
 
     def test_invalid_experiments_rejected_before_execution(self):
         for changes in (
@@ -357,7 +433,7 @@ class ChamberExperimentTests(unittest.TestCase):
         for family in set(FAMILIES) - {"queue_drain"}:
             with self.subTest(family=family), TemporaryDirectory() as tmp:
                 root = Path(tmp)
-                config = _attach_kubernetes_config(_fixture_repo(root))
+                config: dict[str, Any] = _attach_kubernetes_config(_fixture_repo(root))
                 config["experiment"] = config_for(family)["experiment"]
                 path = root / "config.yaml"
                 workflow.save_config(config, path)

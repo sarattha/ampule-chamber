@@ -638,6 +638,8 @@ def _assess_kubernetes_config(
             run_dir=run_dir,
         )
     selected_context = context or str(runtime["kubernetesContext"])
+    if config.get("chamber") and selected_context != config["chamber"]["context"]:
+        raise WorkflowError("Context override cannot change a named chamber target")
     selected_prometheus = prometheus_url or runtime.get("prometheusUrl")
     if selected_prometheus:
         _require_http_url(str(selected_prometheus), "effective prometheus URL")
@@ -790,6 +792,8 @@ def _assess_kubernetes_attach_config(
     runtime = _mapping(config["runtime"], "runtime")
     deployment = _mapping(config["deployment"], "deployment")
     selected_context = context or str(runtime["kubernetesContext"])
+    if config.get("chamber") and selected_context != config["chamber"]["context"]:
+        raise WorkflowError("Context override cannot change a named chamber target")
     namespace = str(runtime["namespace"])
     selected_prometheus = prometheus_url or runtime.get("prometheusUrl")
     if selected_prometheus:

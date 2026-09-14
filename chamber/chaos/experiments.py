@@ -11,7 +11,10 @@ from typing import Any
 from urllib.parse import urlencode
 from urllib.request import urlopen
 
+from chamber.load.suite import DeadlineResponse
 from chamber.runs import write_json_atomic
+
+QUEUE_QUERY_TIMEOUT_SECONDS = 5
 
 FAMILIES = {
     "dependency_delay": "Dependency latency",
@@ -241,8 +244,9 @@ class ExperimentSession:
                     + "/api/v1/query?"
                     + urlencode({"query": self.spec[key]})
                 )
-                with urlopen(url, timeout=5) as response:
-                    payload = json.loads(response.read(1024 * 1024))
+                deadline = time.monotonic() + QUEUE_QUERY_TIMEOUT_SECONDS
+                with urlopen(url, timeout=QUEUE_QUERY_TIMEOUT_SECONDS) as response:
+                    payload = json.loads(DeadlineResponse(response, deadline).read())
                 series = payload["data"]["result"]
                 if payload.get("status") != "success" or len(series) != 1:
                     raise ValueError("Query must return exactly one queue series")

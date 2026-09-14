@@ -643,3 +643,11 @@ preparation; a form/catalog regression proves the run and saved revisions match.
 All 299 tests and `make check` passed with 90% coverage. The expanded Docker test
 rerun stalled, including Docker status calls; earlier 20-test Docker and Chrome
 acceptance remains recorded above, and this rerun is not claimed as passed.
+
+Docker retry on a copied `4a410ef` source archive passed all 33 chamber/experiment
+and load tests (37.663s), avoiding slow shared-mount file reads. A third Codex pass
+identified direct CLI context overrides and trickling queue metric reads. Both
+deploy and attach reject a named chamber context mismatch before any command.
+Queue metrics now use the shared monotonic-deadline response reader, proven with
+a real HTTP server dripping bytes below the socket timeout. `make check` passed
+with 301 tests and 90% coverage; review follow-up remains in progress.
