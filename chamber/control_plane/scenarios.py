@@ -203,10 +203,18 @@ def normalize_document(
     else:
         try:
             validate_config(document, source="scenario", require_repo=False)
-        except WorkflowError as exc:
+        except (WorkflowError, ValueError) as exc:
             raise ScenarioCatalogError(str(exc)) from exc
         projection = _config_projection(document)
-    journeys = validate_journeys(json.dumps(projection["journeys"]))
+    journeys = (
+        [
+            item
+            for journey in projection["journeys"]
+            for item in validate_journeys(json.dumps([journey]))
+        ]
+        if projection.get("load")
+        else validate_journeys(json.dumps(projection["journeys"]))
+    )
     if kind == SCENARIO_KIND:
         _validate_scenario_safety(document, journeys)
     projection["journeys"] = journeys
@@ -318,6 +326,7 @@ def _config_projection(document: dict[str, Any]) -> dict[str, Any]:
         "targetService": str(service["name"]),
         "targetServicePort": target_port,
         "journeys": list(traffic["journeys"]),
+        "load": traffic.get("load"),
         "recommendedFault": recommended,
         "configuredFaults": faults,
         "requiredSignals": list(scenario.get("requiredSignals", [])),

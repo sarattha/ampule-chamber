@@ -9,7 +9,9 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
+from copy import deepcopy
 from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -43,7 +45,9 @@ from chamber.application import (
     build_assessment_result,
     prometheus_query_pod_coverage,
 )
+from chamber.chaos.experiments import ExperimentSession, validate_experiment
 from chamber.environment import preflight_to_evidence, run_kubernetes_preflight
+from chamber.environment.chambers import ChamberStore, validate_budget
 from chamber.environment.preflight import (
     CommandRunner as KubernetesCommandRunner,
 )
@@ -51,6 +55,7 @@ from chamber.environment.preflight import (
     run_kubernetes_attach_preflight,
 )
 from chamber.load import execute_relayna_journeys, validate_relayna_journey
+from chamber.load.suite import execute_suite, validate_suite
 from chamber.onboarding import (
     ExternalDependencyPolicy,
     FollowUpCheck,
@@ -194,6 +199,7 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover
                 repo=Path(args.repo) if args.repo else None,
                 config=Path(args.config) if args.config else None,
                 resume=Path(args.resume) if args.resume else None,
+                run_dir=Path(args.run_dir) if args.run_dir else None,
                 mode=args.mode,
                 agents_mode=args.agents_mode,
                 agents_exclude=tuple(args.agents_exclude or ()),
@@ -276,7 +282,7 @@ def infer_config(repo: Path) -> dict[str, Any]:
                 {
                     "name": "baseline",
                     "method": "GET",
-                    "path": "/health",
+                    "path": _inferred_readiness_path(repo, manifests),
                     "expectedStatus": 200,
                 }
             ],
@@ -390,6 +396,9 @@ def validate_config(
         _normalized_agent_names(_optional_string_tuple(agents, "exclude")),
         source=f"{source}.agents.exclude",
     )
+    validate_suite(traffic)
+    validate_experiment(config)
+    validate_budget(config)
     _validate_runtime(runtime, source=f"{source}.runtime")
     scenario_id = config.get("scenarioId")
     scenario = config.get("scenario")
@@ -532,6 +541,7 @@ def assess(
     repo: Path | None = None,
     config: Path | None = None,
     resume: Path | None = None,
+    run_dir: Path | None = None,
     mode: str = "local",
     agents_mode: str | None = None,
     agents_exclude: tuple[str, ...] = (),
@@ -550,6 +560,7 @@ def assess(
             context=context,
             prometheus_url=prometheus_url,
             runner=WorkflowSubprocessRunner(),
+            run_dir=run_dir,
         )
     if mode != "local":
         raise WorkflowError("only --mode local is supported by the guided workflow")
@@ -558,7 +569,7 @@ def assess(
     if repo is None and config is None:
         raise WorkflowError("assess requires --repo, --config, or --resume")
     init_workspace()
-    run_dir = _new_run_dir((repo or config or Path("assessment")).stem)
+    run_dir = _assessment_directory((repo or config or Path("assessment")).stem, run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
     if repo is not None:
         generated = infer_config(repo)
@@ -604,10 +615,13 @@ def _assess_kubernetes_config(
     context: str | None,
     prometheus_url: str | None,
     runner: KubernetesCommandRunner,
+    run_dir: Path | None = None,
 ) -> Path:
     """Run a config-driven live Kubernetes assessment."""
 
     config = load_config(config_path)
+    if config.get("chamber"):
+        ChamberStore(Path(WORKSPACE_DIR)).bind(config, config["chamber"]["id"])
     if agents_mode:
         config.setdefault("agents", {})["mode"] = agents_mode
     _apply_agent_exclude_override(config, agents_exclude)
@@ -623,11 +637,18 @@ def _assess_kubernetes_config(
             context=context,
             prometheus_url=prometheus_url,
             runner=runner,
+            run_dir=run_dir,
         )
     selected_context = context or str(runtime["kubernetesContext"])
+    if config.get("chamber") and selected_context != config["chamber"]["context"]:
+        raise WorkflowError("Context override cannot change a named chamber target")
     selected_prometheus = prometheus_url or runtime.get("prometheusUrl")
+    if selected_prometheus:
+        _require_http_url(str(selected_prometheus), "effective prometheus URL")
+        runtime["prometheusUrl"] = str(selected_prometheus)
+    validate_budget(config)
     init_workspace()
-    run_dir = _new_run_dir(str(config["service"]["name"]))
+    run_dir = _assessment_directory(str(config["service"]["name"]), run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
     config_copy = run_dir / "chamber.yaml"
     save_config(config, config_copy)
@@ -765,16 +786,24 @@ def _assess_kubernetes_attach_config(
     context: str | None,
     prometheus_url: str | None,
     runner: KubernetesCommandRunner,
+    run_dir: Path | None = None,
 ) -> Path:
     """Run an in-place assessment against existing Kubernetes resources."""
 
+    config = deepcopy(config)
     runtime = _mapping(config["runtime"], "runtime")
     deployment = _mapping(config["deployment"], "deployment")
     selected_context = context or str(runtime["kubernetesContext"])
+    if config.get("chamber") and selected_context != config["chamber"]["context"]:
+        raise WorkflowError("Context override cannot change a named chamber target")
     namespace = str(runtime["namespace"])
     selected_prometheus = prometheus_url or runtime.get("prometheusUrl")
+    if selected_prometheus:
+        _require_http_url(str(selected_prometheus), "effective prometheus URL")
+        runtime["prometheusUrl"] = str(selected_prometheus)
+    validate_budget(config)
     init_workspace()
-    run_dir = _new_run_dir(str(config["service"]["name"]))
+    run_dir = _assessment_directory(str(config["service"]["name"]), run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
     config_copy = run_dir / "chamber.yaml"
     save_config(config, config_copy)
@@ -848,6 +877,13 @@ def _assess_kubernetes_attach_config(
     discovery: dict[str, Any] = {}
     traffic_started_at: datetime | None = None
     relayna_workers: tuple[dict[str, Any], ...] = ()
+    experiment = (
+        ExperimentSession(config, run_dir, runner, selected_context)
+        if config.get("experiment")
+        else None
+    )
+    sampling_stop = threading.Event()
+    sampler: threading.Thread | None = None
     try:
         discovery = _discover_attach_target(
             context=selected_context,
@@ -861,22 +897,72 @@ def _assess_kubernetes_attach_config(
         _write_json(run_dir / "evidence/pre-test-state.json", discovery)
         faults = tuple(_mapping(item, "runtime.faults[]") for item in runtime.get("faults", ()))
         if faults:
-            rollback_evidence = _run_attach_faults(
+            _run_attach_faults(
                 faults,
+                evidence=rollback_evidence,
                 discovery=discovery,
                 context=selected_context,
                 namespace=namespace,
                 runner=runner,
                 commands=commands,
             )
+        if experiment:
+            if config["traffic"].get("load") and experiment.spec["family"] != "queue_drain":
+                baseline_config = json.loads(json.dumps(config))
+                load = baseline_config["traffic"]["load"]
+                load.update(
+                    model="arrival",
+                    phase="baseline",
+                    stages=[
+                        {
+                            "ratePerSecond": load.get("recoveryRate", 1),
+                            "durationSeconds": experiment.spec["recoverySeconds"],
+                        }
+                    ],
+                    warmupSeconds=0,
+                    recoverySeconds=0,
+                )
+                _ensure_run_subdirs(run_dir / "baseline")
+                _execute_kubernetes_traffic(
+                    config=baseline_config,
+                    run_dir=run_dir / "baseline",
+                    context=selected_context,
+                    namespace=namespace,
+                    runner=runner,
+                )
+                shutil.copyfile(
+                    run_dir / "baseline/evidence/load-summary.json",
+                    run_dir / "evidence/baseline-load-summary.json",
+                )
+            experiment.start()
+            if experiment.spec["family"] == "queue_drain":
+
+                def sample_queue() -> None:
+                    while not sampling_stop.is_set():
+                        experiment.sample("load")
+                        sampling_stop.wait(2)
+
+                sampler = threading.Thread(target=sample_queue, daemon=True)
+                sampler.start()
         traffic_started_at = datetime.now(UTC)
+        traffic_config = deepcopy(config)
+        if (
+            experiment
+            and traffic_config["traffic"].get("load")
+            and experiment.spec["family"] != "queue_drain"
+        ):
+            traffic_config["traffic"]["load"].update(
+                phase="fault", warmupSeconds=0, recoverySeconds=0
+            )
         traffic_result = _execute_kubernetes_traffic(
-            config=config,
+            config=traffic_config,
             run_dir=run_dir,
             context=selected_context,
             namespace=namespace,
             runner=runner,
         )
+        if experiment and experiment.spec["family"] != "queue_drain":
+            experiment.record_load(bool(traffic_result.get("success")))
         if traffic_result.get("evidence_id") == "relayna-summary":
             relayna_workers = _discover_relayna_worker_pods(
                 context=selected_context,
@@ -926,6 +1012,69 @@ def _assess_kubernetes_attach_config(
     except (Exception, KeyboardInterrupt) as exc:
         failure = exc
     finally:
+        sampling_stop.set()
+        if sampler:
+            sampler.join(timeout=12)
+        if experiment:
+            experiment.finish()
+            if experiment.spec["family"] == "queue_drain" and failure is None:
+                recovery_end = time.monotonic() + experiment.spec["recoverySeconds"]
+                while time.monotonic() < recovery_end:
+                    experiment.sample("recovery")
+                    time.sleep(2)
+                experiment.evaluate_queue()
+            elif failure is None and experiment.evidence.get("restored"):
+                recovery_config = json.loads(json.dumps(config))
+                for journey in recovery_config["traffic"]["journeys"]:
+                    if journey.get("adapter") == "relayna":
+                        journey.pop("stages", None)
+                        journey.update(iterations=1, vus=1)
+                        journey["relayna"]["timeoutSeconds"] = experiment.spec["recoverySeconds"]
+                    else:
+                        journey.pop("iterations", None)
+                        journey["stages"] = [
+                            {"duration": f"{experiment.spec['recoverySeconds']}s", "targetVus": 1}
+                        ]
+                if recovery_config["traffic"].get("load"):
+                    load = recovery_config["traffic"]["load"]
+                    load.update(
+                        model="arrival",
+                        phase="recovery",
+                        stages=[
+                            {
+                                "ratePerSecond": load.get("recoveryRate", 1),
+                                "durationSeconds": experiment.spec["recoverySeconds"],
+                            }
+                        ],
+                        warmupSeconds=0,
+                        recoverySeconds=0,
+                    )
+                recovery_dir = run_dir / "recovery"
+                _ensure_run_subdirs(recovery_dir)
+                try:
+                    recovery = _execute_kubernetes_traffic(
+                        config=recovery_config,
+                        run_dir=recovery_dir,
+                        context=selected_context,
+                        namespace=namespace,
+                        runner=runner,
+                    )
+                    experiment.assertion(
+                        "Traffic succeeds after restoration",
+                        "pass" if recovery.get("success") else "fail",
+                        True,
+                        bool(recovery.get("success")),
+                    )
+                    for artifact in (recovery_dir / "evidence").glob("*.json"):
+                        shutil.copyfile(
+                            artifact, run_dir / "evidence" / ("recovery-" + artifact.name)
+                        )
+                except Exception as exc:
+                    experiment.assertion(
+                        "Traffic succeeds after restoration", "missing", True, str(exc)
+                    )
+            experiment.persist()
+            rollback_evidence["verified"] = bool(experiment.evidence.get("restored"))
         if rollback_evidence.get("pending_restore"):
             rollback_evidence = _restore_attach_faults(
                 rollback_evidence,
@@ -993,12 +1142,8 @@ def render_report_from_run(run_dir: Path) -> Path:
     config = load_config(run_dir / "chamber.yaml", require_repo=False)
     plan = _read_json(run_dir / "plan.json")
     metadata = _read_json(run_dir / "run-metadata.json")
-    _finalize_guided_result(
-        run_dir,
-        config=config,
-        metadata=metadata,
-        record_event=False,
-    )
+    if not (run_dir / "result.json").exists():
+        _finalize_guided_result(run_dir, config=config, metadata=metadata, record_event=False)
     report = _report_input(run_dir, config=config, plan=plan, metadata=metadata)
     report_path = run_dir / "report.md"
     report_path.write_text(render_markdown_report(report), encoding="utf-8")
@@ -1037,6 +1182,9 @@ def _parser() -> argparse.ArgumentParser:
     source.add_argument("--config")
     source.add_argument("--resume")
     assess_parser.add_argument("--mode", default="local")
+    assess_parser.add_argument(
+        "--run-dir", help="Reserved empty run directory for supervised execution"
+    )
     assess_parser.add_argument("--agents-mode", choices=sorted(AGENT_MODES))
     assess_parser.add_argument(
         "--agents-exclude",
@@ -1599,7 +1747,7 @@ def _execute_kubernetes_traffic(
     relayna_journeys = tuple(
         journey for journey in journeys if str(journey.get("adapter", "http")) == "relayna"
     )
-    if relayna_journeys and len(relayna_journeys) != len(journeys):
+    if not traffic.get("load") and relayna_journeys and len(relayna_journeys) != len(journeys):
         raise WorkflowError("one traffic execution cannot mix Relayna and plain HTTP journeys")
     summary_path = run_dir / "evidence/relayna-summary.json"
     script_path: Path | None = None
@@ -1627,9 +1775,39 @@ def _execute_kubernetes_traffic(
             )
         )
         time.sleep(2)
+    traffic_run_dir = run_dir.parent if run_dir.name in {"baseline", "recovery"} else run_dir
+    workspace = (
+        traffic_run_dir.parent.parent
+        if traffic_run_dir.parent.name == RUNS_DIR
+        else traffic_run_dir.parent
+    )
     try:
+        if traffic.get("load"):
+            summary_path = run_dir / "evidence/load-summary.json"
+            summary = execute_suite(
+                traffic,
+                base_url=base_url,
+                output=summary_path,
+                workspace=workspace,
+                prometheus_url=config.get("runtime", {}).get("prometheusUrl"),
+                namespace=namespace,
+            )
+            if summary.get("tasks"):
+                _write_json(
+                    run_dir / "evidence/relayna-summary.json",
+                    {
+                        "task_count": len(summary["tasks"]),
+                        "tasks": summary["tasks"],
+                        "success": summary["success"],
+                    },
+                )
+            return {
+                "success": summary["success"],
+                "evidence_id": "load-summary",
+                "summary_path": str(summary_path),
+                "exit_status": 0 if summary["success"] else 1,
+            }
         if relayna_journeys:
-            workspace = run_dir.parent.parent if run_dir.parent.name == RUNS_DIR else run_dir.parent
             summary = execute_relayna_journeys(
                 relayna_journeys,
                 base_url=base_url,
@@ -2014,46 +2192,46 @@ def _run_attach_faults(
     namespace: str,
     runner: KubernetesCommandRunner,
     commands: list[dict[str, object]],
+    evidence: dict[str, object] | None = None,
 ) -> dict[str, object]:
+    # Share the ledger with the caller so finally can restore partial sequences.
+    evidence = {} if evidence is None else evidence
+    actions: list[dict[str, object]] = []
+    pending: list[dict[str, object]] = []
+    evidence.update(faults_requested=True, verified=True, pending_restore=pending, actions=actions)
     if not _attach_faults_allowed(discovery):
         raise WorkflowError(
             "attach faults require chamber.ampule.dev/allow-faults=true on the namespace "
             "or selected workload"
         )
-    evidence: dict[str, object] = {
-        "faults_requested": True,
-        "verified": True,
-        "pending_restore": [],
-        "actions": [],
-    }
-    for fault in faults:
-        fault_type = str(fault["type"])
-        if fault_type == "pod_kill":
-            action = _run_attach_pod_kill(
-                fault,
-                discovery=discovery,
-                context=context,
-                namespace=namespace,
-                runner=runner,
-                commands=commands,
-            )
-        elif fault_type == "deployment_scale":
-            action = _run_attach_deployment_scale(
-                fault,
-                discovery=discovery,
-                context=context,
-                namespace=namespace,
-                runner=runner,
-                commands=commands,
-            )
-            pending = evidence["pending_restore"]
-            if isinstance(pending, list):
-                pending.append(action)
-        else:  # pragma: no cover - validate_config rejects this first
-            raise WorkflowError(f"unsupported attach fault type {fault_type!r}")
-        actions = evidence["actions"]
-        if isinstance(actions, list):
-            actions.append(action)
+    try:
+        for fault in faults:
+            fault_type = str(fault["type"])
+            if fault_type == "pod_kill":
+                _run_attach_pod_kill(
+                    fault,
+                    discovery=discovery,
+                    context=context,
+                    namespace=namespace,
+                    runner=runner,
+                    commands=commands,
+                    actions=actions,
+                )
+            elif fault_type == "deployment_scale":
+                _run_attach_deployment_scale(
+                    fault,
+                    discovery=discovery,
+                    context=context,
+                    namespace=namespace,
+                    runner=runner,
+                    commands=commands,
+                    actions=actions,
+                    pending=pending,
+                )
+            else:  # pragma: no cover - validate_config rejects this first
+                raise WorkflowError(f"unsupported attach fault type {fault_type!r}")
+    finally:
+        evidence["verified"] = all(action.get("restored") is True for action in actions)
     return evidence
 
 
@@ -2117,7 +2295,12 @@ def _restore_attach_faults(
         if status.returncode != 0:
             verified = False
         action_payload["restored"] = status.returncode == 0
-    evidence["verified"] = verified
+    actions = evidence.get("actions", [])
+    evidence["verified"] = (
+        verified
+        and isinstance(actions, list)
+        and all(isinstance(action, dict) and action.get("restored") is True for action in actions)
+    )
     evidence["pending_restore"] = []
     return evidence
 
@@ -2130,6 +2313,7 @@ def _run_attach_pod_kill(
     namespace: str,
     runner: KubernetesCommandRunner,
     commands: list[dict[str, object]],
+    actions: list[dict[str, object]],
 ) -> dict[str, object]:
     pods = [item for item in discovery.get("pods", []) if isinstance(item, dict)]
     if not pods:
@@ -2148,7 +2332,9 @@ def _run_attach_pod_kill(
         "type": "pod_kill",
         "pod": pod_name,
         "restore_snapshot": {"pod": selected_pod},
+        "restored": False,
     }
+    actions.append(action)
     completed = _run_kubernetes_recorded(
         runner,
         ("kubectl", "--context", context, "-n", namespace, "delete", "pod", pod_name),
@@ -2202,6 +2388,8 @@ def _run_attach_deployment_scale(
     namespace: str,
     runner: KubernetesCommandRunner,
     commands: list[dict[str, object]],
+    actions: list[dict[str, object]],
+    pending: list[dict[str, object]],
 ) -> dict[str, object]:
     deployments = [
         item
@@ -2232,6 +2420,9 @@ def _run_attach_deployment_scale(
         "fault_replicas": replicas,
         "restored": False,
     }
+    # Register restoration before a command whose outcome may be ambiguous.
+    actions.append(action)
+    pending.append(action)
     completed = _run_kubernetes_recorded(
         runner,
         (
@@ -2833,7 +3024,21 @@ def _write_agents(
 ) -> tuple[ReportSection, ...]:
     mode = _agent_mode(config, None)
     agent_dir = run_dir / "agent"
-    shutil.rmtree(agent_dir, ignore_errors=True)
+    if agent_dir.exists() and any(agent_dir.iterdir()):
+        history = run_dir / "agent-history" / datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+        history.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(agent_dir), str(history))
+        if (run_dir / "agent-stage.json").exists():
+            shutil.copyfile(run_dir / "agent-stage.json", history / "provenance.json")
+    _write_json(
+        run_dir / "agent-stage.json",
+        {
+            "stage": stage,
+            "mode": mode,
+            "generated_at": datetime.now(UTC).isoformat(),
+            "evidence_ids": list(evidence_ids),
+        },
+    )
     agent_dir.mkdir(parents=True, exist_ok=True)
     if mode == "off":
         return ()
@@ -2934,7 +3139,9 @@ def _agent_evidence_summaries(run_dir: Path, evidence_ids: tuple[str, ...]) -> t
                 summaries.append(f"traffic success: {bool(traffic['success'])}")
             if traffic.get("exit_status") is not None:
                 summaries.append(f"traffic exit status: {traffic['exit_status']}")
-        if "cleanup_performed" in metadata:
+        if metadata.get("mode") == "local":
+            summaries.append("Live cleanup: not applicable to local inspection.")
+        elif "cleanup_performed" in metadata:
             summaries.append(f"cleanup performed: {bool(metadata['cleanup_performed'])}")
         if metadata.get("runtime_mode"):
             summaries.append(f"runtime mode: {metadata['runtime_mode']}")
@@ -3463,7 +3670,9 @@ def _report_input(
     )
     cleanup_notes = tuple(metadata.get("cleanup_notes") or ["Cleanup status was not recorded."])
     agent_sections = (
-        _prometheus_report_sections(run_dir)
+        _experiment_report_sections(run_dir)
+        + _load_report_sections(run_dir)
+        + _prometheus_report_sections(run_dir)
         + _agent_sections(run_dir)
         + _relayna_input_sections(run_dir)
     )
@@ -3501,11 +3710,11 @@ def _report_input(
             name=str(service["name"]),
             owner=str(config.get("owner", "unknown")),
             repository=str(service["repo"]),
-            commit=_git_commit(Path(service["repo"])),
+            commit=str(metadata.get("source_commit", "unknown")),
         ),
         run=RunMetadata(
             run_id=str(metadata.get("run_id", run_dir.name)),
-            test_date=datetime.now(UTC).date().isoformat(),
+            test_date=str(metadata.get("captured_at", "unknown"))[:10],
             duration_seconds=int(metadata.get("duration_seconds", 1)),
             namespace=str(metadata.get("namespace", plan.get("namespace", ""))),
             provider=str(
@@ -3876,6 +4085,18 @@ def _current_kube_context() -> str | None:
     return completed.stdout.strip() or None
 
 
+def _assessment_directory(name: str, reserved: Path | None) -> Path:
+    if reserved is None:
+        return _new_run_dir(name)
+    if reserved.exists() and any(
+        path.name not in {"run.json", "events.jsonl", "execution-config.yaml"}
+        for path in reserved.iterdir()
+    ):
+        raise WorkflowError("Assessment run directory already contains execution artifacts")
+    reserved.mkdir(parents=True, exist_ok=True)
+    return reserved
+
+
 def _new_run_dir(name: str) -> Path:
     init_workspace()
     return new_run_directory(Path(WORKSPACE_DIR) / RUNS_DIR, name)
@@ -3888,6 +4109,21 @@ def _ensure_run_subdirs(run_dir: Path) -> None:
 
 
 def _write_metadata(run_dir: Path, payload: dict[str, Any]) -> None:
+    failure_path = run_dir / "execution-failure.json"
+    if failure_path.exists():
+        payload = {**payload, **_read_json(failure_path)}
+        if payload.get("cleanup_required"):
+            payload.update(cleanup_performed=False, rollback={"verified": False})
+    previous = (
+        _read_json(run_dir / "run-metadata.json")
+        if (run_dir / "run-metadata.json").exists()
+        else {}
+    )
+    payload = {
+        **payload,
+        "captured_at": previous.get("captured_at", datetime.now(UTC).isoformat()),
+        "source_commit": previous.get("source_commit", "unknown"),
+    }
     if (run_dir / "chamber.yaml").exists():
         try:
             config = yaml.safe_load((run_dir / "chamber.yaml").read_text(encoding="utf-8"))
@@ -3895,6 +4131,10 @@ def _write_metadata(run_dir: Path, payload: dict[str, Any]) -> None:
             config = None
         if isinstance(config, dict):
             additions: dict[str, Any] = {}
+            if "source_commit" not in previous:
+                additions["source_commit"] = _git_commit(
+                    Path(str(config.get("service", {}).get("repo", "")))
+                )
             if "service_name" not in payload and isinstance(config.get("service"), dict):
                 additions["service_name"] = str(config["service"].get("name", "unknown"))
             scenario = config.get("scenario")
@@ -3993,6 +4233,20 @@ def _manifest_paths(repo: Path) -> list[str]:
         for path in sorted(set(candidates))
         if WORKSPACE_DIR not in path.parts and _contains_kubernetes_resource(path)
     ]
+
+
+def _inferred_readiness_path(repo: Path, manifests: list[str]) -> str:
+    paths: set[str] = set()
+    for manifest in manifests:
+        for document in _yaml_documents(repo / manifest):
+            spec = document.get("spec", {})
+            template = spec.get("template", {}) if isinstance(spec, dict) else {}
+            containers = template.get("spec", {}).get("containers", [])
+            for container in containers:
+                path = container.get("readinessProbe", {}).get("httpGet", {}).get("path")
+                if isinstance(path, str) and path.startswith("/"):
+                    paths.add(path)
+    return next(iter(paths)) if len(paths) == 1 else "/health"
 
 
 def _workloads_from_manifests(repo: Path, manifests: list[str]) -> list[dict[str, Any]]:
@@ -4423,12 +4677,15 @@ def _external_line(item: dict[str, Any]) -> str:
 def _git_commit(repo: Path) -> str:
     if not repo.exists():
         return "unknown"
-    completed = subprocess.run(
-        ("git", "-C", str(repo), "rev-parse", "HEAD"),
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        completed = subprocess.run(
+            ("git", "-C", str(repo), "rev-parse", "HEAD"),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return "unknown"
     return completed.stdout.strip() if completed.returncode == 0 else "external-working-tree"
 
 
@@ -4471,3 +4728,66 @@ def _non_empty(value: Any, name: str) -> str:
 def _require(condition: bool, message: str) -> None:
     if not condition:
         raise WorkflowError(message)
+
+
+def _experiment_report_sections(run_dir: Path) -> tuple[ReportSection, ...]:
+    result = _read_json(run_dir / "result.json")
+    experiment = result.get("experiment", {})
+    if not experiment:
+        return ()
+    lines = [f"Family: {experiment.get('family')}", "Evidence: experiment"]
+    for assertion in experiment.get("assertions", []):
+        lines.append(
+            f"{assertion['name']}: {assertion['state']} · expected {assertion['expected']} "
+            f"· observed {assertion['observed']}"
+        )
+    return (ReportSection(heading="Experiment Assertions", lines=tuple(lines)),)
+
+
+def _load_report_sections(run_dir: Path) -> tuple[ReportSection, ...]:
+    summary = _read_json(run_dir / "result.json").get("load", {})
+    if not summary:
+        return ()
+    metrics = summary["metrics"]
+    lines = [
+        f"Load status: {summary['status']}",
+        f"Delivery: {metrics['started']} of {metrics['requested']} journeys started; "
+        f"{metrics['dropped']} dropped; {metrics['successful']} succeeded.",
+        f"End-to-end p95/p99: {metrics['p95Ms']} / {metrics['p99Ms']} ms.",
+        "Evidence: load-summary (plus baseline/recovery artifacts when faults are configured).",
+    ]
+    phases = summary.get("phases", [])
+    ordered = [p for p in phases if p["phase"] == "baseline"] + [summary]
+    ordered += [p for p in phases if p["phase"] == "recovery"]
+    for phase in ordered:
+        for window in phase["windows"]:
+            lines.append(
+                f"{window['phase']} step {window.get('step', 0)}: {window['state']} "
+                f"at {window['ratePerSecond']}/s; delivered {window['achievedStartsPerSecond']}/s."
+            )
+            for journey in window["journeys"]:
+                m = journey["metrics"]
+                lines.append(
+                    f"{journey['name']}: {m['started']} samples; "
+                    f"p95/p99 {m['p95Ms']}/{m['p99Ms']} ms; "
+                    f"error/completion fractions {m['errorRate']}/{m['completionRate']}; "
+                    f"queue/worker p95 {m['queueWaitP95Ms']}/{m['workerP95Ms']} ms "
+                    f"({m['queueTimingSamples']} queue timing samples)."
+                )
+                lines.extend(
+                    f"{a['name']}: {a['state']} expected={a['expected']} observed={a['observed']}"
+                    for a in journey["assertions"]
+                )
+    generator = summary["generator"]
+    lines.append(
+        f"Generator: limited={generator['limited']}; peak active requests "
+        f"{generator['peakActiveRequests']}; RSS high-water growth "
+        f"{generator['rssHighWaterGrowthMiB']} MiB."
+    )
+    for check in summary["targetMetrics"]["assertions"]:
+        lines.append(
+            f"{check['name']}: {check['state']}; observed {check['observed']}, "
+            f"budget {check['expected']}"
+        )
+    lines.append(summary["timingNote"])
+    return (ReportSection(heading="Load Performance", lines=tuple(lines)),)

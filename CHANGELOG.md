@@ -2,6 +2,36 @@
 
 All notable changes to Ampule Chamber are documented in this file.
 
+## 1.10.0 - 2026-09-12
+
+- Add bounded arrival-rate, capacity-step and soak suites with weighted mixed HTTP/Relayna
+  journeys, deadlines, per-journey and phase thresholds, and generator delivery diagnostics.
+- Add seeded payload datasets, environment-bound authentication, chained HTTP extraction and
+  business assertions, scoped target memory/queue observations, and explicit lifecycle timing gaps.
+- Add load-suite editing, saved scenario round trips, contract-aware comparison, and structured
+  load performance reports with baseline/fault/recovery evidence gates.
+
+- Add named chamber profiles, cloning, immutable plan snapshots, enforced traffic budgets,
+  namespace admission exclusion, history, and explicit cleanup acknowledgement.
+- Execute dependency delay/outage and CPU/memory pressure through bounded Chaos Mesh
+  resources with verified injection/restoration and recovery traffic.
+- Collect scoped queue depth and oldest-task age from Prometheus and report backpressure,
+  budget and drain assertions with honest missing-evidence outcomes.
+
+- Patch bundled Go tools and remove unused runtime pip to resolve CI vulnerability findings.
+
+- Persist assessment jobs, reserve unique run directories, snapshot configurations, drain
+  bounded process output, and escalate cancellation with explicit cleanup attention.
+- Support plan-ID starts, idempotency keys, resumable run events, and authenticated bearer
+  API writes while retaining CSRF protection for browser sessions.
+- Fail closed for unsupported required signals, empty collector artifacts, missing runtime
+  observations, and invalid traffic measurements.
+- Capture report provenance during execution and preserve recorded results during export.
+- Preserve agent output history, require citations when evidence is supplied, and display
+  advisory summaries, execution mode, and stage before structured details.
+- Clarify local-only review and results, retain failed jobs for inspection, infer unambiguous
+  readiness-probe paths, and improve report timeline readability.
+
 ## 1.9.0 - 2026-08-08
 
 ### Added

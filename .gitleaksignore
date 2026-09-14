@@ -1,0 +1,3 @@
+# Non-secret UUID for a local Docker assessment job in historical acceptance evidence.
+# Scope: this exact commit, documentation line, and rule only; no credential was exposed.
+4f27239cfd8d1d39041e1c0e2520151d6dd9d80c:docs/internal/phases/phase-03-traffic-and-chaos/artifacts/studio-integration-hardening.md:generic-api-key:62

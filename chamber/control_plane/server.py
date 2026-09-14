@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 from starlette.responses import StreamingResponse
 
 from chamber.application.service import ChamberApplication
+from chamber.chaos.experiments import FAMILIES, validate_experiment
 from chamber.control_plane.discovery import (
     DiscoveryError,
     DiscoverySettings,
@@ -44,7 +45,9 @@ from chamber.control_plane.security import (
     load_admin_auth,
     safe_next_path,
 )
+from chamber.environment.chambers import ChamberProfile, ChamberStore, target_key
 from chamber.load import validate_relayna_journey
+from chamber.load.suite import validate_suite
 from chamber.runs import registered_evidence
 
 PACKAGE_DIR = Path(__file__).resolve().parent
@@ -64,7 +67,8 @@ class PlanRequest(BaseModel):
 
 
 class RunStartRequest(BaseModel):
-    config_path: str
+    config_path: str | None = None
+    plan_id: str | None = None
     mode: str = Field(pattern="^(local|kubernetes)$")
     context: str | None = None
     prometheus_url: str | None = None
@@ -116,6 +120,7 @@ def create_app(
     application = ChamberApplication(workspace)
     application.initialize()
     jobs = AssessmentJobManager(workspace)
+    chambers = ChamberStore(workspace)
     scenarios = ScenarioCatalog(workspace, PACKAGE_DIR / "bundled_scenarios")
     multipart_path_secret = secrets.token_bytes(32)
     multipart_upload_root = workspace.resolve() / "uploads"
@@ -136,6 +141,10 @@ def create_app(
         token = request.cookies.get(CSRF_COOKIE) or secrets.token_urlsafe(32)
         request.state.csrf_token = token
         request.state.authenticated = auth.authenticates_request(request)
+        scheme, _, candidate = request.headers.get("Authorization", "").partition(" ")
+        request.state.bearer_authenticated = (
+            scheme.lower() == "bearer" and auth.authenticates_token(candidate.strip())
+        )
         if not request.state.authenticated and not _public_path(request.url.path):
             if request.url.path.startswith("/api/"):
                 response = JSONResponse(
@@ -282,6 +291,95 @@ def create_app(
             },
         )
 
+    @app.get("/api/v1/chambers")
+    async def chambers_api() -> dict[str, Any]:
+        profiles = chambers.list()
+        for profile in profiles:
+            profile["jobs"] = [job for job in jobs.list() if job.get("chamber_id") == profile["id"]]
+            profile["occupancy"] = (
+                "attention"
+                if any(job.get("cleanup_required") for job in profile["jobs"])
+                else "busy"
+                if any(job["state"] not in TERMINAL_JOB_STATES for job in profile["jobs"])
+                else "available"
+            )
+            namespace_jobs = [
+                job
+                for job in jobs.list()
+                if job.get("target_key")
+                == target_key(
+                    {
+                        "runtime": {
+                            "provider": "kubernetes",
+                            "kubernetesContext": profile["context"],
+                            "namespace": profile["namespace"],
+                        }
+                    }
+                )
+            ]
+            profile["occupancy"] = (
+                "attention"
+                if any(job.get("cleanup_required") for job in namespace_jobs)
+                else "busy"
+                if any(job["state"] not in TERMINAL_JOB_STATES for job in namespace_jobs)
+                else "available"
+            )
+            profile["attention_jobs"] = [
+                job for job in namespace_jobs if job.get("cleanup_required")
+            ]
+            profile["readiness"] = "not checked"
+        return {"chambers": profiles}
+
+    @app.post("/api/v1/chambers", status_code=201)
+    async def create_chamber_api(request: Request, payload: ChamberProfile) -> dict[str, Any]:
+        _check_csrf(request, request.headers.get("X-CSRF-Token"))
+        return chambers.create(payload)
+
+    @app.get("/chambers", response_class=HTMLResponse, include_in_schema=False)
+    async def chambers_page(request: Request, clone: str = "") -> Response:
+        try:
+            selected = chambers.get(clone) if clone else {}
+        except (ValueError, FileNotFoundError):
+            raise HTTPException(status_code=404, detail="Chamber not found") from None
+        return templates.TemplateResponse(
+            request=request,
+            name="chambers.html",
+            context={
+                "active_nav": "chambers",
+                "csrf_token": request.state.csrf_token,
+                "profiles": (await chambers_api())["chambers"],
+                "selected": selected,
+            },
+        )
+
+    @app.post("/ui/chambers", include_in_schema=False)
+    async def create_chamber_form(request: Request) -> Response:
+        values = dict(await request.form())
+        _check_csrf(request, str(values.pop("_csrf", "")))
+        try:
+            chambers.create(ChamberProfile.model_validate(values))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return RedirectResponse("/chambers", status_code=303)
+
+    @app.post("/ui/jobs/{job_id}/cleanup-verified", include_in_schema=False)
+    async def cleanup_verified(
+        request: Request,
+        job_id: str,
+        csrf: Annotated[str, Form(alias="_csrf")],
+        confirmed: Annotated[str, Form()] = "",
+    ) -> Response:
+        _check_csrf(request, csrf)
+        if confirmed != "verified":
+            raise HTTPException(
+                status_code=400, detail="Verify target cleanup before releasing admission"
+            )
+        try:
+            jobs.acknowledge_cleanup(job_id)
+        except (ValueError, KeyError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return RedirectResponse("/chambers", status_code=303)
+
     @app.get("/new", response_class=HTMLResponse, include_in_schema=False)
     async def new_assessment_page(request: Request) -> Response:
         return templates.TemplateResponse(
@@ -292,6 +390,8 @@ def create_app(
                 "csrf_token": request.state.csrf_token,
                 "capabilities": _capabilities(kubernetes_discovery.settings),
                 "reliability_goals": goal_catalog(),
+                "chambers": chambers.list(),
+                "experiment_families": FAMILIES,
             },
         )
 
@@ -299,6 +399,9 @@ def create_app(
     async def plan_from_form(
         request: Request,
         csrf: Annotated[str, Form(alias="_csrf")],
+        chamber_id: Annotated[str, Form()] = "",
+        experiment_json: Annotated[str, Form()] = "",
+        load_json: Annotated[str, Form()] = "",
         repo: Annotated[str, Form()] = "",
         service_name: Annotated[str, Form()] = "",
         workload_name: Annotated[str, Form()] = "",
@@ -343,6 +446,9 @@ def create_app(
             run_dir = _plan_from_values(
                 application,
                 workspace=workspace,
+                chamber_id=chamber_id,
+                experiment_json=experiment_json,
+                load_json=load_json,
                 repo=Path(repo) if repo.strip() else None,
                 service_name=service_name,
                 workload_name=workload_name,
@@ -387,6 +493,8 @@ def create_app(
                     "csrf_token": request.state.csrf_token,
                     "capabilities": _capabilities(kubernetes_discovery.settings),
                     "reliability_goals": goal_catalog(),
+                    "chambers": chambers.list(),
+                    "experiment_families": FAMILIES,
                     "error": str(exc),
                 },
             )
@@ -669,8 +777,10 @@ def create_app(
     @app.post("/api/v1/plans")
     async def plans_api(request: Request, payload: PlanRequest) -> dict[str, str]:
         _check_csrf(request, request.headers.get("X-CSRF-Token"))
-        config_path = _write_draft(workspace, payload.config)
         try:
+            if payload.config.get("chamber"):
+                chambers.bind(payload.config, payload.config["chamber"]["id"])
+            config_path = _write_draft(workspace, payload.config)
             run_dir = application.plan(config_path)
         except (OSError, ValueError, RuntimeError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -713,13 +823,30 @@ def create_app(
     @app.post("/api/v1/runs", status_code=202)
     async def start_run_api(request: Request, payload: RunStartRequest) -> dict[str, Any]:
         _check_csrf(request, request.headers.get("X-CSRF-Token"))
-        config_path = _safe_config_path(workspace, payload.config_path)
-        return jobs.start(
-            config_path,
-            mode=payload.mode,
-            context=payload.context,
-            prometheus_url=payload.prometheus_url,
-        )
+        if bool(payload.plan_id) == bool(payload.config_path):
+            raise HTTPException(
+                status_code=400, detail="Supply exactly one of plan_id or config_path"
+            )
+        try:
+            config_path = (
+                application.run_path(payload.plan_id) / "chamber.yaml"
+                if payload.plan_id
+                else _safe_config_path(workspace, payload.config_path or "")
+            )
+            key = request.headers.get("Idempotency-Key")
+            if key is not None and (not key.strip() or len(key) > 200):
+                raise HTTPException(status_code=400, detail="Invalid Idempotency-Key")
+            return jobs.start(
+                config_path,
+                mode=payload.mode,
+                context=payload.context,
+                prometheus_url=payload.prometheus_url,
+                idempotency_key=key,
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="plan not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.get("/api/v1/runs/{run_id}")
     async def run_api(run_id: str) -> dict[str, Any]:
@@ -759,12 +886,20 @@ def create_app(
         return {"run_id": planned.name, "run_dir": str(planned)}
 
     @app.get("/api/v1/runs/{run_id}/events")
-    async def run_events_api(run_id: str) -> StreamingResponse:
+    async def run_events_api(request: Request, run_id: str) -> StreamingResponse:
         try:
             run_dir = application.run_path(run_id)
         except (FileNotFoundError, ValueError):
             raise HTTPException(status_code=404, detail="run not found") from None
-        return StreamingResponse(_run_event_stream(run_dir), media_type="text/event-stream")
+        try:
+            after = int(request.headers.get("Last-Event-ID", "0"))
+            if after < 0:
+                raise ValueError
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid Last-Event-ID") from exc
+        return StreamingResponse(
+            _run_event_stream(run_dir, after=after), media_type="text/event-stream"
+        )
 
     @app.get("/api/v1/jobs/{job_id}")
     async def job_api(job_id: str) -> dict[str, Any]:
@@ -815,11 +950,16 @@ def create_app(
         try:
             run_dir = application.run_path(run_id)
             report_path = None
-            if format == "markdown":
-                report_path = application.report(run_dir)
             run = application.get_run(run_id)
         except (FileNotFoundError, ValueError):
             raise HTTPException(status_code=404, detail="run not found") from None
+        if format == "markdown":
+            try:
+                report_path = application.report(run_dir)
+            except (OSError, ValueError, RuntimeError) as exc:
+                raise HTTPException(
+                    status_code=409, detail="Report is unavailable for this run"
+                ) from exc
         if format == "json":
             return JSONResponse(
                 {
@@ -921,6 +1061,9 @@ def _plan_from_values(
     save_scenario: str = "none",
     replace_scenario: str = "",
     catalog: ScenarioCatalog | None = None,
+    chamber_id: str = "",
+    experiment_json: str = "",
+    load_json: str = "",
 ) -> Path:
     config: dict[str, Any]
     if repo is not None and not repo.is_dir():
@@ -971,7 +1114,9 @@ def _plan_from_values(
     traffic = cast(dict[str, Any], config["traffic"])
     traffic["entrypoint"] = name
     if journeys_json.strip():
-        traffic["journeys"] = _ui_journeys(journeys_json, workspace=workspace)
+        traffic["journeys"] = _ui_journeys(
+            journeys_json, workspace=workspace, allow_mixed=bool(load_json.strip())
+        )
     elif journey_type == "relayna":
         try:
             body = json.loads(request_body)
@@ -1140,6 +1285,28 @@ def _plan_from_values(
     ):
         scenario_metadata["origin"] = dict(matching_user_scenario["origin"])
     config["scenario"] = scenario_metadata
+    if load_json.strip():
+        load = json.loads(load_json)
+        if not isinstance(load, dict):
+            raise ValueError("Load settings must be an object")
+        overrides = load.pop("journeyOverrides", {})
+        if not isinstance(overrides, dict) or set(overrides) - {
+            j["name"] for j in traffic["journeys"]
+        }:
+            raise ValueError("Journey overrides must use existing journey names")
+        allowed = {"weight", "dataset", "thresholds", "phaseThresholds", "headersFromEnv", "steps"}
+        for journey in traffic["journeys"]:
+            extra = overrides.get(journey["name"], {})
+            if not isinstance(extra, dict) or set(extra) - allowed:
+                raise ValueError("Unsupported journey override field")
+            journey.update(extra)
+        traffic["load"] = load
+        validate_suite(traffic)
+    if experiment_json.strip():
+        config["experiment"] = json.loads(experiment_json)
+        validate_experiment(config)
+    if chamber_id:
+        ChamberStore(workspace).bind(config, chamber_id)
     normalized = normalize_document(config, source="custom", validate_journeys=_ui_journeys)
     if matching_user_scenario is not None and normalized["revision"] != scenario_revision.strip():
         scenario_metadata["source"] = "derived"
@@ -1224,7 +1391,9 @@ def _matching_user_scenario(
     return selected if matches else None
 
 
-def _ui_journeys(raw: str, *, workspace: Path | None = None) -> list[dict[str, Any]]:
+def _ui_journeys(
+    raw: str, *, workspace: Path | None = None, allow_mixed: bool = False
+) -> list[dict[str, Any]]:
     try:
         value = json.loads(raw)
     except json.JSONDecodeError as exc:
@@ -1279,7 +1448,7 @@ def _ui_journeys(raw: str, *, workspace: Path | None = None) -> list[dict[str, A
         journey["method"] = method
         journey["path"] = path
         journeys.append(journey)
-    if len(adapters) > 1:
+    if len(adapters) > 1 and not allow_mixed:
         raise ValueError("One assessment cannot mix HTTP and Relayna traffic journeys")
     return journeys
 
@@ -1579,6 +1748,8 @@ def _safe_config_path(workspace: Path, value: str) -> Path:
 
 
 def _check_csrf(request: Request, supplied: str | None) -> None:
+    if getattr(request.state, "bearer_authenticated", False):
+        return
     expected = request.cookies.get(CSRF_COOKIE) or getattr(request.state, "csrf_token", None)
     if not supplied or not expected or not secrets.compare_digest(supplied, expected):
         raise HTTPException(status_code=403, detail="invalid CSRF token")
@@ -1629,14 +1800,14 @@ async def _job_event_stream(jobs: AssessmentJobManager, job_id: str) -> Any:
         await asyncio.sleep(0.5)
 
 
-async def _run_event_stream(run_dir: Path) -> Any:
+async def _run_event_stream(run_dir: Path, *, after: int = 0) -> Any:
     path = run_dir / "events.jsonl"
-    emitted = 0
+    emitted = after
     while True:
         lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
-        for line in lines[emitted:]:
-            yield f"event: run\ndata: {line}\n\n"
-        emitted = len(lines)
+        for index, line in enumerate(lines[emitted:], start=emitted + 1):
+            yield f"id: {index}\nevent: run\ndata: {line}\n\n"
+        emitted = max(emitted, len(lines))
         run = _json_file(run_dir / "run.json")
         if run.get("state") in {"completed", "failed", "cancelled"}:
             break

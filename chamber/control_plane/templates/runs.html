@@ -16,7 +16,7 @@
   <a class="button compact {{ 'active' if not workspace.filters.view else '' }}" href="/runs">All current</a>
   <a class="button compact {{ 'active' if workspace.filters.view == 'needs_attention' else '' }}" href="/runs?view=needs_attention">Needs attention</a>
   <a class="button compact {{ 'active' if workspace.filters.view == 'recent_regressions' else '' }}" href="/runs?view=recent_regressions">Recent regressions</a>
-  <a class="button compact {{ 'active' if workspace.filters.view == 'my_services' else '' }}" href="/runs?view=my_services">My services</a>
+  <a class="button compact {{ 'active' if workspace.filters.view == 'my_services' else '' }}" href="/runs?view=my_services">Assigned services</a>
   <a class="button compact {{ 'active' if workspace.filters.include_archived else '' }}" href="/runs?archived=true">Include archived</a>
 </nav>
 

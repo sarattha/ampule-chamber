@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -21,6 +22,20 @@ PROMETHEUS_REQUIRED_QUERIES = (
 PROMETHEUS_REQUIRED_SIGNALS = {"cpu_usage", "memory_usage"}
 
 EVIDENCE_REQUIREMENTS = {
+    "load-summary": {
+        "name": "Load delivery and performance",
+        "impact": "Load delivery or performance measurements are incomplete.",
+        "likely_cause": "Generator saturation, missing transitions, or interrupted traffic.",
+        "resolution": "Review requested rate, generator limits, and journey thresholds.",
+        "configuration_path": "traffic.load",
+    },
+    "experiment": {
+        "name": "Experiment assertions and restoration",
+        "impact": "The selected experiment has incomplete injection, recovery or queue evidence.",
+        "likely_cause": "Setup failed, the fault expired early, or observations are missing.",
+        "resolution": "Review experiment settings, target permissions, duration and telemetry.",
+        "configuration_path": "experiment",
+    },
     "preflight": {
         "name": "Kubernetes preflight checks",
         "impact": "Cluster identity, access, and safety prerequisites were not verified.",
@@ -94,6 +109,12 @@ EVIDENCE_REQUIREMENTS = {
     },
 }
 
+for _phase in ("baseline", "recovery"):
+    EVIDENCE_REQUIREMENTS[f"{_phase}-load-summary"] = {
+        **EVIDENCE_REQUIREMENTS["load-summary"],
+        "name": f"{_phase.title()} load delivery and performance",
+    }
+
 
 def analyze_guided_run(
     run_dir: Path,
@@ -149,6 +170,11 @@ def build_assessment_result(
 ) -> dict[str, Any]:
     """Build a result that cannot report readiness without required evidence."""
 
+    failure_path = run_dir / "execution-failure.json"
+    if failure_path.exists():
+        metadata = {**metadata, **json.loads(failure_path.read_text())}
+        if metadata.get("cleanup_required"):
+            metadata.update(cleanup_performed=False, rollback={"verified": False})
     stage = str(metadata.get("stage", "planned"))
     mode = str(metadata.get("mode", "local"))
     runtime_value = config.get("runtime")
@@ -163,10 +189,40 @@ def build_assessment_result(
         or _requires_prometheus(config)
     ):
         required.append("prometheus-memory")
+    scenario = config.get("scenario", {})
+    signals = scenario.get("requiredSignals", []) if isinstance(scenario, dict) else []
+    supported = {
+        "request_latency",
+        "error_rate",
+        "cpu_usage",
+        "memory_usage",
+        "kubernetes_events",
+        "pod_restarts",
+        "pod_logs",
+        "pod_status",
+        "container_restarts",
+        "logs",
+    }
+    required.extend(
+        f"signal:{signal}"
+        for signal in signals
+        if signal not in supported or not _runtime_signal_present(run_dir, signal)
+    )
+    if config.get("experiment"):
+        required.append("experiment")
+    if config.get("traffic", {}).get("load") and config.get("experiment", {}).get("family") not in {
+        None,
+        "queue_drain",
+    }:
+        required.extend(("baseline-load-summary", "recovery-load-summary"))
     required = list(dict.fromkeys(required))
     if runtime_mode == "attach":
         required.extend(("attach-discovery", "pre-test-state", "rollback"))
-    available = {str(item.get("evidence_id")) for item in registered_evidence(run_dir)}
+    available = {
+        str(item.get("evidence_id"))
+        for item in registered_evidence(run_dir)
+        if _has_evidence_content(run_dir / str(item["relative_path"]), str(item["evidence_id"]))
+    }
     prometheus_available, prometheus_limitations = _prometheus_evidence_status(
         run_dir, required="prometheus-memory" in required
     )
@@ -175,6 +231,54 @@ def build_assessment_result(
         for item in required
         if item in available and (item != "prometheus-memory" or prometheus_available)
     ]
+    experiment_result: dict[str, Any] = {}
+    if config.get("experiment") and "experiment" in available:
+        experiment_result = json.loads((run_dir / "evidence/experiment.json").read_text())
+        assertions = experiment_result.get("assertions", [])
+        expected_assertions = (
+            {
+                "Backpressure exercised",
+                "Queue depth stays within budget",
+                "Oldest task age stays within budget",
+                "Queue drains after admissions stop",
+            }
+            if config["experiment"].get("family") == "queue_drain"
+            else {
+                "Fault injected on selected pods",
+                "Fault restored",
+                "Traffic succeeds after restoration",
+                "Traffic meets contract during fault",
+            }
+        )
+        if (
+            experiment_result.get("family") != config["experiment"].get("family")
+            or not expected_assertions.issubset({a.get("name") for a in assertions})
+            or any(a.get("state") not in {"pass", "fail"} for a in assertions)
+        ):
+            present = [item for item in present if item != "experiment"]
+    if experiment_result.get("family") == "queue_drain" and "experiment" in present:
+        required = [
+            item
+            for item in required
+            if item not in {"signal:queue_depth", "signal:queue_age", "signal:oldest_task_age"}
+        ]
+    load_summary = {}
+    if "load-summary" in available:
+        load_summary = json.loads((run_dir / "evidence/load-summary.json").read_text())
+        if load_summary.get("status") == "inconclusive":
+            present = [item for item in present if item != "load-summary"]
+    if load_summary:
+        load_summary["phases"] = []
+        for phase in ("baseline", "recovery"):
+            evidence_id = f"{phase}-load-summary"
+            if evidence_id in available:
+                phase_summary = json.loads((run_dir / f"evidence/{evidence_id}.json").read_text())
+                load_summary["phases"].append({"phase": phase, **phase_summary})
+                if phase_summary.get("status") == "inconclusive":
+                    present = [item for item in present if item != evidence_id]
+                elif phase_summary.get("status") == "fail":
+                    load_summary["status"] = "fail"
+                    load_summary["success"] = False
     missing = [item for item in required if item not in present]
     evidence_coverage = round(100 * len(present) / len(required)) if required else 100
     rollback_value = metadata.get("rollback")
@@ -201,6 +305,12 @@ def build_assessment_result(
         evidence_coverage = 0
     elif missing:
         status = "inconclusive"
+    elif any(a.get("state") == "fail" for a in experiment_result.get("assertions", [])):
+        status = "not_ready"
+        conclusive = True
+        score = 0
+    elif load_summary.get("status") == "fail":
+        status, conclusive, score = "not_ready", True, 0
     elif not traffic_success:
         status = "failed"
     else:
@@ -239,6 +349,9 @@ def build_assessment_result(
     )
 
     return {
+        "load": load_summary,
+        "experiment": experiment_result,
+        "chamber": config.get("chamber"),
         "schema_version": "chamber.ampule.dev/result/v1",
         "run_id": run_id,
         "status": status,
@@ -247,9 +360,11 @@ def build_assessment_result(
         "tested_scope": _tested_scope(config, metadata),
         "readiness_score": score,
         "evidence_coverage_percent": evidence_coverage,
-        "execution_coverage_percent": 100 if stage == "assessed" else 0,
-        "rollback_verified": rollback_verified,
-        "cleanup_verified": bool(metadata.get("cleanup_performed"))
+        "execution_coverage_percent": 100 if stage == "assessed" and mode == "kubernetes" else 0,
+        "rollback_verified": rollback_verified if mode == "kubernetes" else None,
+        "cleanup_verified": None
+        if mode != "kubernetes"
+        else bool(metadata.get("cleanup_performed"))
         if runtime_mode != "attach"
         else True,
         "required_evidence_ids": required,
@@ -268,6 +383,142 @@ def build_assessment_result(
         "finding_count": len(findings),
         "generated_at": _now(),
     }
+
+
+def _runtime_signal_present(run_dir: Path, signal: str) -> bool:
+    reads = {
+        "pod_status": "pods",
+        "container_restarts": "pods",
+        "pod_restarts": "pods",
+        "kubernetes_events": "events",
+        "logs": "logs",
+        "pod_logs": "logs",
+    }
+    resource = reads.get(signal)
+    if resource is None:
+        return True  # Traffic and Prometheus have their own content gates below.
+    try:
+        value = json.loads((run_dir / "evidence/kubernetes-commands.json").read_text())
+        for item in value.get("commands", []):
+            command = item.get("command", [])
+            if item.get("exit_status") != 0 or resource not in command:
+                continue
+            if resource == "logs":
+                return bool(item.get("stdout", "").strip())
+            payload = json.loads(item.get("stdout", ""))
+            if isinstance(payload.get("items"), list) and (
+                resource == "events" or payload["items"]
+            ):
+                return True
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
+    return False
+
+
+def _has_evidence_content(path: Path, evidence_id: str) -> bool:
+    """Validate collector content in addition to the registered artifact digest."""
+    try:
+        content = path.read_text(encoding="utf-8").strip()
+        if path.suffix != ".json":
+            return bool(content)
+        value = json.loads(content)
+        if not isinstance(value, dict) or not value:
+            return False
+        if evidence_id in {"load-summary", "baseline-load-summary", "recovery-load-summary"}:
+            return _load_evidence_complete(value)
+        if evidence_id == "preflight":
+            return value.get("ready") is True
+        if evidence_id == "kubernetes-commands":
+            return any(
+                isinstance(item, dict)
+                and item.get("exit_status") == 0
+                and "get" in item.get("command", [])
+                and bool(item.get("stdout"))
+                for item in value.get("commands", [])
+            )
+        if evidence_id == "k6-summary":
+            metrics = value.get("metrics", {})
+            count = metrics.get("http_reqs", {}).get("values", {}).get("count")
+            rate = metrics.get("http_req_failed", {}).get("values", {}).get("rate")
+            latency = metrics.get("http_req_duration", {}).get("values", {}).get("p(95)")
+            return (
+                _finite_number(count)
+                and count > 0
+                and _finite_number(rate)
+                and 0 <= rate <= 1
+                and _finite_number(latency)
+                and latency >= 0
+            )
+        if evidence_id == "relayna-summary":
+            return (
+                _finite_number(value.get("task_count"))
+                and value["task_count"] > 0
+                and isinstance(value.get("tasks"), list)
+                and bool(value["tasks"])
+            )
+        return True
+    except (OSError, UnicodeError, ValueError, TypeError, AttributeError):
+        return False
+
+
+def _load_evidence_complete(value: dict[str, Any]) -> bool:
+    if value.get("schema_version") != "chamber.ampule.dev/load-suite/v1" or value.get(
+        "status"
+    ) not in {"pass", "fail", "inconclusive"}:
+        return False
+    windows = value.get("windows")
+    if not isinstance(windows, list) or not windows:
+        return False
+    aggregate = value.get("metrics", {})
+    for metric in [
+        aggregate,
+        *[j.get("metrics", {}) for w in windows for j in w.get("journeys", [])],
+    ]:
+        for key in ("requested", "started", "completed", "successful", "dropped"):
+            if type(metric.get(key)) is not int or metric[key] < 0:
+                return False
+        if not (
+            metric["requested"] == metric["started"] + metric["dropped"]
+            and metric["started"] == metric["completed"]
+            and metric["successful"] <= metric["completed"]
+        ):
+            return False
+        if metric["started"] and any(
+            not _finite_number(metric.get(key)) or metric[key] < 0
+            for key in ("p95Ms", "p99Ms", "errorRate", "completionRate", "deadlineMissRate")
+        ):
+            return False
+    if aggregate["requested"] <= 0 or aggregate["requested"] != sum(
+        w.get("requested", -1) for w in windows
+    ):
+        return False
+    for window in windows:
+        if window.get("state") not in {"pass", "fail", "inconclusive"} or not window.get(
+            "journeys"
+        ):
+            return False
+        if window.get("requested") != sum(j["metrics"]["requested"] for j in window["journeys"]):
+            return False
+        if not all(
+            j.get("assertions")
+            and all(a.get("state") in {"pass", "fail", "missing"} for a in j["assertions"])
+            for j in window["journeys"]
+        ):
+            return False
+        if window["state"] == "pass" and any(
+            a["state"] != "pass" for j in window["journeys"] for a in j["assertions"]
+        ):
+            return False
+    if value["status"] == "pass" and (
+        aggregate["dropped"]
+        or any(w["state"] != "pass" for w in windows if w.get("phase") != "warmup")
+    ):
+        return False
+    return True
+
+
+def _finite_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
 def _confidence_label(
@@ -299,6 +550,8 @@ def _tested_scope(config: dict[str, Any], metadata: dict[str, Any]) -> dict[str,
         "scenario_revision": scenario.get("revision", "unrecorded"),
         "provider": runtime.get("provider") or metadata.get("mode", "unknown"),
         "runtime_mode": runtime.get("mode") or metadata.get("runtime_mode", "unknown"),
+        "experiment_family": config.get("experiment", {}).get("family"),
+        "chamber_id": config.get("chamber", {}).get("id"),
         "journey_count": len(journeys) if isinstance(journeys, list) else 0,
     }
 
@@ -325,7 +578,16 @@ def _evidence_requirements(
     present_ids = set(present)
     items = []
     for evidence_id in dict.fromkeys(required + missing):
-        spec = EVIDENCE_REQUIREMENTS[evidence_id]
+        spec = EVIDENCE_REQUIREMENTS.get(
+            evidence_id,
+            {
+                "name": "Required signal: " + evidence_id.removeprefix("signal:"),
+                "impact": "This required signal has no usable collected evidence.",
+                "likely_cause": "The collector is missing, incomplete, or not supported yet.",
+                "resolution": "Validate this signal collector before using a readiness score.",
+                "configuration_path": "scenario.requiredSignals",
+            },
+        )
         is_present = evidence_id in present_ids
         context = {
             "path": spec["configuration_path"],
@@ -702,6 +964,8 @@ def _k6_summary_path(run_dir: Path, metadata: dict[str, Any]) -> Path | None:
 
 def _traffic_evidence_id(config: dict[str, Any]) -> str:
     traffic = config.get("traffic")
+    if isinstance(traffic, dict) and traffic.get("load"):
+        return "load-summary"
     journeys = traffic.get("journeys") if isinstance(traffic, dict) else None
     if (
         isinstance(journeys, list)

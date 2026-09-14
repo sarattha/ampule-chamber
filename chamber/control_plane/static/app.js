@@ -1,10 +1,84 @@
 (() => {
   const wizard = document.querySelector("[data-wizard]");
-  if (wizard) initializeWizard(wizard);
+  if (wizard) {
+    initializeWizard(wizard);
+    const selectedChamber = wizard.querySelector("[data-chamber-select]");
+    if (selectedChamber?.value) selectedChamber.dispatchEvent(new Event("change"));
+  }
   const livePage = document.querySelector("[data-job-id]");
   if (livePage) initializeLivePage(livePage);
 
   function initializeWizard(form) {
+    const chamberSelect = form.querySelector("[data-chamber-select]");
+    chamberSelect?.addEventListener("change", () => {
+      const profile = chamberSelect.selectedOptions[0].dataset.profile;
+      if (!profile) return;
+      const chamber = JSON.parse(profile);
+      for (const [field, value] of Object.entries({target_source: "kubernetes", execution_mode: "kubernetes", runtime_mode: "attach", kubernetes_context: chamber.context, namespace: chamber.namespace, service_name: chamber.service, workload_name: chamber.workload, prometheus_url: chamber.prometheus_url})) {
+        const input = form.elements[field];
+        if (input instanceof RadioNodeList) input.value = value;
+        else input.value = value;
+      }
+      form.querySelector('[name="execution_mode"][value="kubernetes"]').dispatchEvent(new Event("change", {bubbles:true}));
+      form.elements.runtime_mode.dispatchEvent(new Event("change", {bubbles:true}));
+      form.querySelector('[name="target_source"][value="kubernetes"]').dispatchEvent(new Event("change", {bubbles:true}));
+    });
+    const loadModel = form.querySelector("[data-load-model]");
+    const loadOptions = form.querySelector("[data-load-options]");
+    function updateLoad() {
+      form.querySelector("[data-load-fields]").hidden = !loadModel.value;
+      form.dataset.loadActive = String(Boolean(loadModel.value));
+      form.querySelector('[data-editor-mode="basic"]').disabled = Boolean(loadModel.value);
+      if (loadModel.value) form.querySelector('[data-editor-mode="advanced"]').click();
+      loadOptions.setCustomValidity("");
+      let value = {model: loadModel.value, thresholds: {}};
+      for (const input of form.querySelectorAll("[data-load-key]")) value[input.dataset.loadKey] = Number(input.value);
+      for (const input of form.querySelectorAll("[data-load-threshold]")) value.thresholds[input.dataset.loadThreshold] = Number(input.value);
+      try {
+        const extra = JSON.parse(loadOptions.value || "{}");
+        if (!extra || Array.isArray(extra) || typeof extra !== "object") throw new Error("Use a JSON object.");
+        value = {...value, ...extra, model: loadModel.value};
+        form.querySelector("[data-load-json]").value = loadModel.value ? JSON.stringify(value) : "";
+        const stages = value.stages || [{ratePerSecond: value.ratePerSecond, durationSeconds: value.durationSeconds}];
+        const description = `${value.model}: ${stages.map(s => `${s.ratePerSecond}/s for ${s.durationSeconds}s`).join(", ")} · ${value.maxInFlight} in flight · ${value.warmupSeconds || 0}s warmup · ${value.recoverySeconds || 0}s recovery`;
+        form.querySelector("[data-load-status]").textContent = description;
+        form.querySelector("[data-load-review]").textContent = loadModel.value ? description : "Journey VUs / iterations";
+      } catch (error) {
+        form.querySelector("[data-load-json]").value = loadModel.value ? "invalid" : "";
+        if (loadModel.value) loadOptions.setCustomValidity("Enter valid load options as a JSON object.");
+        form.querySelector("[data-load-status]").textContent = "Enter valid JSON before continuing.";
+      }
+    }
+    form.querySelector("[data-load-editor]").addEventListener("input", updateLoad);
+    loadModel.addEventListener("change", updateLoad);
+    updateLoad();
+    const familySelect = form.querySelector("[data-experiment-family]");
+    const experimentFields = form.querySelector("[data-experiment-fields]");
+    function updateExperiment() {
+      const family = familySelect.value;
+      experimentFields.hidden = !family;
+      const value = {family};
+      form.querySelector("[data-experiment-review]").textContent = family ? familySelect.selectedOptions[0].textContent : "None";
+      for (const input of experimentFields.querySelectorAll("[data-experiment-key]")) {
+        const key = input.dataset.experimentKey;
+        const queue = ["depthQuery", "ageQuery", "queueLabels", "maxDepth", "maxAgeSeconds"].includes(key);
+        const shown = family === "queue_drain" ? queue || key === "recoverySeconds" : !queue && (key !== "dependencyPod" || family.startsWith("dependency")) && (key !== "latencyMs" || family === "dependency_delay") && (key !== "cpuLoad" || family === "cpu_pressure") && (key !== "memoryMiB" || family === "memory_pressure");
+        input.closest("label").hidden = !shown;
+        input.disabled = !shown || !family;
+        if (shown) value[key] = input.type === "number" ? Number(input.value) : input.value;
+      }
+      try {
+        if (family === "queue_drain") value.queueLabels = JSON.parse(value.queueLabels);
+        form.querySelector("[data-experiment-json]").value = family ? JSON.stringify(value) : "";
+        form.querySelector("[data-experiment-status]").textContent = family ? "Needs setup verification · selected experiment will be included in the plan for review." : "No additional experiment selected.";
+      } catch {
+        form.querySelector("[data-experiment-json]").value = "invalid";
+        form.querySelector("[data-experiment-status]").textContent = "Queue identity labels must be valid JSON.";
+      }
+    }
+    familySelect.addEventListener("change", updateExperiment);
+    experimentFields.addEventListener("input", updateExperiment);
+    updateExperiment();
     const panels = [...form.querySelectorAll("[data-step]")];
     const stepButtons = [...form.querySelectorAll("[data-step-button]")];
     const back = form.querySelector("[data-back]");
@@ -264,6 +338,9 @@
       form.elements.fault_type.value = "none";
       journeyList.replaceChildren();
       projection.journeys.forEach(journey => addJourney({adapter: journey.adapter || "http", journey}));
+      loadModel.value = projection.load?.model || "";
+      loadOptions.value = JSON.stringify(projection.load || {}, null, 2);
+      updateLoad();
       scenarioWarnings = projection.warnings || [];
       form.dataset.scenarioWarnings = JSON.stringify(scenarioWarnings);
       goalProposal = null;
@@ -329,7 +406,7 @@
       const cards = [...journeyList.querySelectorAll("[data-journey]")];
       if (!cards.length) throw new Error("Add at least one traffic journey.");
       const adapters = new Set(cards.map(card => field(card, "adapter").value));
-      if (adapters.size > 1) throw new Error("One assessment cannot mix HTTP and Relayna journeys.");
+      if (adapters.size > 1 && !loadModel.value) throw new Error("One assessment cannot mix HTTP and Relayna journeys.");
       let uploadIndex = 0;
       const journeys = cards.map((card, index) => {
         const adapter = field(card, "adapter").value;
@@ -681,6 +758,9 @@
       form.dataset.scenarioWarnings = JSON.stringify(scenarioWarnings);
       journeyList.replaceChildren();
       projection.journeys.forEach(journey => addJourney({adapter: journey.adapter || "http", journey}));
+      loadModel.value = projection.load?.model || "";
+      loadOptions.value = JSON.stringify(projection.load || {}, null, 2);
+      updateLoad();
       syncBasicControls();
       renderGoalSummary();
       const gap = projection.missingInputs.length;
@@ -972,14 +1052,37 @@
     form.querySelector("[data-review-vus]").textContent = `${maxVus} VUs`;
     form.querySelector("[data-review-duration]").textContent = durationSeconds ? `${durationSeconds}s` : "Not specified";
     const fault = data.get("fault_type");
-    form.querySelector("[data-review-rollback]").textContent = fault === "none" ? "Not required" : "Required and verified after injection";
+    let experiment = null;
+    try { experiment = JSON.parse(data.get("experiment_json") || "null"); } catch { /* Server validates malformed experiment input. */ }
+    form.querySelector("[data-review-rollback]").textContent = experiment && experiment.family !== "queue_drain" ? "Controller restoration and recovery traffic required" : fault === "none" ? "Not required" : "Required and verified after injection";
+    if (experiment) form.querySelector("[data-review-duration]").textContent = `${durationSeconds}s traffic + ${experiment.recoverySeconds}s recovery per journey`;
+    try {
+      const load = JSON.parse(data.get("load_json") || "null");
+      if (load) {
+        const stages = load.stages || [{durationSeconds: load.durationSeconds}];
+        const seconds = stages.reduce((total, s) => total + s.durationSeconds, 0) + (load.warmupSeconds || 0) + (load.recoverySeconds || 0);
+        form.querySelector("[data-review-vus]").textContent = `${load.maxInFlight} in-flight journeys`;
+        form.querySelector("[data-review-duration]").textContent = `${seconds}s scheduled + bounded deadline drain${experiment ? " + experiment baseline/recovery" : ""}`;
+      }
+    } catch { /* The load editor and server show validation errors. */ }
     const outcomeSummary = form.querySelector("[data-review-outcomes]");
     if (outcomeSummary) outcomeSummary.textContent = (form.querySelector("[data-goal-outcomes] li")?.textContent || "Review the configured journey outcomes");
     let signals = [];
     let warnings = [];
     try { signals = JSON.parse(data.get("required_signals_json") || "[]"); } catch (_) { signals = []; }
     try { warnings = JSON.parse(form.dataset.scenarioWarnings || "[]"); } catch (_) { warnings = []; }
+    if (experiment) {
+      signals.push(experiment.family === "queue_drain" ? "scoped queue depth and age across load/recovery" : "controller injection/restoration and recovery traffic");
+      warnings.push("Experiment setup and telemetry have not yet been verified.");
+      form.querySelector('[data-review="fault_type"]').textContent = experiment.family === "queue_drain" ? "No injected fault" : experiment.family.replaceAll("_", " ");
+    }
     form.querySelector("[data-review-signals]").textContent = signals.join(", ") || "default Chamber evidence";
+    if (form.elements.execution_mode.value === "local") {
+      warnings.unshift("Local inspection only: traffic, faults, recovery, and cluster cleanup will not execute. No readiness score will be issued.");
+      form.querySelector("[data-review-vus]").textContent = "Not executed";
+      form.querySelector("[data-review-duration]").textContent = "Configuration inspection only";
+      form.querySelector("[data-review-rollback]").textContent = "Not applicable";
+    }
     form.querySelector("[data-review-limitations]").textContent = warnings.join(" ") || "none";
   }
 
@@ -995,7 +1098,7 @@
       page.querySelector("[data-run-id]").textContent = job.run_id || "Allocating…";
       page.querySelector("[data-job-output]").textContent = job.output || (job.error ? job.error : "Assessment process is running…");
       const stages = [...page.querySelectorAll(".stage-list li")];
-      const stageIndex = job.run_id ? 1 : 0;
+      const stageIndex = ["completed", "failed", "cancelled"].includes(job.state) ? 2 : job.state === "queued" ? 0 : 1;
       stages.forEach((stage, index) => {
         stage.classList.toggle("active", index <= stageIndex);
         if (index === stageIndex) stage.setAttribute("aria-current", "step");
@@ -1007,9 +1110,13 @@
       }
       if (["completed", "failed", "cancelled"].includes(job.state)) {
         source.close();
+        page.querySelector("[data-coverage]").textContent = job.mode === "local" ? "Not applicable" : job.state === "completed" ? "Review result" : "Incomplete";
+        page.querySelector("[data-job-message]").textContent = job.error || `Assessment ${job.state}.`;
+        const runLink = page.querySelector("[data-job-run-link]");
+        if (job.run_id) { runLink.href = `/runs/${job.run_id}`; runLink.hidden = false; }
         const button = page.querySelector("[data-cancel-form] button");
         button.disabled = true;
-        if (job.run_id) window.setTimeout(() => window.location.assign(`/runs/${job.run_id}`), 900);
+        if (job.run_id && job.state === "completed") window.setTimeout(() => window.location.assign(`/runs/${job.run_id}`), 900);
       }
     });
     source.onerror = () => {

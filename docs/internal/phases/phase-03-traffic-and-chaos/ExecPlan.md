@@ -464,3 +464,240 @@ through SSE, and produce content-safe lifecycle evidence.
   comparison selector, and preserved legacy API limits through 1,000 rows.
   `make check` passed again with 256 tests and 90% coverage after five new
   regressions and the updated legacy comparison/report contracts.
+
+## Studio Integration Assessment Follow-up (2026-09-12)
+
+### Scope And Order
+
+Implement the assessment's trust/lifecycle foundation, backend integration
+primitives, and existing UI/agent/report improvements on
+`codex/studio-integration-hardening`, created before implementation. Preserve the
+existing single-operator deployment boundary; Studio identity federation and
+new experiment families require their own contracts and acceptance evidence.
+This PR implements the foundation slice; the larger assessment roadmap remains follow-up work.
+
+### Checklist
+
+- [x] Gate required signals and reject insufficient artifact content.
+- [x] Allocate immutable run/job associations, persist job state, drain bounded
+      output, and bound cancellation with explicit interrupted cleanup state.
+- [x] Preserve report provenance and expose reporting failures consistently.
+- [x] Add plan-ID starts, idempotent submissions, and resumable run events;
+      distinguish bearer API authentication from cookie CSRF protection.
+- [x] Render useful agent summaries with stage history and validated citations.
+- [x] Shorten Basic setup and clarify capabilities, local scope, and report UI.
+- [x] Add regression tests, verify Docker and Chrome, bump SemVer to 1.10.0,
+      and pass `make check` (266 tests, 90% coverage).
+- [x] Open [draft PR #42](https://github.com/sarattha/ampule-chamber/pull/42) and run `make clean`. The temporary Docker verification container was removed.
+
+### Acceptance Criteria
+
+Missing or empty required evidence cannot produce readiness. Concurrent jobs
+retain their allocated run IDs. Verbose children complete without pipe stalls;
+cancellation is bounded and never implies unverified cleanup succeeded. A
+restarted manager retains history and identifies interrupted execution.
+Reports remain readable without git/source checkout and preserve captured
+identity. API retries do not launch duplicate work. Browser cookie writes
+remain CSRF-protected. Chrome verifies the wizard, agents, reports, failure
+states, and narrow layout. Final release checks must all pass before the PR.
+
+### Evidence And Decisions
+
+Acceptance evidence and the integration contract are recorded in
+[the hardening artifact](artifacts/studio-integration-hardening.md).
+
+Report exports preserve recorded results and captured provenance. Collector gates
+validate structural content and required-signal availability; citation validation
+checks presence and allowed IDs, not semantic truth. POSIX job leases cover one
+host. An interrupted Kubernetes supervisor requires cleanup review; automatic
+orphan cleanup and distributed scheduling are outside this foundation slice.
+
+The first full check caught deployment version pins still at 1.9.0; Helm and raw
+Deployment metadata were aligned to 1.10.0. Subsequent full checks passed. Chrome
+confirmed the actual sample readiness path is `/readyz`, and exposed a lingering
+local cleanup claim in agent summaries; it now says not applicable. Failed jobs
+retain a permanent interruption marker so later child writes cannot restore a
+successful verdict through the normal metadata/result pipeline.
+
+### PR #42 CI Remediation (2026-09-12)
+
+- Both failed CI jobs stopped at Trivy scans. Helm validation and image build
+  passed; the image smoke test was skipped after the scan failed.
+- Updated k6's x/crypto to 0.55.0 and gRPC to 1.83.2, including Go-selected
+  transitive updates; updated kubectl's x/net to 0.56.0.
+- Bumped the Docker Go compiler from 1.26.5 to 1.26.7.
+- Confirmed the Python image findings come from pip's vendored msgpack 1.1.2
+  and setuptools 70.3.0. Remove unused pip from the final runtime; retain it
+  in the build stage. No vulnerability suppressions or scanner-policy changes.
+- Local acceptance passed: Trivy 0.74.0 with refreshed database, severity
+  HIGH/CRITICAL, `--ignore-unfixed`, and failure exit code enabled reported
+  zero findings for both repository dependencies and the rebuilt image
+  (Debian 13.7, Python, k6, kubectl). No scan exclusions or ignores were added.
+- Docker `/readyz` returned ready; kubectl reported v1.36.2; k6 completed one
+  HTTP health request with a passing check and no failed requests. Runtime
+  Python imports succeeded and pip was absent. Image ID:
+  `sha256:e34eef64daf94efd675aa9375917fbb3a11a30e5498e2f692409e38521a3da51`.
+- Updated existing release dependency assertions to the patched versions.
+  `make check` passed: 266 tests, 90% coverage, scenario/deployment/release
+  validation, strict documentation, and package builds for 1.10.0.
+- Remote CI will verify the pushed commit on Linux/amd64; local Docker
+  verification ran on Linux/arm64. This updates the existing draft release
+  1.10.0 rather than creating another release or PR.
+
+- Remote Trivy repository scan passed. The previously blocked Gitleaks step
+  then flagged the recorded local test job UUID as a generic API key in
+  historical commit `4f27239`. Verified it is an assessment identifier, not
+  a credential. Removed the redundant UUID from current documentation and
+  added one exact historical finding fingerprint to `.gitleaksignore`; no
+  file-wide, rule-wide, or credential pattern exclusions were introduced.
+
+## Named Chambers And Executable Families (2026-09-14)
+
+The user explicitly requested implementation of both previously deferred areas.
+Extend the existing draft PR and its unreleased 1.10.0 version. Use named,
+immutable chamber profiles (clone to revise), namespace-level single-host
+admission exclusion, immutable plan snapshots, and enforced traffic budgets.
+Add Chaos Mesh dependency delay/outage and CPU/memory stress with explicit pod
+selection, bounded duration, injection and restoration evidence; add queue
+backpressure/drain with scoped, fresh Prometheus observations. Never infer queue
+health from task completion. Configured capabilities are not verified readiness.
+
+- [x] Implement chamber persistence, selection, snapshots, budgets and occupancy.
+- [x] Implement experiment validation, execution, restoration and assertion evidence.
+- [x] Add readable UI/report assertions and operator setup documentation.
+- [x] Verify passing, failing, missing evidence, restoration and concurrent admission.
+- [x] Verify Docker runtime and Chrome desktop/narrow UI, run make check, update PR.
+
+Acceptance and operational limits: [named chambers and experiments](artifacts/chambers-and-experiments.md). The existing draft PR is being updated; no new release version is introduced.
+
+## Load Testing Priorities 1–7 (2026-09-14)
+
+The user requested all seven priorities and authorized landing the PR after
+Codex review and CI. Extend the existing green draft PR #42; preserve its
+unreleased 1.10.0 version and existing scenarios. Implement one opt-in load-suite
+contract and scheduler shared by HTTP and Relayna. Legacy k6 journeys remain
+compatible. Browser/Docker acceptance and review fixes are part of delivery.
+
+- [x] Arrival-rate scheduling with bounded in-flight tasks and delivery accounting.
+- [x] Per-journey p95/p99, error/completion/deadline and lifecycle gates.
+- [x] Measured admission, queue, execution and total lifecycle timing; explicit gaps.
+- [x] Concurrent weighted HTTP/Relayna workload mixes.
+- [x] Seeded datasets, payload distributions, environment-bound authentication,
+      response extraction and chained requests without persisting response content.
+- [x] Capacity step holds, sustained failure stop, recovery and soak trends.
+- [x] Generator CPU/memory, scheduling lag, active requests and dropped admission.
+- [x] Structured UI/results, meaningful fixtures, Docker/Chrome and make check.
+- [x] Request Codex review, resolve findings, and verify CI for PR #42.
+
+Acceptance must distinguish sustainable throughput, fast admission with growing
+work latency, and an overloaded generator. Missing timing or insufficient target
+rate cannot become a pass. Scheduled load and recovery obey chamber budgets.
+
+Implementation decisions: opt-in `traffic.load` keeps legacy schedules compatible;
+normal stage boundaries preserve the arrival timeline, capacity steps drain before
+evaluation, missed/full slots are dropped without queuing, and target-rate gaps
+make results inconclusive. Queue/worker timings are client-observed SSE estimates,
+not server spans. Scoped Prometheus data retains namespace and workload identity.
+Baseline/fault/recovery artifacts all participate in result evidence gates.
+
+Evaluation: real loopback HTTP/SSE tests cover weighted concurrency, overload,
+fast admission with slower worker transitions, continuously dripping response
+deadlines, extraction/auth redaction, seeded distributions, capacity stopping,
+soak and scoped metric failure cases. Docker ran the real suite through a simulated
+Kubernetes controller and produced separate baseline/fault/recovery summaries.
+Chrome saved both capacity and mixed HTTP/Relayna soak plans and verified mobile
+report layout. Conflicting legacy VU controls were removed from suite mode.
+
+Acceptance evidence: [load suite delivery](artifacts/load-suite-acceptance.md).
+
+Final local acceptance: `make check` passed with 293 tests and 90% branch-aware
+aggregate coverage, plus scenario/deployment/release validation, strict docs and
+package build. All 16 load-suite tests passed inside the Docker runtime (20.128s).
+Chrome recorded no console errors during the final editor/report checks.
+
+Review follow-up: preserve bounded body reads and active-request accounting for
+expected HTTP rejection statuses (such as 503), and resolve the upload workspace
+from the original run for baseline/recovery traffic. Regression checks passed;
+`make check` passed with 294 tests and 90% coverage. CI on `ad36d48` passed all
+Python, security and Kubernetes deployment checks; Codex review is running.
+
+Codex reviewed `9a351d2` and reported one P1: execution-time Prometheus overrides
+were not propagated to experiment/load sampling. The effective validated URL is
+now captured in the execution configuration before snapshots or samplers are
+created, in both deploy and attach paths. An integration regression proves the
+queue sampler, load configuration, general collector and saved snapshot use the
+selected server, while the source file remains unchanged.
+
+Additional telemetry verification rejects repeated cached timestamps for memory
+growth and requires a post-drain queue sample, with a bounded refresh window.
+Provider timestamps are retained and query-body reads share the deadline bound.
+Stable final `make check` passed with 297 tests and 90% coverage; all 20 load-suite
+tests passed in Docker (30.229s). No test/lint/typecheck/coverage gate was relaxed.
+
+Second Codex pass on `045fd51` found three further issues. Queue-drain evidence
+now retains provider timestamps and requires two distinct post-admission-stop
+observations for both depth and age. Named chamber binding and execution reject
+a Prometheus URL that differs from the authoritative profile, including job/CLI
+overrides. Experiment and chamber metadata are included before scenario revision
+preparation; a form/catalog regression proves the run and saved revisions match.
+All 299 tests and `make check` passed with 90% coverage. The expanded Docker test
+rerun stalled, including Docker status calls; earlier 20-test Docker and Chrome
+acceptance remains recorded above, and this rerun is not claimed as passed.
+
+Docker retry on a copied `4a410ef` source archive passed all 33 chamber/experiment
+and load tests (37.663s), avoiding slow shared-mount file reads. A third Codex pass
+identified direct CLI context overrides and trickling queue metric reads. Both
+deploy and attach reject a named chamber context mismatch before any command.
+Queue metrics now use the shared monotonic-deadline response reader, proven with
+a real HTTP server dripping bytes below the socket timeout. `make check` passed
+with 301 tests and 90% coverage; review follow-up remains in progress.
+
+Docker acceptance of `2516e98` passed all 35 chamber/experiment/load tests (31.026s).
+The fourth Codex pass identified job snapshot upload roots, direct CLI profile
+authority, graceful failure evidence, metrics-source comparison compatibility and
+missing load comparison signals. Input snapshots now live under the reserved run;
+child command paths and the input-only overwrite guard follow that location. CLI
+execution binds the authoritative stored chamber. Graceful terminal child metadata
+and reports survive supervisor exit handling, while forced/interrupted execution
+retains conservative cleanup handling. Comparisons include the effective metrics
+source and read load p95/error measurements. Regression tests cover actual upload
+validation, job/run events, profile tampering, cleanup states and metric deltas.
+`make check` passed with 305 tests and 90% coverage; no acceptance gate was relaxed.
+
+The expanded 49-test Docker run on `9d96603` exposed shared-runtime scheduling
+misses (correctly classified inconclusive) and a cancellation-test startup race.
+A second run still had two timing-sensitive load failures; all four new execution
+boundary/comparison regressions passed. These expanded runs are not counted as
+full Docker acceptance. The cancellation test now waits for a child-ready file
+after installing signal handlers. Final local `make check` passed: 305 tests,
+90% coverage, all validation/docs/build steps. Runtime code remains `9d96603`
+while Codex verifies that patch.
+
+Docker functional acceptance on `994c7c1` passed all 29 chamber, execution-boundary
+and Studio hardening tests (2.636s), including cancellation synchronization. The
+next Codex pass found one remaining no-fault attach cleanup mismatch. The
+supervisor now accepts an explicit `faults_requested: false` when verification
+is absent; explicit `verified: false` still requires cleanup. Both cases are
+covered. `make check` again passed with 305 tests and 90% coverage.
+
+Docker passed 29 functional tests on `77c183d` (4.024s). Codex then identified
+that a partially failed legacy fault sequence could leave the initial no-fault
+placeholder. Attach faults now share their action/restore ledger with the caller,
+register each action before a mutation command, and compute verification from
+all recorded actions. Finally restores pending scales even after a later fault
+or ambiguous command failure; unresolved pod mutations keep verification false.
+Full-workflow regressions cover a successful scale followed by an undiscovered
+pod, failed restoration, ambiguous deletion and ambiguous scaling. `make check`
+passed with 306 tests and 90% coverage.
+
+Final acceptance (2026-09-14): Codex reviewed `d8b2d22991` and reported no major
+issues, with a thumbs-up at 14:39:12 UTC. All 13 review threads are resolved. CI
+passed across Python 3.11/3.13/3.14, security, Kubernetes deployment, metadata and
+docs. Docker on that runtime commit passed 30 functional tests (3.678s) and all
+20 load-suite tests (31.058s) in separate runs. Local `make check` passed with
+306 tests and 90% coverage; Chrome acceptance and limitations remain recorded in
+the linked artifact. This final update changes documentation only.
+
+Implementation and review are complete. The authoritative landing record is
+[PR #42](https://github.com/sarattha/ampule-chamber/pull/42); merge is gated on the
+final documentation commit's CI checks.

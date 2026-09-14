@@ -91,7 +91,7 @@ class RunWorkspaceProjectionTests(unittest.TestCase):
             self.assertEqual(page.status_code, 200)
             self.assertIn("Operational reliability", page.text)
             self.assertIn("Needs attention", page.text)
-            self.assertIn("My services", page.text)
+            self.assertIn("Assigned services", page.text)
             self.assertIn("No runs match these filters", client.get("/runs?q=missing").text)
             self.assertEqual(api["pagination"]["total_items"], 1)
             self.assertEqual(api["filters"]["outcome"], "inconclusive")

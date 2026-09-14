@@ -85,6 +85,7 @@ class ChamberApplication:
         repo: Path | None = None,
         config: Path | None = None,
         resume: Path | None = None,
+        run_dir: Path | None = None,
         mode: str = "local",
         agents_mode: str | None = None,
         agents_exclude: tuple[str, ...] = (),
@@ -97,6 +98,7 @@ class ChamberApplication:
             repo=repo,
             config=config,
             resume=resume,
+            run_dir=run_dir,
             mode=mode,
             agents_mode=agents_mode,
             agents_exclude=agents_exclude,
@@ -274,6 +276,7 @@ class ChamberApplication:
             "config": config,
             "plan": _json_or_default(run_dir / "plan.json", {}),
             "agents": _agents(run_dir / "agent"),
+            "agent_execution": _json_or_default(run_dir / "agent-stage.json", {}),
             "report_markdown": _text_or_default(run_dir / "report.md"),
             "prometheus": _prometheus_view(run_dir / "evidence/prometheus-memory.json"),
             "relayna": _relayna_view(run_dir / "evidence/relayna-summary.json"),
@@ -939,6 +942,43 @@ def _compatibility_reasons(
         ("environment provider", left["environment"], right["environment"]),
         ("runtime mode", left["runtime_mode"], right["runtime_mode"]),
     )
+    left_config, right_config = baseline.get("config", {}), candidate.get("config", {})
+    if left_config.get("chamber") or right_config.get("chamber"):
+        for field in ("context", "namespace", "workload"):
+            checks += (
+                (
+                    f"chamber {field}",
+                    left_config.get("chamber", {}).get(field),
+                    right_config.get("chamber", {}).get(field),
+                ),
+            )
+    if any(
+        config.get("chamber") or config.get("traffic", {}).get("load")
+        for config in (left_config, right_config)
+    ):
+        checks += (
+            (
+                "metrics source",
+                left_config.get("runtime", {}).get("prometheusUrl") or "not configured",
+                right_config.get("runtime", {}).get("prometheusUrl") or "not configured",
+            ),
+        )
+    if left_config.get("traffic", {}).get("load") or right_config.get("traffic", {}).get("load"):
+        checks += (
+            (
+                "load contract",
+                json.dumps(left_config.get("traffic"), sort_keys=True),
+                json.dumps(right_config.get("traffic"), sort_keys=True),
+            ),
+        )
+    if left_config.get("experiment") or right_config.get("experiment"):
+        checks += (
+            (
+                "experiment contract",
+                json.dumps(left_config.get("experiment"), sort_keys=True),
+                json.dumps(right_config.get("experiment"), sort_keys=True),
+            ),
+        )
     return tuple(
         {
             "dimension": name,
@@ -971,6 +1011,12 @@ def _signal_snapshot(run: dict[str, Any]) -> dict[str, float | int | None]:
     latency = _metric_value(metrics, "http_req_duration", "p(95)")
     failure_rate = _metric_value(metrics, "http_req_failed", "value")
     recovery_time = _metric_value(metrics, "recovery_time", "value")
+    if _mapping(_mapping(run.get("config")).get("traffic")).get("load"):
+        load = _mapping(_json_or_default(run_dir / "evidence/load-summary.json", {}))
+        load_metrics = _mapping(load.get("metrics"))
+        latency = _number(load_metrics.get("p95Ms"))
+        failure_rate = _number(load_metrics.get("errorRate"))
+        recovery_time = None
     prometheus = _mapping(run.get("prometheus"))
     workloads = prometheus.get("workloads")
     workload_items = (

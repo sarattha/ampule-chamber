@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import signal
 import subprocess
 import time
 import unittest
@@ -37,6 +38,7 @@ from chamber.runs import (
     write_json_atomic,
 )
 from chamber.workflow import infer_config, save_config
+from tests.evidence_fixtures import evidence_payload
 
 
 class RunStoreTests(unittest.TestCase):
@@ -124,7 +126,9 @@ class AssessmentResultTests(unittest.TestCase):
             evidence = run_dir / "evidence"
             evidence.mkdir(parents=True)
             for name in ("preflight", "kubernetes-commands", "k6-summary"):
-                (evidence / f"{name}.json").write_text("{}", encoding="utf-8")
+                (evidence / f"{name}.json").write_text(
+                    json.dumps(evidence_payload(name)), encoding="utf-8"
+                )
             refresh_evidence_manifest(run_dir)
             metadata = {
                 "run_id": run_dir.name,
@@ -1605,7 +1609,7 @@ class JobManagerUnitTests(unittest.TestCase):
             process = MagicMock(spec=subprocess.Popen)
             process.poll.return_value = 1
             process.returncode = 1
-            process.communicate.return_value = ("assessment failed\n", None)
+            process.stdout = __import__("io").StringIO("assessment failed\n")
             with patch("chamber.control_plane.jobs.subprocess.Popen", return_value=process):
                 manager._execute(exited.job_id)
             self.assertEqual(manager.get(exited.job_id)["state"], "failed")
@@ -1633,8 +1637,10 @@ class JobManagerUnitTests(unittest.TestCase):
                 process=process,
             )
             manager._jobs[job.job_id] = job
-            manager.cancel(job.job_id)
-            process.send_signal.assert_called_once()
+            process.pid = 12345
+            with patch("chamber.control_plane.jobs.os.killpg") as killpg:
+                manager.cancel(job.job_id)
+            killpg.assert_called_once_with(12345, signal.SIGINT)
 
 
 def _fixture_repo(root: Path) -> Path:

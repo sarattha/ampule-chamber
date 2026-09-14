@@ -614,7 +614,7 @@ class Phase13OneCommandAssessmentTests(unittest.TestCase):
 
             report = (run_dir / "report.md").read_text(encoding="utf-8")
 
-        self.assertIn("- Commit: unknown", report)
+        self.assertIn("- Commit: external-working-tree", report)
         self.assertIn("Ampule Chamber Reliability Report", report)
 
     def test_assess_refuses_unsafe_kubernetes_context(self) -> None:
