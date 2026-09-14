@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime, timedelta
@@ -43,7 +44,9 @@ from chamber.application import (
     build_assessment_result,
     prometheus_query_pod_coverage,
 )
+from chamber.chaos.experiments import ExperimentSession, validate_experiment
 from chamber.environment import preflight_to_evidence, run_kubernetes_preflight
+from chamber.environment.chambers import validate_budget
 from chamber.environment.preflight import (
     CommandRunner as KubernetesCommandRunner,
 )
@@ -391,6 +394,8 @@ def validate_config(
         _normalized_agent_names(_optional_string_tuple(agents, "exclude")),
         source=f"{source}.agents.exclude",
     )
+    validate_experiment(config)
+    validate_budget(config)
     _validate_runtime(runtime, source=f"{source}.runtime")
     scenario_id = config.get("scenarioId")
     scenario = config.get("scenario")
@@ -854,6 +859,13 @@ def _assess_kubernetes_attach_config(
     discovery: dict[str, Any] = {}
     traffic_started_at: datetime | None = None
     relayna_workers: tuple[dict[str, Any], ...] = ()
+    experiment = (
+        ExperimentSession(config, run_dir, runner, selected_context)
+        if config.get("experiment")
+        else None
+    )
+    sampling_stop = threading.Event()
+    sampler: threading.Thread | None = None
     try:
         discovery = _discover_attach_target(
             context=selected_context,
@@ -875,6 +887,17 @@ def _assess_kubernetes_attach_config(
                 runner=runner,
                 commands=commands,
             )
+        if experiment:
+            experiment.start()
+            if experiment.spec["family"] == "queue_drain":
+
+                def sample_queue() -> None:
+                    while not sampling_stop.is_set():
+                        experiment.sample("load")
+                        sampling_stop.wait(2)
+
+                sampler = threading.Thread(target=sample_queue, daemon=True)
+                sampler.start()
         traffic_started_at = datetime.now(UTC)
         traffic_result = _execute_kubernetes_traffic(
             config=config,
@@ -883,6 +906,8 @@ def _assess_kubernetes_attach_config(
             namespace=namespace,
             runner=runner,
         )
+        if experiment and experiment.spec["family"] != "queue_drain":
+            experiment.record_load(bool(traffic_result.get("success")))
         if traffic_result.get("evidence_id") == "relayna-summary":
             relayna_workers = _discover_relayna_worker_pods(
                 context=selected_context,
@@ -932,6 +957,55 @@ def _assess_kubernetes_attach_config(
     except (Exception, KeyboardInterrupt) as exc:
         failure = exc
     finally:
+        sampling_stop.set()
+        if sampler:
+            sampler.join(timeout=12)
+        if experiment:
+            experiment.finish()
+            if experiment.spec["family"] == "queue_drain" and failure is None:
+                recovery_end = time.monotonic() + experiment.spec["recoverySeconds"]
+                while time.monotonic() < recovery_end:
+                    experiment.sample("recovery")
+                    time.sleep(2)
+                experiment.evaluate_queue()
+            elif failure is None and experiment.evidence.get("restored"):
+                recovery_config = json.loads(json.dumps(config))
+                for journey in recovery_config["traffic"]["journeys"]:
+                    if journey.get("adapter") == "relayna":
+                        journey.pop("stages", None)
+                        journey.update(iterations=1, vus=1)
+                        journey["relayna"]["timeoutSeconds"] = experiment.spec["recoverySeconds"]
+                    else:
+                        journey.pop("iterations", None)
+                        journey["stages"] = [
+                            {"duration": f"{experiment.spec['recoverySeconds']}s", "targetVus": 1}
+                        ]
+                recovery_dir = run_dir / "recovery"
+                _ensure_run_subdirs(recovery_dir)
+                try:
+                    recovery = _execute_kubernetes_traffic(
+                        config=recovery_config,
+                        run_dir=recovery_dir,
+                        context=selected_context,
+                        namespace=namespace,
+                        runner=runner,
+                    )
+                    experiment.assertion(
+                        "Traffic succeeds after restoration",
+                        "pass" if recovery.get("success") else "fail",
+                        True,
+                        bool(recovery.get("success")),
+                    )
+                    for artifact in (recovery_dir / "evidence").glob("*.json"):
+                        shutil.copyfile(
+                            artifact, run_dir / "evidence" / ("recovery-" + artifact.name)
+                        )
+                except Exception as exc:
+                    experiment.assertion(
+                        "Traffic succeeds after restoration", "missing", True, str(exc)
+                    )
+            experiment.persist()
+            rollback_evidence["verified"] = bool(experiment.evidence.get("restored"))
         if rollback_evidence.get("pending_restore"):
             rollback_evidence = _restore_attach_faults(
                 rollback_evidence,
@@ -3484,7 +3558,8 @@ def _report_input(
     )
     cleanup_notes = tuple(metadata.get("cleanup_notes") or ["Cleanup status was not recorded."])
     agent_sections = (
-        _prometheus_report_sections(run_dir)
+        _experiment_report_sections(run_dir)
+        + _prometheus_report_sections(run_dir)
         + _agent_sections(run_dir)
         + _relayna_input_sections(run_dir)
     )
@@ -4539,3 +4614,17 @@ def _non_empty(value: Any, name: str) -> str:
 def _require(condition: bool, message: str) -> None:
     if not condition:
         raise WorkflowError(message)
+
+
+def _experiment_report_sections(run_dir: Path) -> tuple[ReportSection, ...]:
+    result = _read_json(run_dir / "result.json")
+    experiment = result.get("experiment", {})
+    if not experiment:
+        return ()
+    lines = [f"Family: {experiment.get('family')}", "Evidence: experiment"]
+    for assertion in experiment.get("assertions", []):
+        lines.append(
+            f"{assertion['name']}: {assertion['state']} · expected {assertion['expected']} "
+            f"· observed {assertion['observed']}"
+        )
+    return (ReportSection(heading="Experiment Assertions", lines=tuple(lines)),)

@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Chambers · Ampule Chamber{% endblock %}
+{% block content %}
+<div class="page-heading"><div class="eyebrow">Reusable environments</div><h1>Chambers</h1><p>Save a target and budget, then choose it when planning an assessment. Each plan retains its chamber snapshot. Clone a profile to change settings.</p></div>
+<div class="form-grid">
+{% for chamber in profiles %}<article class="panel"><span class="pill">{{ chamber.occupancy }}</span><h2>{{ chamber.name }}</h2><p>{{ chamber.context }} / {{ chamber.namespace }}</p><p>{{ chamber.service }} · {{ chamber.workload }}</p><p>{{ chamber.max_vus }} VUs · {{ chamber.max_duration_seconds }} seconds maximum</p><p>Faults {{ 'allowed' if chamber.allow_faults else 'disabled' }} · Chaos Mesh {{ 'configured' if chamber.chaos_mesh else 'not configured' }} · readiness not checked</p><div class="action-row"><a class="button" href="/new?chamber_id={{ chamber.id }}">Plan assessment</a><a class="button" href="/chambers?clone={{ chamber.id }}">Clone settings</a></div>{% for job in chamber.attention_jobs %}<form method="post" action="/ui/jobs/{{ job.job_id }}/cleanup-verified"><input type="hidden" name="_csrf" value="{{ csrf_token }}"><p>Admission is blocked after an interrupted assessment. Inspect its fault resource and target before releasing the chamber.</p><label><input type="checkbox" name="confirmed" value="verified" required>I verified target cleanup and fault restoration</label><button class="button" type="submit">Record verification and release</button></form>{% endfor %}{% if chamber.jobs %}<h3>Recent assessments</h3><ul>{% for job in chamber.jobs[:5] %}<li><a href="/jobs/{{ job.job_id }}">{{ job.state }} · {{ job.created_at }}</a></li>{% endfor %}</ul>{% endif %}</article>{% else %}<p>No saved chambers yet. Create one below to reuse its target and safety limits.</p>{% endfor %}
+</div>
+<section class="panel"><h2>{{ 'Clone chamber' if selected else 'Create chamber' }}</h2><form method="post" action="/ui/chambers" class="form-grid"><input type="hidden" name="_csrf" value="{{ csrf_token }}">
+{% for key, label in [('name','Chamber name'),('context','Kubernetes context'),('namespace','Namespace'),('service','Service'),('workload','Workload')] %}<label>{{ label }}<input name="{{ key }}" required value="{{ selected.get(key, '') }}"></label>{% endfor %}
+<label>Prometheus URL<input name="prometheus_url" type="url" value="{{ selected.get('prometheus_url', '') }}"></label>
+<label>Maximum VUs<input name="max_vus" type="number" min="1" max="100" value="{{ selected.get('max_vus',25) }}" required></label>
+<label>Maximum traffic and recovery seconds<input name="max_duration_seconds" type="number" min="20" max="900" value="{{ selected.get('max_duration_seconds',300) }}" required></label>
+<label>Fault permission<select name="allow_faults"><option value="false">Observe only</option><option value="true" {{ 'selected' if selected.get('allow_faults') }}>Allow explicit faults</option></select></label>
+<label>Chaos Mesh capability<select name="chaos_mesh"><option value="false">Not configured</option><option value="true" {{ 'selected' if selected.get('chaos_mesh') }}>Configured · verify at execution</option></select></label>
+<button class="button primary" type="submit">Save chamber</button></form></section>
+{% endblock %}

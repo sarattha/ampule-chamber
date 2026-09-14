@@ -404,3 +404,12 @@ details { border-top: 1px solid var(--line); } summary { padding: 14px 0; cursor
 .agent-brief { padding: 20px 0; border-top: 1px solid var(--line); }
 .agent-brief h4 { margin-bottom: 6px; }
 .report-event-window time { overflow-wrap: anywhere; }
+
+@media (max-width: 600px) {
+  .experiment-assertions thead { display: none; }
+  .experiment-assertions table, .experiment-assertions tbody { display: block; width: 100%; }
+  .experiment-assertions tr { display: grid; grid-template-columns: 1fr 1fr; padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .experiment-assertions td { display: block; min-width: 0; padding: 8px; border: 0; overflow-wrap: anywhere; }
+  .experiment-assertions td:first-child { grid-column: 1 / -1; font-weight: 600; }
+  .experiment-assertions td::before { content: attr(data-label); display: block; font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
+}

@@ -1,10 +1,55 @@
 (() => {
   const wizard = document.querySelector("[data-wizard]");
-  if (wizard) initializeWizard(wizard);
+  if (wizard) {
+    initializeWizard(wizard);
+    const selectedChamber = wizard.querySelector("[data-chamber-select]");
+    if (selectedChamber?.value) selectedChamber.dispatchEvent(new Event("change"));
+  }
   const livePage = document.querySelector("[data-job-id]");
   if (livePage) initializeLivePage(livePage);
 
   function initializeWizard(form) {
+    const chamberSelect = form.querySelector("[data-chamber-select]");
+    chamberSelect?.addEventListener("change", () => {
+      const profile = chamberSelect.selectedOptions[0].dataset.profile;
+      if (!profile) return;
+      const chamber = JSON.parse(profile);
+      for (const [field, value] of Object.entries({target_source: "kubernetes", execution_mode: "kubernetes", runtime_mode: "attach", kubernetes_context: chamber.context, namespace: chamber.namespace, service_name: chamber.service, workload_name: chamber.workload, prometheus_url: chamber.prometheus_url})) {
+        const input = form.elements[field];
+        if (input instanceof RadioNodeList) input.value = value;
+        else input.value = value;
+      }
+      form.querySelector('[name="execution_mode"][value="kubernetes"]').dispatchEvent(new Event("change", {bubbles:true}));
+      form.elements.runtime_mode.dispatchEvent(new Event("change", {bubbles:true}));
+      form.querySelector('[name="target_source"][value="kubernetes"]').dispatchEvent(new Event("change", {bubbles:true}));
+    });
+    const familySelect = form.querySelector("[data-experiment-family]");
+    const experimentFields = form.querySelector("[data-experiment-fields]");
+    function updateExperiment() {
+      const family = familySelect.value;
+      experimentFields.hidden = !family;
+      const value = {family};
+      form.querySelector("[data-experiment-review]").textContent = family ? familySelect.selectedOptions[0].textContent : "None";
+      for (const input of experimentFields.querySelectorAll("[data-experiment-key]")) {
+        const key = input.dataset.experimentKey;
+        const queue = ["depthQuery", "ageQuery", "queueLabels", "maxDepth", "maxAgeSeconds"].includes(key);
+        const shown = family === "queue_drain" ? queue || key === "recoverySeconds" : !queue && (key !== "dependencyPod" || family.startsWith("dependency")) && (key !== "latencyMs" || family === "dependency_delay") && (key !== "cpuLoad" || family === "cpu_pressure") && (key !== "memoryMiB" || family === "memory_pressure");
+        input.closest("label").hidden = !shown;
+        input.disabled = !shown || !family;
+        if (shown) value[key] = input.type === "number" ? Number(input.value) : input.value;
+      }
+      try {
+        if (family === "queue_drain") value.queueLabels = JSON.parse(value.queueLabels);
+        form.querySelector("[data-experiment-json]").value = family ? JSON.stringify(value) : "";
+        form.querySelector("[data-experiment-status]").textContent = family ? "Needs setup verification · selected experiment will be included in the plan for review." : "No additional experiment selected.";
+      } catch {
+        form.querySelector("[data-experiment-json]").value = "invalid";
+        form.querySelector("[data-experiment-status]").textContent = "Queue identity labels must be valid JSON.";
+      }
+    }
+    familySelect.addEventListener("change", updateExperiment);
+    experimentFields.addEventListener("input", updateExperiment);
+    updateExperiment();
     const panels = [...form.querySelectorAll("[data-step]")];
     const stepButtons = [...form.querySelectorAll("[data-step-button]")];
     const back = form.querySelector("[data-back]");
@@ -972,13 +1017,21 @@
     form.querySelector("[data-review-vus]").textContent = `${maxVus} VUs`;
     form.querySelector("[data-review-duration]").textContent = durationSeconds ? `${durationSeconds}s` : "Not specified";
     const fault = data.get("fault_type");
-    form.querySelector("[data-review-rollback]").textContent = fault === "none" ? "Not required" : "Required and verified after injection";
+    let experiment = null;
+    try { experiment = JSON.parse(data.get("experiment_json") || "null"); } catch { /* Server validates malformed experiment input. */ }
+    form.querySelector("[data-review-rollback]").textContent = experiment && experiment.family !== "queue_drain" ? "Controller restoration and recovery traffic required" : fault === "none" ? "Not required" : "Required and verified after injection";
+    if (experiment) form.querySelector("[data-review-duration]").textContent = `${durationSeconds}s traffic + ${experiment.recoverySeconds}s recovery per journey`;
     const outcomeSummary = form.querySelector("[data-review-outcomes]");
     if (outcomeSummary) outcomeSummary.textContent = (form.querySelector("[data-goal-outcomes] li")?.textContent || "Review the configured journey outcomes");
     let signals = [];
     let warnings = [];
     try { signals = JSON.parse(data.get("required_signals_json") || "[]"); } catch (_) { signals = []; }
     try { warnings = JSON.parse(form.dataset.scenarioWarnings || "[]"); } catch (_) { warnings = []; }
+    if (experiment) {
+      signals.push(experiment.family === "queue_drain" ? "scoped queue depth and age across load/recovery" : "controller injection/restoration and recovery traffic");
+      warnings.push("Experiment setup and telemetry have not yet been verified.");
+      form.querySelector('[data-review="fault_type"]').textContent = experiment.family === "queue_drain" ? "No injected fault" : experiment.family.replaceAll("_", " ");
+    }
     form.querySelector("[data-review-signals]").textContent = signals.join(", ") || "default Chamber evidence";
     if (form.elements.execution_mode.value === "local") {
       warnings.unshift("Local inspection only: traffic, faults, recovery, and cluster cleanup will not execute. No readiness score will be issued.");

@@ -22,6 +22,13 @@ PROMETHEUS_REQUIRED_QUERIES = (
 PROMETHEUS_REQUIRED_SIGNALS = {"cpu_usage", "memory_usage"}
 
 EVIDENCE_REQUIREMENTS = {
+    "experiment": {
+        "name": "Experiment assertions and restoration",
+        "impact": "The selected experiment has incomplete injection, recovery or queue evidence.",
+        "likely_cause": "Setup failed, the fault expired early, or observations are missing.",
+        "resolution": "Review experiment settings, target permissions, duration and telemetry.",
+        "configuration_path": "experiment",
+    },
     "preflight": {
         "name": "Kubernetes preflight checks",
         "impact": "Cluster identity, access, and safety prerequisites were not verified.",
@@ -188,6 +195,8 @@ def build_assessment_result(
         for signal in signals
         if signal not in supported or not _runtime_signal_present(run_dir, signal)
     )
+    if config.get("experiment"):
+        required.append("experiment")
     required = list(dict.fromkeys(required))
     if runtime_mode == "attach":
         required.extend(("attach-discovery", "pre-test-state", "rollback"))
@@ -204,6 +213,37 @@ def build_assessment_result(
         for item in required
         if item in available and (item != "prometheus-memory" or prometheus_available)
     ]
+    experiment_result: dict[str, Any] = {}
+    if config.get("experiment") and "experiment" in available:
+        experiment_result = json.loads((run_dir / "evidence/experiment.json").read_text())
+        assertions = experiment_result.get("assertions", [])
+        expected_assertions = (
+            {
+                "Backpressure exercised",
+                "Queue depth stays within budget",
+                "Oldest task age stays within budget",
+                "Queue drains after admissions stop",
+            }
+            if config["experiment"].get("family") == "queue_drain"
+            else {
+                "Fault injected on selected pods",
+                "Fault restored",
+                "Traffic succeeds after restoration",
+                "Traffic meets contract during fault",
+            }
+        )
+        if (
+            experiment_result.get("family") != config["experiment"].get("family")
+            or not expected_assertions.issubset({a.get("name") for a in assertions})
+            or any(a.get("state") not in {"pass", "fail"} for a in assertions)
+        ):
+            present = [item for item in present if item != "experiment"]
+    if experiment_result.get("family") == "queue_drain" and "experiment" in present:
+        required = [
+            item
+            for item in required
+            if item not in {"signal:queue_depth", "signal:queue_age", "signal:oldest_task_age"}
+        ]
     missing = [item for item in required if item not in present]
     evidence_coverage = round(100 * len(present) / len(required)) if required else 100
     rollback_value = metadata.get("rollback")
@@ -230,6 +270,10 @@ def build_assessment_result(
         evidence_coverage = 0
     elif missing:
         status = "inconclusive"
+    elif any(a.get("state") == "fail" for a in experiment_result.get("assertions", [])):
+        status = "not_ready"
+        conclusive = True
+        score = 0
     elif not traffic_success:
         status = "failed"
     else:
@@ -268,6 +312,8 @@ def build_assessment_result(
     )
 
     return {
+        "experiment": experiment_result,
+        "chamber": config.get("chamber"),
         "schema_version": "chamber.ampule.dev/result/v1",
         "run_id": run_id,
         "status": status,
@@ -408,6 +454,8 @@ def _tested_scope(config: dict[str, Any], metadata: dict[str, Any]) -> dict[str,
         "scenario_revision": scenario.get("revision", "unrecorded"),
         "provider": runtime.get("provider") or metadata.get("mode", "unknown"),
         "runtime_mode": runtime.get("mode") or metadata.get("runtime_mode", "unknown"),
+        "experiment_family": config.get("experiment", {}).get("family"),
+        "chamber_id": config.get("chamber", {}).get("id"),
         "journey_count": len(journeys) if isinstance(journeys, list) else 0,
     }
 

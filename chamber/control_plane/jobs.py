@@ -17,6 +17,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import yaml
+
+from chamber.environment.chambers import ChamberStore, target_key
 from chamber.runs import initialize_run_record, new_run_directory, write_json_atomic
 
 TERMINAL_JOB_STATES = frozenset({"completed", "failed", "cancelled"})
@@ -44,6 +47,8 @@ class AssessmentJob:
     idempotency_key: str | None = None
     request_digest: str | None = None
     cleanup_required: bool = False
+    target_key: str | None = None
+    chamber_id: str | None = None
     process: subprocess.Popen[str] | None = field(default=None, repr=False)
     cancel_at: float | None = field(default=None, repr=False)
 
@@ -104,6 +109,17 @@ class AssessmentJobManager:
             config_bytes
             + json.dumps([mode, context, prometheus_url], separators=(",", ":")).encode()
         ).hexdigest()
+        config = yaml.safe_load(config_bytes)
+        config = config if isinstance(config, dict) else {}
+        chamber = config.get("chamber")
+        if chamber:
+            if context and context != chamber["context"]:
+                raise ValueError("Context override cannot change a named chamber target")
+            ChamberStore(self.workspace).bind(config, chamber["id"])
+            config_bytes = yaml.safe_dump(config).encode()
+            if mode != "kubernetes":
+                raise ValueError("Named chambers require Kubernetes execution")
+        lock_key = target_key(config, context) if mode == "kubernetes" else None
         # Serialize submission across HTTP workers, including idempotency lookup.
         with self._lock, (self.directory / ".submit.lock").open("a") as submission:
             fcntl.flock(submission, fcntl.LOCK_EX)
@@ -114,6 +130,15 @@ class AssessmentJobManager:
                         if previous.get("request_digest") != digest:
                             raise ValueError("Idempotency key already used with a different plan")
                         return previous
+            if lock_key:
+                for previous in self.list():
+                    if previous.get("target_key") == lock_key and (
+                        previous["state"] not in TERMINAL_JOB_STATES
+                        or previous.get("cleanup_required")
+                    ):
+                        raise ValueError(
+                            "Chamber target is occupied or requires cleanup verification"
+                        )
             run_dir = new_run_directory(self.workspace / "runs", "assessment")
             initialize_run_record(run_dir, mode=mode)
             job_id = uuid.uuid4().hex
@@ -129,6 +154,8 @@ class AssessmentJobManager:
                 run_id=run_dir.name,
                 idempotency_key=idempotency_key,
                 request_digest=digest,
+                target_key=lock_key,
+                chamber_id=chamber["id"] if chamber else None,
             )
             lease = (self.directory / f"{job_id}.lock").open("a")
             fcntl.flock(lease, fcntl.LOCK_EX)
@@ -175,6 +202,22 @@ class AssessmentJobManager:
                     key=lambda item: item["created_at"],
                     reverse=True,
                 )
+            )
+
+    def acknowledge_cleanup(self, job_id: str) -> None:
+        with self._lock, (self.directory / ".submit.lock").open("a") as submission:
+            fcntl.flock(submission, fcntl.LOCK_EX)
+            data = self.get(job_id)
+            if data["state"] not in TERMINAL_JOB_STATES:
+                raise ValueError("Stop the assessment before acknowledging cleanup")
+            data["cleanup_required"] = False
+            # The failed report remains failed; this releases admission only.
+            write_json_atomic(self.directory / f"{job_id}.json", data)
+            if job_id in self._jobs:
+                self._jobs[job_id].cleanup_required = False
+            write_json_atomic(
+                self.directory / f"{job_id}.cleanup",
+                {"operator_verified_at": datetime.now(UTC).isoformat()},
             )
 
     def cancel(self, job_id: str) -> dict[str, Any]:

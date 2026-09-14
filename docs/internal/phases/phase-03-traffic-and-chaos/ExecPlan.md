@@ -550,3 +550,22 @@ successful verdict through the normal metadata/result pipeline.
   a credential. Removed the redundant UUID from current documentation and
   added one exact historical finding fingerprint to `.gitleaksignore`; no
   file-wide, rule-wide, or credential pattern exclusions were introduced.
+
+## Named Chambers And Executable Families (2026-09-14)
+
+The user explicitly requested implementation of both previously deferred areas.
+Extend the existing draft PR and its unreleased 1.10.0 version. Use named,
+immutable chamber profiles (clone to revise), namespace-level single-host
+admission exclusion, immutable plan snapshots, and enforced traffic budgets.
+Add Chaos Mesh dependency delay/outage and CPU/memory stress with explicit pod
+selection, bounded duration, injection and restoration evidence; add queue
+backpressure/drain with scoped, fresh Prometheus observations. Never infer queue
+health from task completion. Configured capabilities are not verified readiness.
+
+- [x] Implement chamber persistence, selection, snapshots, budgets and occupancy.
+- [x] Implement experiment validation, execution, restoration and assertion evidence.
+- [x] Add readable UI/report assertions and operator setup documentation.
+- [x] Verify passing, failing, missing evidence, restoration and concurrent admission.
+- [x] Verify Docker runtime and Chrome desktop/narrow UI, run make check, update PR.
+
+Acceptance and operational limits: [named chambers and experiments](artifacts/chambers-and-experiments.md). The existing draft PR is being updated; no new release version is introduced.

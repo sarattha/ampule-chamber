@@ -4,6 +4,13 @@ All notable changes to Ampule Chamber are documented in this file.
 
 ## 1.10.0 - 2026-09-12
 
+- Add named chamber profiles, cloning, immutable plan snapshots, enforced traffic budgets,
+  namespace admission exclusion, history, and explicit cleanup acknowledgement.
+- Execute dependency delay/outage and CPU/memory pressure through bounded Chaos Mesh
+  resources with verified injection/restoration and recovery traffic.
+- Collect scoped queue depth and oldest-task age from Prometheus and report backpressure,
+  budget and drain assertions with honest missing-evidence outcomes.
+
 - Patch bundled Go tools and remove unused runtime pip to resolve CI vulnerability findings.
 
 - Persist assessment jobs, reserve unique run directories, snapshot configurations, drain

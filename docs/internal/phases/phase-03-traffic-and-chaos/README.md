@@ -8,6 +8,12 @@ boundary and must retain its upload-safety and content-safety guarantees.
 
 ## Active Feature Boundary
 
+The user-requested Studio preparation extension includes reusable named chamber
+profiles and namespace admission budgets, executable Chaos Mesh dependency and
+resource-pressure families, and scoped queue-drain assertions. See the latest
+ExecPlan section and acceptance artifact for runtime requirements and limits.
+
+
 - Propose bounded, editable scenarios from explicit reliability goals without
   introducing a second configuration model or implicitly selecting faults.
 - Preserve Advanced journey, multipart, lifecycle, agent, and imported scenario

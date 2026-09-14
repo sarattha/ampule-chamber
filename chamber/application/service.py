@@ -942,6 +942,24 @@ def _compatibility_reasons(
         ("environment provider", left["environment"], right["environment"]),
         ("runtime mode", left["runtime_mode"], right["runtime_mode"]),
     )
+    left_config, right_config = baseline.get("config", {}), candidate.get("config", {})
+    if left_config.get("chamber") or right_config.get("chamber"):
+        for field in ("context", "namespace", "workload"):
+            checks += (
+                (
+                    f"chamber {field}",
+                    left_config.get("chamber", {}).get(field),
+                    right_config.get("chamber", {}).get(field),
+                ),
+            )
+    if left_config.get("experiment") or right_config.get("experiment"):
+        checks += (
+            (
+                "experiment contract",
+                json.dumps(left_config.get("experiment"), sort_keys=True),
+                json.dumps(right_config.get("experiment"), sort_keys=True),
+            ),
+        )
     return tuple(
         {
             "dimension": name,

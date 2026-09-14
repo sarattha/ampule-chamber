@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 from starlette.responses import StreamingResponse
 
 from chamber.application.service import ChamberApplication
+from chamber.chaos.experiments import FAMILIES
 from chamber.control_plane.discovery import (
     DiscoveryError,
     DiscoverySettings,
@@ -44,6 +45,7 @@ from chamber.control_plane.security import (
     load_admin_auth,
     safe_next_path,
 )
+from chamber.environment.chambers import ChamberProfile, ChamberStore, target_key
 from chamber.load import validate_relayna_journey
 from chamber.runs import registered_evidence
 
@@ -117,6 +119,7 @@ def create_app(
     application = ChamberApplication(workspace)
     application.initialize()
     jobs = AssessmentJobManager(workspace)
+    chambers = ChamberStore(workspace)
     scenarios = ScenarioCatalog(workspace, PACKAGE_DIR / "bundled_scenarios")
     multipart_path_secret = secrets.token_bytes(32)
     multipart_upload_root = workspace.resolve() / "uploads"
@@ -287,6 +290,95 @@ def create_app(
             },
         )
 
+    @app.get("/api/v1/chambers")
+    async def chambers_api() -> dict[str, Any]:
+        profiles = chambers.list()
+        for profile in profiles:
+            profile["jobs"] = [job for job in jobs.list() if job.get("chamber_id") == profile["id"]]
+            profile["occupancy"] = (
+                "attention"
+                if any(job.get("cleanup_required") for job in profile["jobs"])
+                else "busy"
+                if any(job["state"] not in TERMINAL_JOB_STATES for job in profile["jobs"])
+                else "available"
+            )
+            namespace_jobs = [
+                job
+                for job in jobs.list()
+                if job.get("target_key")
+                == target_key(
+                    {
+                        "runtime": {
+                            "provider": "kubernetes",
+                            "kubernetesContext": profile["context"],
+                            "namespace": profile["namespace"],
+                        }
+                    }
+                )
+            ]
+            profile["occupancy"] = (
+                "attention"
+                if any(job.get("cleanup_required") for job in namespace_jobs)
+                else "busy"
+                if any(job["state"] not in TERMINAL_JOB_STATES for job in namespace_jobs)
+                else "available"
+            )
+            profile["attention_jobs"] = [
+                job for job in namespace_jobs if job.get("cleanup_required")
+            ]
+            profile["readiness"] = "not checked"
+        return {"chambers": profiles}
+
+    @app.post("/api/v1/chambers", status_code=201)
+    async def create_chamber_api(request: Request, payload: ChamberProfile) -> dict[str, Any]:
+        _check_csrf(request, request.headers.get("X-CSRF-Token"))
+        return chambers.create(payload)
+
+    @app.get("/chambers", response_class=HTMLResponse, include_in_schema=False)
+    async def chambers_page(request: Request, clone: str = "") -> Response:
+        try:
+            selected = chambers.get(clone) if clone else {}
+        except (ValueError, FileNotFoundError):
+            raise HTTPException(status_code=404, detail="Chamber not found") from None
+        return templates.TemplateResponse(
+            request=request,
+            name="chambers.html",
+            context={
+                "active_nav": "chambers",
+                "csrf_token": request.state.csrf_token,
+                "profiles": (await chambers_api())["chambers"],
+                "selected": selected,
+            },
+        )
+
+    @app.post("/ui/chambers", include_in_schema=False)
+    async def create_chamber_form(request: Request) -> Response:
+        values = dict(await request.form())
+        _check_csrf(request, str(values.pop("_csrf", "")))
+        try:
+            chambers.create(ChamberProfile.model_validate(values))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return RedirectResponse("/chambers", status_code=303)
+
+    @app.post("/ui/jobs/{job_id}/cleanup-verified", include_in_schema=False)
+    async def cleanup_verified(
+        request: Request,
+        job_id: str,
+        csrf: Annotated[str, Form(alias="_csrf")],
+        confirmed: Annotated[str, Form()] = "",
+    ) -> Response:
+        _check_csrf(request, csrf)
+        if confirmed != "verified":
+            raise HTTPException(
+                status_code=400, detail="Verify target cleanup before releasing admission"
+            )
+        try:
+            jobs.acknowledge_cleanup(job_id)
+        except (ValueError, KeyError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return RedirectResponse("/chambers", status_code=303)
+
     @app.get("/new", response_class=HTMLResponse, include_in_schema=False)
     async def new_assessment_page(request: Request) -> Response:
         return templates.TemplateResponse(
@@ -297,6 +389,8 @@ def create_app(
                 "csrf_token": request.state.csrf_token,
                 "capabilities": _capabilities(kubernetes_discovery.settings),
                 "reliability_goals": goal_catalog(),
+                "chambers": chambers.list(),
+                "experiment_families": FAMILIES,
             },
         )
 
@@ -304,6 +398,8 @@ def create_app(
     async def plan_from_form(
         request: Request,
         csrf: Annotated[str, Form(alias="_csrf")],
+        chamber_id: Annotated[str, Form()] = "",
+        experiment_json: Annotated[str, Form()] = "",
         repo: Annotated[str, Form()] = "",
         service_name: Annotated[str, Form()] = "",
         workload_name: Annotated[str, Form()] = "",
@@ -348,6 +444,8 @@ def create_app(
             run_dir = _plan_from_values(
                 application,
                 workspace=workspace,
+                chamber_id=chamber_id,
+                experiment_json=experiment_json,
                 repo=Path(repo) if repo.strip() else None,
                 service_name=service_name,
                 workload_name=workload_name,
@@ -392,6 +490,8 @@ def create_app(
                     "csrf_token": request.state.csrf_token,
                     "capabilities": _capabilities(kubernetes_discovery.settings),
                     "reliability_goals": goal_catalog(),
+                    "chambers": chambers.list(),
+                    "experiment_families": FAMILIES,
                     "error": str(exc),
                 },
             )
@@ -674,8 +774,10 @@ def create_app(
     @app.post("/api/v1/plans")
     async def plans_api(request: Request, payload: PlanRequest) -> dict[str, str]:
         _check_csrf(request, request.headers.get("X-CSRF-Token"))
-        config_path = _write_draft(workspace, payload.config)
         try:
+            if payload.config.get("chamber"):
+                chambers.bind(payload.config, payload.config["chamber"]["id"])
+            config_path = _write_draft(workspace, payload.config)
             run_dir = application.plan(config_path)
         except (OSError, ValueError, RuntimeError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -956,6 +1058,8 @@ def _plan_from_values(
     save_scenario: str = "none",
     replace_scenario: str = "",
     catalog: ScenarioCatalog | None = None,
+    chamber_id: str = "",
+    experiment_json: str = "",
 ) -> Path:
     config: dict[str, Any]
     if repo is not None and not repo.is_dir():
@@ -1197,6 +1301,10 @@ def _plan_from_values(
             validate_journeys=_ui_journeys,
         )
         config["scenario"].update({"source": "user", "revision": prepared["revision"]})
+    if experiment_json.strip():
+        config["experiment"] = json.loads(experiment_json)
+    if chamber_id:
+        ChamberStore(workspace).bind(config, chamber_id)
     config_path = _write_draft(workspace, config)
     try:
         run_dir = application.plan(config_path)
