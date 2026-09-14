@@ -952,6 +952,17 @@ def _compatibility_reasons(
                     right_config.get("chamber", {}).get(field),
                 ),
             )
+    if any(
+        config.get("chamber") or config.get("traffic", {}).get("load")
+        for config in (left_config, right_config)
+    ):
+        checks += (
+            (
+                "metrics source",
+                left_config.get("runtime", {}).get("prometheusUrl") or "not configured",
+                right_config.get("runtime", {}).get("prometheusUrl") or "not configured",
+            ),
+        )
     if left_config.get("traffic", {}).get("load") or right_config.get("traffic", {}).get("load"):
         checks += (
             (
@@ -1000,6 +1011,12 @@ def _signal_snapshot(run: dict[str, Any]) -> dict[str, float | int | None]:
     latency = _metric_value(metrics, "http_req_duration", "p(95)")
     failure_rate = _metric_value(metrics, "http_req_failed", "value")
     recovery_time = _metric_value(metrics, "recovery_time", "value")
+    if _mapping(_mapping(run.get("config")).get("traffic")).get("load"):
+        load = _mapping(_json_or_default(run_dir / "evidence/load-summary.json", {}))
+        load_metrics = _mapping(load.get("metrics"))
+        latency = _number(load_metrics.get("p95Ms"))
+        failure_rate = _number(load_metrics.get("errorRate"))
+        recovery_time = None
     prometheus = _mapping(run.get("prometheus"))
     workloads = prometheus.get("workloads")
     workload_items = (

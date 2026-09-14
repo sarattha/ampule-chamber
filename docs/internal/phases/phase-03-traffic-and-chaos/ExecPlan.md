@@ -651,3 +651,15 @@ deploy and attach reject a named chamber context mismatch before any command.
 Queue metrics now use the shared monotonic-deadline response reader, proven with
 a real HTTP server dripping bytes below the socket timeout. `make check` passed
 with 301 tests and 90% coverage; review follow-up remains in progress.
+
+Docker acceptance of `2516e98` passed all 35 chamber/experiment/load tests (31.026s).
+The fourth Codex pass identified job snapshot upload roots, direct CLI profile
+authority, graceful failure evidence, metrics-source comparison compatibility and
+missing load comparison signals. Input snapshots now live under the reserved run;
+child command paths and the input-only overwrite guard follow that location. CLI
+execution binds the authoritative stored chamber. Graceful terminal child metadata
+and reports survive supervisor exit handling, while forced/interrupted execution
+retains conservative cleanup handling. Comparisons include the effective metrics
+source and read load p95/error measurements. Regression tests cover actual upload
+validation, job/run events, profile tampering, cleanup states and metric deltas.
+`make check` passed with 305 tests and 90% coverage; no acceptance gate was relaxed.

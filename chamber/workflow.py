@@ -47,7 +47,7 @@ from chamber.application import (
 )
 from chamber.chaos.experiments import ExperimentSession, validate_experiment
 from chamber.environment import preflight_to_evidence, run_kubernetes_preflight
-from chamber.environment.chambers import validate_budget
+from chamber.environment.chambers import ChamberStore, validate_budget
 from chamber.environment.preflight import (
     CommandRunner as KubernetesCommandRunner,
 )
@@ -620,6 +620,8 @@ def _assess_kubernetes_config(
     """Run a config-driven live Kubernetes assessment."""
 
     config = load_config(config_path)
+    if config.get("chamber"):
+        ChamberStore(Path(WORKSPACE_DIR)).bind(config, config["chamber"]["id"])
     if agents_mode:
         config.setdefault("agents", {})["mode"] = agents_mode
     _apply_agent_exclude_override(config, agents_exclude)
@@ -4073,7 +4075,8 @@ def _assessment_directory(name: str, reserved: Path | None) -> Path:
     if reserved is None:
         return _new_run_dir(name)
     if reserved.exists() and any(
-        path.name not in {"run.json", "events.jsonl"} for path in reserved.iterdir()
+        path.name not in {"run.json", "events.jsonl", "execution-config.yaml"}
+        for path in reserved.iterdir()
     ):
         raise WorkflowError("Assessment run directory already contains execution artifacts")
     reserved.mkdir(parents=True, exist_ok=True)

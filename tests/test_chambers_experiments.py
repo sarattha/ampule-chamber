@@ -341,22 +341,29 @@ class ChamberExperimentTests(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             config: dict[str, Any] = _attach_kubernetes_config(_fixture_repo(root))
-            config["chamber"] = ChamberProfile(
-                name="Staging",
-                context=config["runtime"]["kubernetesContext"],
-                namespace=config["runtime"]["namespace"],
-                service=config["service"]["name"],
-                workload=config["deployment"]["workloads"][0]["name"],
-                prometheus_url=config["runtime"].get("prometheusUrl", ""),
-                max_duration_seconds=7200,
-            ).model_dump()
+            config["chamber"] = ChamberStore(root).create(
+                ChamberProfile(
+                    name="Staging",
+                    context=config["runtime"]["kubernetesContext"],
+                    namespace=config["runtime"]["namespace"],
+                    service=config["service"]["name"],
+                    workload=config["deployment"]["workloads"][0]["name"],
+                    prometheus_url=config["runtime"].get("prometheusUrl", ""),
+                    max_duration_seconds=7200,
+                )
+            )
             path = root / "config.yaml"
             for mode in ("attach", "deploy"):
                 config["runtime"]["mode"] = mode
                 controller: Any = Controller()
                 workflow.save_config(config, path)
-                with patch("chamber.workflow.load_config", return_value=config):
-                    with self.assertRaisesRegex(workflow.WorkflowError, "Context override"):
+                with (
+                    patch("chamber.workflow.load_config", return_value=config),
+                    patch("chamber.workflow.WORKSPACE_DIR", str(root)),
+                ):
+                    with self.assertRaisesRegex(
+                        (workflow.WorkflowError, ValueError), "Context override|attach mode"
+                    ):
                         workflow._assess_kubernetes_config(
                             path,
                             agents_mode="off",

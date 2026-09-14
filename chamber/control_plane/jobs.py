@@ -144,7 +144,7 @@ class AssessmentJobManager:
             run_dir = new_run_directory(self.workspace / "runs", "assessment")
             initialize_run_record(run_dir, mode=mode)
             job_id = uuid.uuid4().hex
-            snapshot = self.directory / f"{job_id}.yaml"
+            snapshot = run_dir / "execution-config.yaml"
             snapshot.write_bytes(config_bytes)
             job = AssessmentJob(
                 job_id=job_id,
@@ -302,9 +302,41 @@ class AssessmentJobManager:
                 job.error = (
                     "Cancellation required forced termination; verify cleanup before retesting."
                 )
+            preserved = not forced and job.state != "completed" and self._preserve_child_result(job)
             self._persist(job)
-            if job.state != "completed":
+            if job.state != "completed" and not preserved:
                 self._record_failure(job)
+
+    def _preserve_child_result(self, job: AssessmentJob) -> bool:
+        if job.run_id is None:
+            return False
+        run_dir = self.workspace / "runs" / job.run_id
+        try:
+            metadata = json.loads((run_dir / "run-metadata.json").read_text())
+            result = json.loads((run_dir / "result.json").read_text())
+        except (OSError, ValueError):
+            return False
+        if (
+            not isinstance(metadata, dict)
+            or not isinstance(result, dict)
+            or metadata.get("run_id") != job.run_id
+            or metadata.get("stage") not in {"preflight_failed", "cancelled", "failed", "assessed"}
+        ):
+            return False
+        rollback = metadata.get("rollback", {})
+        restored = (
+            isinstance(rollback, dict) and rollback.get("verified") is True
+            if metadata.get("runtime_mode") == "attach"
+            else metadata.get("cleanup_performed") is True
+        )
+        job.cleanup_required = job.mode == "kubernetes" and not (
+            metadata["stage"] == "preflight_failed" or restored
+        )
+        if metadata["stage"] == "cancelled":
+            job.state = "cancelled"
+        if metadata.get("error"):
+            job.error = str(metadata["error"])
+        return True
 
     def _drain(self, job: AssessmentJob, process: subprocess.Popen[str]) -> None:
         if process.stdout is None:
@@ -384,7 +416,12 @@ def _command(job: AssessmentJob) -> list[str]:
         job.mode,
     ]
     if job.run_id:
-        command.extend(("--run-dir", str(job.config_path.parent.parent / "runs" / job.run_id)))
+        run_dir = (
+            job.config_path.parent
+            if job.config_path.parent.name == job.run_id
+            else job.config_path.parent.parent / "runs" / job.run_id
+        )
+        command.extend(("--run-dir", str(run_dir)))
     if job.context:
         command.extend(("--context", job.context))
     if job.prometheus_url:
