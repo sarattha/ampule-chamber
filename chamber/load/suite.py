@@ -480,7 +480,12 @@ class Generator:
                     monitor.active += 1
                     monitor.peak_active = max(monitor.peak_active, monitor.active)
                 try:
-                    self.response = build_opener(NoRedirect()).open(request, **kwargs)
+                    try:
+                        self.response = build_opener(NoRedirect()).open(request, **kwargs)
+                    except HTTPError as exc:
+                        # Non-2xx can be the expected contract (e.g. admission rejection).
+                        # Keep its body within the same deadline and active-request accounting.
+                        self.response = exc.fp
                     return DeadlineResponse(self.response, deadline)
                 except BaseException:
                     with monitor.lock:
@@ -611,16 +616,9 @@ def execute_iteration(
                     headers=request_headers,
                     method=step.get("method", "GET"),
                 )
-                try:
-                    with opener(request) as response:
-                        status = response.status
-                        raw = response.read(1024 * 1024 + 1)
-                except HTTPError as exc:
-                    status = exc.code
-                    try:
-                        raw = DeadlineResponse(exc, deadline).read()
-                    finally:
-                        exc.close()
+                with opener(request) as response:
+                    status = response.status
+                    raw = response.read(1024 * 1024 + 1)
                 if status != step.get("expectedStatus", 200):
                     raise ValueError("Unexpected HTTP status")
                 if len(raw) > 1024 * 1024:

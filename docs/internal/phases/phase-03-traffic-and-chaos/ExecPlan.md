@@ -614,3 +614,9 @@ Final local acceptance: `make check` passed with 293 tests and 90% branch-aware
 aggregate coverage, plus scenario/deployment/release validation, strict docs and
 package build. All 16 load-suite tests passed inside the Docker runtime (20.128s).
 Chrome recorded no console errors during the final editor/report checks.
+
+Review follow-up: preserve bounded body reads and active-request accounting for
+expected HTTP rejection statuses (such as 503), and resolve the upload workspace
+from the original run for baseline/recovery traffic. Regression checks passed;
+`make check` passed with 294 tests and 90% coverage. CI on `ad36d48` passed all
+Python, security and Kubernetes deployment checks; Codex review is running.

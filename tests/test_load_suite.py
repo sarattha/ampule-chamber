@@ -238,6 +238,11 @@ class LoadSuiteTests(unittest.TestCase):
         self.assertNotIn("x" * 1024, json.dumps(first))
 
     def test_encoding_failures_and_deadline_on_continuously_dripping_body(self) -> None:
+        self.assertTrue(
+            self.iteration({"name": "expected-rejection", "path": "/fail", "expectedStatus": 503})[
+                "success"
+            ]
+        )
         for encoding, extra in [
             ("form", {"form": {"key": "${item}"}}),
             ("raw", {"body": "hello ${item}"}),
@@ -582,6 +587,25 @@ class LoadIntegrationTests(unittest.TestCase):
             refresh_evidence_manifest(run)
             self.assertEqual(result()["load"]["status"], "fail")
             self.assertIn("recovery-load-summary", result()["missing_evidence_ids"])
+
+    def test_phase_traffic_keeps_the_original_upload_workspace(self) -> None:
+        from chamber.workflow import _execute_kubernetes_traffic
+
+        with TemporaryDirectory() as root:
+            workspace = Path(root)
+            config = {
+                "runtime": {"trafficAccess": {"mode": "endpoint", "url": "http://fixture"}},
+                "traffic": traffic(),
+            }
+            for suffix in ("", "baseline", "recovery"):
+                run = workspace / "runs" / "run-1" / suffix
+                with patch(
+                    "chamber.workflow.execute_suite", return_value={"success": True}
+                ) as execute:
+                    _execute_kubernetes_traffic(
+                        config=config, run_dir=run, context="test", namespace="test", runner=None
+                    )
+                self.assertEqual(execute.call_args.kwargs["workspace"], workspace)
 
     def test_chamber_accounts_inflight_and_capacity_drain(self) -> None:
         from chamber.environment.chambers import validate_budget

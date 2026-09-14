@@ -1759,6 +1759,12 @@ def _execute_kubernetes_traffic(
             )
         )
         time.sleep(2)
+    traffic_run_dir = run_dir.parent if run_dir.name in {"baseline", "recovery"} else run_dir
+    workspace = (
+        traffic_run_dir.parent.parent
+        if traffic_run_dir.parent.name == RUNS_DIR
+        else traffic_run_dir.parent
+    )
     try:
         if traffic.get("load"):
             summary_path = run_dir / "evidence/load-summary.json"
@@ -1766,7 +1772,7 @@ def _execute_kubernetes_traffic(
                 traffic,
                 base_url=base_url,
                 output=summary_path,
-                workspace=run_dir.parent.parent,
+                workspace=workspace,
                 prometheus_url=config.get("runtime", {}).get("prometheusUrl"),
                 namespace=namespace,
             )
@@ -1786,7 +1792,6 @@ def _execute_kubernetes_traffic(
                 "exit_status": 0 if summary["success"] else 1,
             }
         if relayna_journeys:
-            workspace = run_dir.parent.parent if run_dir.parent.name == RUNS_DIR else run_dir.parent
             summary = execute_relayna_journeys(
                 relayna_journeys,
                 base_url=base_url,
