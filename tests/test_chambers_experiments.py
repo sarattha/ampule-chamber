@@ -83,6 +83,7 @@ class ChamberExperimentTests(unittest.TestCase):
             store = ChamberStore(Path(tmp))
             profile = ChamberProfile(
                 name="Payments staging",
+                prometheus_url="http://metrics:9090",
                 context="kind-ampule",
                 namespace="payments-test",
                 service="payments",
@@ -114,6 +115,29 @@ class ChamberExperimentTests(unittest.TestCase):
                 validate_budget(config)
             config["chamber"].update(allow_faults=True, chaos_mesh=False)
             with self.assertRaisesRegex(ValueError, "Chaos Mesh"):
+                validate_budget(config)
+
+    def test_named_chamber_rejects_metrics_from_another_environment(self):
+        with TemporaryDirectory() as tmp:
+            store = ChamberStore(Path(tmp))
+            profile = store.create(
+                ChamberProfile(
+                    name="Payments",
+                    context="kind-ampule",
+                    namespace="payments-test",
+                    service="payments",
+                    workload="payments",
+                    prometheus_url="http://metrics:9090",
+                    allow_faults=True,
+                    chaos_mesh=True,
+                )
+            )
+            config = config_for()
+            store.bind(config, profile["id"])
+            config["runtime"]["prometheusUrl"] = "http://other:9090"
+            with self.assertRaisesRegex(ValueError, "Prometheus URL"):
+                store.bind(config, profile["id"])
+            with self.assertRaisesRegex(ValueError, "Prometheus URL"):
                 validate_budget(config)
 
     def test_admission_serializes_namespace_and_preserves_idempotency(self):
@@ -188,14 +212,24 @@ class ChamberExperimentTests(unittest.TestCase):
                 session = ExperimentSession(
                     config_for("queue_drain"), Path(tmp), Controller(), "test"
                 )
+                session.evidence["recovery_started_at"] = 3
                 session.evidence["samples"] = [
-                    {"phase": phase, "depth": depth, "age": 0, "timestamp": time.time()}
-                    for phase, depth in (
-                        ("baseline", 0),
-                        ("load", peak),
-                        ("load", peak),
-                        ("recovery", final),
-                        ("recovery", final),
+                    {
+                        "phase": phase,
+                        "depth": depth,
+                        "age": 0,
+                        "timestamp": index,
+                        "depth_timestamp": index,
+                        "age_timestamp": index,
+                    }
+                    for index, (phase, depth) in enumerate(
+                        (
+                            ("baseline", 0),
+                            ("load", peak),
+                            ("load", peak),
+                            ("recovery", final),
+                            ("recovery", final),
+                        )
                     )
                 ]
                 session.evaluate_queue()
@@ -203,6 +237,32 @@ class ChamberExperimentTests(unittest.TestCase):
                 self.assertIn(expected, states)
                 if expected == "pass":
                     self.assertEqual(set(states), {"pass"})
+
+    def test_queue_recovery_requires_distinct_post_stop_provider_samples(self):
+        for stamps, expected in (((8, 8), "missing"), ((8, 11), "missing"), ((11, 12), "pass")):
+            with self.subTest(stamps=stamps), TemporaryDirectory() as tmp:
+                session = ExperimentSession(
+                    config_for("queue_drain"), Path(tmp), Controller(), "test"
+                )
+                session.evidence["recovery_started_at"] = 10
+                session.evidence["samples"] = [
+                    {
+                        "phase": phase,
+                        "depth": depth,
+                        "age": 0,
+                        "depth_timestamp": stamp,
+                        "age_timestamp": stamp,
+                    }
+                    for phase, depth, stamp in (
+                        ("baseline", 0, 1),
+                        ("load", 5, 2),
+                        ("load", 5, 3),
+                        ("recovery", 0, stamps[0]),
+                        ("recovery", 0, stamps[1]),
+                    )
+                ]
+                session.evaluate_queue()
+                self.assertEqual(session.evidence["assertions"][-1]["state"], expected)
 
     def test_queue_collector_rejects_wrong_scope_stale_and_nonfinite(self):
         for labels, timestamp, value, valid in (
@@ -227,6 +287,8 @@ class ChamberExperimentTests(unittest.TestCase):
                 ):
                     session.sample("load")
                 self.assertEqual(session.evidence["samples"][0]["depth"] is not None, valid)
+                if valid:
+                    self.assertEqual(session.evidence["samples"][0]["depth_timestamp"], timestamp)
 
     def test_invalid_experiments_rejected_before_execution(self):
         for changes in (
@@ -372,6 +434,8 @@ class ChamberExperimentTests(unittest.TestCase):
                 data={
                     "_csrf": csrf,
                     "chamber_id": profile["id"],
+                    "save_scenario": "new",
+                    "scenario_id": "saved-chamber",
                     "experiment_json": json.dumps(config_for()["experiment"]),
                     "execution_mode": "kubernetes",
                     "runtime_mode": "attach",
@@ -388,9 +452,15 @@ class ChamberExperimentTests(unittest.TestCase):
             config = yaml.safe_load((plan_dir / "chamber.yaml").read_text())
             self.assertEqual(config["chamber"]["name"], "Payments")
             self.assertEqual(config["experiment"]["family"], "dependency_delay")
+            saved = client.get("/api/v1/scenarios/user/saved-chamber").json()
+            self.assertEqual(config["scenario"]["revision"], saved["revision"])
             manager = client.app.state.jobs
             with self.assertRaisesRegex(ValueError, "Context override"):
                 manager.start(plan_dir / "chamber.yaml", mode="kubernetes", context="other")
+            with self.assertRaisesRegex(ValueError, "Prometheus URL"):
+                manager.start(
+                    plan_dir / "chamber.yaml", mode="kubernetes", prometheus_url="http://other:9090"
+                )
             with self.assertRaisesRegex(ValueError, "Kubernetes execution"):
                 manager.start(plan_dir / "chamber.yaml", mode="local")
             job = AssessmentJob(

@@ -749,7 +749,7 @@ class LoadIntegrationTests(unittest.TestCase):
         config = {
             "traffic": traffic(model="capacity", warmupSeconds=1, recoverySeconds=1),
             "runtime": {},
-            "chamber": {"max_vus": 8, "max_duration_seconds": 6},
+            "chamber": {"max_vus": 8, "max_duration_seconds": 6, "prometheus_url": ""},
         }
         validate_budget(config)
         config["chamber"]["max_duration_seconds"] = 5

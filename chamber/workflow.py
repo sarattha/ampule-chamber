@@ -642,6 +642,7 @@ def _assess_kubernetes_config(
     if selected_prometheus:
         _require_http_url(str(selected_prometheus), "effective prometheus URL")
         runtime["prometheusUrl"] = str(selected_prometheus)
+    validate_budget(config)
     init_workspace()
     run_dir = _assessment_directory(str(config["service"]["name"]), run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -794,6 +795,7 @@ def _assess_kubernetes_attach_config(
     if selected_prometheus:
         _require_http_url(str(selected_prometheus), "effective prometheus URL")
         runtime["prometheusUrl"] = str(selected_prometheus)
+    validate_budget(config)
     init_workspace()
     run_dir = _assessment_directory(str(config["service"]["name"]), run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)

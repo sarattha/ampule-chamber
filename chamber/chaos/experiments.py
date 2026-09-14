@@ -232,6 +232,8 @@ class ExperimentSession:
         if self.spec["family"] != "queue_drain":
             return
         sample: dict[str, Any] = {"phase": phase, "timestamp": time.time()}
+        if phase == "recovery":
+            self.evidence.setdefault("recovery_started_at", sample["timestamp"])
         for name, key in (("depth", "depthQuery"), ("age", "ageQuery")):
             try:
                 url = (
@@ -260,6 +262,7 @@ class ExperimentSession:
                 ):
                     raise ValueError("Queue metric is stale, nonfinite, or negative")
                 sample[name] = value
+                sample[name + "_timestamp"] = timestamp
             except Exception as exc:
                 sample[name] = None
                 sample[name + "_error"] = str(exc)
@@ -343,12 +346,27 @@ class ExperimentSession:
             self.spec["maxAgeSeconds"],
             age,
         )
-        drained = len(samples) >= 2 and all(
-            s["phase"] == "recovery" and s["depth"] == 0 and s["age"] == 0 for s in samples[-2:]
+        recovery = []
+        for sample in samples:
+            if sample["phase"] != "recovery":
+                continue
+            identity = (sample.get("depth_timestamp"), sample.get("age_timestamp"))
+            if not recovery or identity != (
+                recovery[-1].get("depth_timestamp"),
+                recovery[-1].get("age_timestamp"),
+            ):
+                recovery.append(sample)
+        started = self.evidence.get("recovery_started_at", float("inf"))
+        fresh = len(recovery) >= 2 and all(
+            started
+            <= recovery[-2].get(name + "_timestamp", -1)
+            < recovery[-1].get(name + "_timestamp", -1)
+            for name in ("depth", "age")
         )
+        drained = fresh and all(s["depth"] == 0 and s["age"] == 0 for s in recovery[-2:])
         self.assertion(
             "Queue drains after admissions stop",
-            "pass" if drained else "fail",
-            "Two final empty queue observations",
+            "missing" if not fresh else "pass" if drained else "fail",
+            "Two distinct post-admission-stop empty queue samples for depth and age",
             {"depth": samples[-1]["depth"], "age": samples[-1]["age"]},
         )

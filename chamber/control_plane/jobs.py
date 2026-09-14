@@ -115,6 +115,8 @@ class AssessmentJobManager:
         if chamber:
             if context and context != chamber["context"]:
                 raise ValueError("Context override cannot change a named chamber target")
+            if prometheus_url:
+                config.setdefault("runtime", {})["prometheusUrl"] = prometheus_url
             ChamberStore(self.workspace).bind(config, chamber["id"])
             config_bytes = yaml.safe_dump(config).encode()
             if mode != "kubernetes":

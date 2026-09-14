@@ -71,6 +71,8 @@ def validate_budget(config: dict[str, Any]) -> None:
     if not profile:
         return
     runtime = config["runtime"]
+    if (runtime.get("prometheusUrl") or "") != profile["prometheus_url"]:
+        raise ValueError("Prometheus URL must match the selected chamber")
     if runtime.get("faults") or config.get("experiment", {}).get("family") not in {
         None,
         "queue_drain",

@@ -633,3 +633,13 @@ growth and requires a post-drain queue sample, with a bounded refresh window.
 Provider timestamps are retained and query-body reads share the deadline bound.
 Stable final `make check` passed with 297 tests and 90% coverage; all 20 load-suite
 tests passed in Docker (30.229s). No test/lint/typecheck/coverage gate was relaxed.
+
+Second Codex pass on `045fd51` found three further issues. Queue-drain evidence
+now retains provider timestamps and requires two distinct post-admission-stop
+observations for both depth and age. Named chamber binding and execution reject
+a Prometheus URL that differs from the authoritative profile, including job/CLI
+overrides. Experiment and chamber metadata are included before scenario revision
+preparation; a form/catalog regression proves the run and saved revisions match.
+All 299 tests and `make check` passed with 90% coverage. The expanded Docker test
+rerun stalled, including Docker status calls; earlier 20-test Docker and Chrome
+acceptance remains recorded above, and this rerun is not claimed as passed.

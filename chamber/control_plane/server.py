@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field
 from starlette.responses import StreamingResponse
 
 from chamber.application.service import ChamberApplication
-from chamber.chaos.experiments import FAMILIES
+from chamber.chaos.experiments import FAMILIES, validate_experiment
 from chamber.control_plane.discovery import (
     DiscoveryError,
     DiscoverySettings,
@@ -1302,6 +1302,11 @@ def _plan_from_values(
             journey.update(extra)
         traffic["load"] = load
         validate_suite(traffic)
+    if experiment_json.strip():
+        config["experiment"] = json.loads(experiment_json)
+        validate_experiment(config)
+    if chamber_id:
+        ChamberStore(workspace).bind(config, chamber_id)
     normalized = normalize_document(config, source="custom", validate_journeys=_ui_journeys)
     if matching_user_scenario is not None and normalized["revision"] != scenario_revision.strip():
         scenario_metadata["source"] = "derived"
@@ -1324,10 +1329,6 @@ def _plan_from_values(
             validate_journeys=_ui_journeys,
         )
         config["scenario"].update({"source": "user", "revision": prepared["revision"]})
-    if experiment_json.strip():
-        config["experiment"] = json.loads(experiment_json)
-    if chamber_id:
-        ChamberStore(workspace).bind(config, chamber_id)
     config_path = _write_draft(workspace, config)
     try:
         run_dir = application.plan(config_path)
