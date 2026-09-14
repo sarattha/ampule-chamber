@@ -123,6 +123,22 @@ class ReviewLandingTests(unittest.TestCase):
         cases = (
             ({"stage": "preflight_failed", "cleanup_performed": False}, False),
             (
+                {
+                    "stage": "cancelled",
+                    "runtime_mode": "attach",
+                    "rollback": {"faults_requested": False, "actions": []},
+                },
+                False,
+            ),
+            (
+                {
+                    "stage": "failed",
+                    "runtime_mode": "attach",
+                    "rollback": {"faults_requested": False, "verified": False},
+                },
+                True,
+            ),
+            (
                 {"stage": "cancelled", "runtime_mode": "attach", "rollback": {"verified": True}},
                 False,
             ),

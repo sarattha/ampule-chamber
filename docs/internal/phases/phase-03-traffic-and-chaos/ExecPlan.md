@@ -672,3 +672,10 @@ full Docker acceptance. The cancellation test now waits for a child-ready file
 after installing signal handlers. Final local `make check` passed: 305 tests,
 90% coverage, all validation/docs/build steps. Runtime code remains `9d96603`
 while Codex verifies that patch.
+
+Docker functional acceptance on `994c7c1` passed all 29 chamber, execution-boundary
+and Studio hardening tests (2.636s), including cancellation synchronization. The
+next Codex pass found one remaining no-fault attach cleanup mismatch. The
+supervisor now accepts an explicit `faults_requested: false` when verification
+is absent; explicit `verified: false` still requires cleanup. Both cases are
+covered. `make check` again passed with 305 tests and 90% coverage.

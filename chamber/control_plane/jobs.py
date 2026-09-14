@@ -325,7 +325,8 @@ class AssessmentJobManager:
             return False
         rollback = metadata.get("rollback", {})
         restored = (
-            isinstance(rollback, dict) and rollback.get("verified") is True
+            isinstance(rollback, dict)
+            and rollback.get("verified", rollback.get("faults_requested") is False) is True
             if metadata.get("runtime_mode") == "attach"
             else metadata.get("cleanup_performed") is True
         )
