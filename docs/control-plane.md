@@ -664,6 +664,9 @@ Additional native operations:
   All available task records are pageable, including tasks beyond 200.
 - `POST /api/v1/runs/{run_id}/archive`: `{ "archived": true }` (or false).
 - `POST /api/v1/runs/{run_id}/tags`: `{ "tags": ["release", "staging"] }`.
+  Archive and tags accept optional `?include_task_details=false` to return the
+  same bounded summary as run reads, including exact counts and explicit
+  truncation. The default response remains the complete updated run.
 - `POST /api/v1/jobs/{job_id}/cleanup-verified`: `{ "confirmed": true }`.
   Only terminal jobs can release admission; the failed assessment and its
   evidence remain unchanged. Confirm restoration independently before calling.

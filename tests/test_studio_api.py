@@ -696,6 +696,33 @@ class StudioApiTests(unittest.TestCase):
                         for item in summary["summary"]["truncated_fields"]
                     )
                 )
+                for operation, payload, field, expected in (
+                    ("archive", {"archived": True}, "archived", True),
+                    ("tags", {"tags": ["summary", "native"]}, "tags", ["summary", "native"]),
+                ):
+                    bounded = client.post(
+                        f"/api/v1/runs/{directory.name}/{operation}?include_task_details=false",
+                        headers=headers,
+                        json=payload,
+                    )
+                    self.assertEqual(bounded.status_code, 200, bounded.text[:1000])
+                    self.assertLess(len(bounded.content), 2 * 1024 * 1024)
+                    changed = bounded.json()
+                    self.assertEqual(changed["run"][field], expected)
+                    self.assertEqual(changed["total_task_count"], 305)
+                    self.assertEqual(len(changed["relayna"]["tasks"]), 25)
+                    self.assertNotIn("events", changed["relayna"]["tasks"][0])
+                    self.assertTrue(changed["summary"]["truncated_fields"])
+                    compatible = client.post(
+                        f"/api/v1/runs/{directory.name}/{operation}",
+                        headers=headers,
+                        json=payload,
+                    ).json()
+                    self.assertEqual(compatible["run"][field], expected)
+                    self.assertEqual(len(compatible["relayna"]["tasks"]), 305)
+                    self.assertEqual(len(compatible["relayna"]["tasks"][0]["events"]), 200)
+                    self.assertEqual(len(compatible["result"]["load"]["windows"]), 120)
+                    self.assertNotIn("summary", compatible)
                 default = client.get(f"/api/v1/runs/{directory.name}", headers=headers).json()
                 self.assertEqual(len(default["relayna"]["tasks"]), 305)
                 self.assertEqual(len(default["relayna"]["tasks"][0]["events"]), 200)

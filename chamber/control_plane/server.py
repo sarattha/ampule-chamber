@@ -947,21 +947,25 @@ def create_app(
 
     @app.post("/api/v1/runs/{run_id}/archive")
     async def archive_run_api(
-        request: Request, run_id: str, payload: ArchiveRequest
+        request: Request, run_id: str, payload: ArchiveRequest, include_task_details: bool = True
     ) -> dict[str, Any]:
         _check_csrf(request, request.headers.get("X-CSRF-Token"))
         try:
             application.set_run_archived(run_id, archived=payload.archived)
-            return application.get_run(run_id)
+            run = application.get_run(run_id, include_task_details=include_task_details)
+            return run if include_task_details else _bounded_run_summary(run)
         except (FileNotFoundError, ValueError):
             raise HTTPException(status_code=404, detail="run not found") from None
 
     @app.post("/api/v1/runs/{run_id}/tags")
-    async def run_tags_api(request: Request, run_id: str, payload: TagsRequest) -> dict[str, Any]:
+    async def run_tags_api(
+        request: Request, run_id: str, payload: TagsRequest, include_task_details: bool = True
+    ) -> dict[str, Any]:
         _check_csrf(request, request.headers.get("X-CSRF-Token"))
         try:
             application.set_run_tags(run_id, tags=tuple(payload.tags))
-            return application.get_run(run_id)
+            run = application.get_run(run_id, include_task_details=include_task_details)
+            return run if include_task_details else _bounded_run_summary(run)
         except FileNotFoundError:
             raise HTTPException(status_code=404, detail="run not found") from None
         except ValueError as exc:

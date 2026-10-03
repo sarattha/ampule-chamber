@@ -783,3 +783,29 @@ read-only behavior, browser CSRF and invalid/oversized input rejection. Final
 90% combined coverage, formatting, linting, type checking, scenario/deployment/
 release validation, strict documentation and source/wheel builds. Generated
 `site/` remains available for the parent PR workflow clean.
+
+
+### Bounded mutation response follow-up
+
+The actual Studio-to-Chamber ASGI smoke confirmed read summaries work, but
+archive and tag mutations still return full retained task/evidence views. Add
+optional `include_task_details=false` query handling to both mutations, reusing
+the same safe summary builder as run reads. Preserve complete default responses
+for existing clients. Extend the 305-task/200-events/large-load fixture to verify
+both changes persist, summary responses stay below 2 MiB with disclosed
+truncation, and default mutation responses preserve full records. Final
+`make check` passed all 316 tests and the coverage rerun, with 90% combined
+coverage, formatting, linting, type checking, scenario/deployment/release
+validation, strict docs and source/wheel builds. No push has been performed.
+
+An isolated real ASGI integration smoke uses Studio's actual `_Chamber` client
+and workspace router with Chamber's `create_app`, a synthetic scoped credential
+and fake Redis. All 23 operations passed: authenticated connection/capabilities,
+complete advanced YAML validation and source save/read/document, managed upload,
+planning directly from the validated document (including safe environment-name
+references), caller provenance, idempotent start, bounded 305-task summaries and
+all exact task pages, evidence explorer, archive/tags, comparison, three report
+formats, registered evidence download, cancellation and explicit cleanup
+verification. Only execution supervision was stubbed to prevent process or
+Kubernetes traffic; authentication, planning, job persistence and admission were
+real. The smoke script/result remain under `/tmp` and modify no Studio source.
