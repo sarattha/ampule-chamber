@@ -3,21 +3,24 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import hmac
 import json
+import math
 import secrets
 import shutil
 import threading
 import uuid
 import webbrowser
 from dataclasses import asdict
+from importlib.metadata import version
 from pathlib import Path
 from typing import Annotated, Any, cast
 from urllib.parse import urlencode
 
 import yaml
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -43,12 +46,14 @@ from chamber.control_plane.scenarios import (
 from chamber.control_plane.security import (
     SESSION_COOKIE,
     load_admin_auth,
+    load_studio_auth,
     safe_next_path,
+    studio_api_allowed,
 )
 from chamber.environment.chambers import ChamberProfile, ChamberStore, target_key
 from chamber.load import validate_relayna_journey
 from chamber.load.suite import validate_suite
-from chamber.runs import registered_evidence
+from chamber.runs import registered_evidence, write_json_atomic
 
 PACKAGE_DIR = Path(__file__).resolve().parent
 TEMPLATE_DIR = PACKAGE_DIR / "templates"
@@ -62,11 +67,36 @@ class InspectRequest(BaseModel):
     repo: str
 
 
+class CallerOrigin(BaseModel):
+    """Safe caller identifiers; credentials and arbitrary caller metadata are excluded."""
+
+    studio_service_id: str = Field(min_length=1, max_length=200, pattern=r"^[^\x00-\x1f\x7f]+$")
+    studio_environment: str = Field(min_length=1, max_length=100, pattern=r"^[^\x00-\x1f\x7f]+$")
+    studio_reference: str = Field(min_length=1, max_length=200, pattern=r"^[^\x00-\x1f\x7f]+$")
+    actor: str | None = Field(default=None, max_length=200, pattern=r"^[^\x00-\x1f\x7f]+$")
+
+
+class CleanupVerificationRequest(BaseModel):
+    confirmed: bool = Field(default=False, strict=True)
+
+
+class ArchiveRequest(BaseModel):
+    archived: bool
+
+
+class TagsRequest(BaseModel):
+    tags: list[Annotated[str, Field(max_length=100, pattern=r"^[^\x00-\x1f\x7f]*$")]] = Field(
+        max_length=20
+    )
+
+
 class PlanRequest(BaseModel):
     config: dict[str, Any]
+    origin: CallerOrigin | None = None
 
 
 class RunStartRequest(BaseModel):
+    origin: CallerOrigin | None = None
     config_path: str | None = None
     plan_id: str | None = None
     mode: str = Field(pattern="^(local|kubernetes)$")
@@ -116,6 +146,7 @@ def create_app(
     """Create the local control-plane application."""
 
     auth = load_admin_auth(admin_token)
+    studio_auth = load_studio_auth()
     kubernetes_discovery = discovery or KubernetesDiscovery(DiscoverySettings.from_environment())
     application = ChamberApplication(workspace)
     application.initialize()
@@ -144,6 +175,15 @@ def create_app(
         scheme, _, candidate = request.headers.get("Authorization", "").partition(" ")
         request.state.bearer_authenticated = (
             scheme.lower() == "bearer" and auth.authenticates_token(candidate.strip())
+        )
+        integration_authenticated = (
+            scheme.lower() == "bearer"
+            and studio_auth.authenticates_token(candidate.strip())
+            and studio_api_allowed(request.method, request.url.path)
+        )
+        request.state.authenticated = request.state.authenticated or integration_authenticated
+        request.state.bearer_authenticated = (
+            request.state.bearer_authenticated or integration_authenticated
         )
         if not request.state.authenticated and not _public_path(request.url.path):
             if request.url.path.startswith("/api/"):
@@ -778,10 +818,16 @@ def create_app(
     async def plans_api(request: Request, payload: PlanRequest) -> dict[str, str]:
         _check_csrf(request, request.headers.get("X-CSRF-Token"))
         try:
+            config = copy.deepcopy(payload.config)
+            _redeem_api_uploads(config, multipart_path_secret, multipart_upload_root)
             if payload.config.get("chamber"):
-                chambers.bind(payload.config, payload.config["chamber"]["id"])
-            config_path = _write_draft(workspace, payload.config)
+                chambers.bind(config, config["chamber"]["id"])
+            config_path = _write_draft(workspace, config)
             run_dir = application.plan(config_path)
+            if payload.origin:
+                write_json_atomic(
+                    run_dir / "caller-origin.json", payload.origin.model_dump(exclude_none=True)
+                )
         except (OSError, ValueError, RuntimeError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"run_id": run_dir.name, "run_dir": str(run_dir)}
@@ -836,8 +882,16 @@ def create_app(
             key = request.headers.get("Idempotency-Key")
             if key is not None and (not key.strip() or len(key) > 200):
                 raise HTTPException(status_code=400, detail="Invalid Idempotency-Key")
+            origin = payload.origin.model_dump(exclude_none=True) if payload.origin else None
+            if origin is None and payload.plan_id:
+                origin_path = config_path.parent / "caller-origin.json"
+                if origin_path.exists():
+                    origin = CallerOrigin.model_validate(
+                        json.loads(origin_path.read_text())
+                    ).model_dump(exclude_none=True)
             return jobs.start(
                 config_path,
+                origin=origin,
                 mode=payload.mode,
                 context=payload.context,
                 prometheus_url=payload.prometheus_url,
@@ -854,6 +908,70 @@ def create_app(
             return application.get_run(run_id)
         except (FileNotFoundError, ValueError):
             raise HTTPException(status_code=404, detail="run not found") from None
+
+    @app.post("/api/v1/runs/{run_id}/archive")
+    async def archive_run_api(
+        request: Request, run_id: str, payload: ArchiveRequest
+    ) -> dict[str, Any]:
+        _check_csrf(request, request.headers.get("X-CSRF-Token"))
+        try:
+            application.set_run_archived(run_id, archived=payload.archived)
+            return application.get_run(run_id)
+        except (FileNotFoundError, ValueError):
+            raise HTTPException(status_code=404, detail="run not found") from None
+
+    @app.post("/api/v1/runs/{run_id}/tags")
+    async def run_tags_api(request: Request, run_id: str, payload: TagsRequest) -> dict[str, Any]:
+        _check_csrf(request, request.headers.get("X-CSRF-Token"))
+        try:
+            application.set_run_tags(run_id, tags=tuple(payload.tags))
+            return application.get_run(run_id)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="run not found") from None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/v1/runs/{run_id}/tasks")
+    async def run_tasks_api(
+        run_id: str,
+        page: int = Query(default=1, ge=1),
+        page_size: int = Query(default=25, ge=1, le=100),
+        search: str = Query(default="", max_length=256),
+        status: str = Query(default="", max_length=80),
+        failed_first: bool = False,
+    ) -> dict[str, Any]:
+        try:
+            run_dir = application.run_path(run_id)
+        except (FileNotFoundError, ValueError):
+            raise HTTPException(status_code=404, detail="run not found") from None
+        artifact = _json_file(run_dir / "evidence/relayna-summary.json")
+        tasks = _mapping(artifact).get("tasks", [])
+        tasks = tasks if isinstance(tasks, list) else []
+        items = [
+            _task_projection(task)
+            for task in tasks
+            if isinstance(task, dict)
+            and isinstance(task.get("task_id"), str)
+            and 0 < len(task["task_id"]) <= 256
+            and not any(ord(char) < 32 or ord(char) == 127 for char in task["task_id"])
+            and search.casefold() in str(task.get("task_id", "")).casefold()
+            and (not status or task.get("terminal_status") == status)
+        ]
+        if failed_first:
+            items.sort(key=lambda task: bool(task.get("success")))
+        total = len(items)
+        pages = max(1, (total + page_size - 1) // page_size)
+        page = min(page, pages)
+        return {
+            "items": items[(page - 1) * page_size : page * page_size],
+            "total_count": total,
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total_items": total,
+                "total_pages": pages,
+            },
+        }
 
     @app.get("/api/v1/runs/{run_id}/evidence-explorer")
     async def evidence_explorer_api(request: Request, run_id: str) -> dict[str, Any]:
@@ -923,6 +1041,47 @@ def create_app(
             return jobs.cancel(job_id)
         except KeyError:
             raise HTTPException(status_code=404, detail="job not found") from None
+
+    @app.post("/api/v1/jobs/{job_id}/cleanup-verified")
+    async def cleanup_job_api(
+        request: Request, job_id: str, payload: CleanupVerificationRequest
+    ) -> dict[str, Any]:
+        _check_csrf(request, request.headers.get("X-CSRF-Token"))
+        if not payload.confirmed:
+            raise HTTPException(
+                status_code=400, detail="Verify target cleanup before releasing admission"
+            )
+        try:
+            jobs.acknowledge_cleanup(job_id)
+            return jobs.get(job_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="job not found") from None
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/api/v1/uploads", status_code=201)
+    async def upload_api(
+        request: Request,
+        file: Annotated[UploadFile, File()],
+        field: Annotated[str, Form(min_length=1, max_length=100, pattern=r"^[^\x00-\x1f\x7f]+$")],
+    ) -> dict[str, Any]:
+        _check_csrf(request, request.headers.get("X-CSRF-Token"))
+        raw = json.dumps([{"multipart": {"files": [{"field": field, "uploadIndex": 0}]}}])
+        try:
+            saved, _ = await _persist_journey_files(
+                workspace, raw, [file], path_secret=multipart_path_secret
+            )
+            descriptor = json.loads(saved)[0]["multipart"]["files"][0]
+            path = Path(descriptor["path"])
+            descriptor.update(
+                pathToken=_multipart_path_token(path, multipart_path_secret),
+                size=path.stat().st_size,
+            )
+            return {"file": descriptor}
+        except (OSError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        finally:
+            await file.close()
 
     @app.get("/api/v1/runs/{run_id}/evidence/{evidence_id}")
     async def evidence_api(run_id: str, evidence_id: str) -> FileResponse:
@@ -1576,6 +1735,57 @@ async def _persist_journey_files(
     return json.dumps(journeys), upload_dir
 
 
+def _task_projection(task: dict[str, Any]) -> dict[str, Any]:
+    duration = task.get("total_duration_ms")
+    iteration = task.get("iteration")
+    journey = task.get("journey")
+    status = task.get("terminal_status")
+    return {
+        "task_id": task["task_id"],
+        "iteration": iteration if type(iteration) is int and iteration >= 0 else None,
+        "journey": journey[:200] if isinstance(journey, str) else None,
+        "terminal_status": status[:80] if isinstance(status, str) else None,
+        "success": task.get("success") is True,
+        "total_duration_ms": duration
+        if isinstance(duration, int | float)
+        and not isinstance(duration, bool)
+        and math.isfinite(duration)
+        and duration >= 0
+        else None,
+    }
+
+
+def _redeem_api_uploads(config: dict[str, Any], secret: bytes, upload_root: Path) -> None:
+    """Redeem signed descriptors; preserve trusted admin API paths without tokens."""
+
+    total = 0
+    traffic = config.get("traffic", {})
+    if not isinstance(traffic, dict) or not isinstance(traffic.get("journeys", []), list):
+        raise ValueError("Traffic journeys must be an array")
+    for journey in traffic.get("journeys", []):
+        if not isinstance(journey, dict):
+            raise ValueError("Traffic journey must be an object")
+        multipart = journey.get("multipart", {})
+        if not isinstance(multipart, dict) or not isinstance(multipart.get("files", []), list):
+            raise ValueError("Multipart files must be an array")
+        for item in multipart.get("files", []):
+            if not isinstance(item, dict):
+                raise ValueError("Multipart file must be an object")
+            if "pathToken" not in item:
+                continue
+            path = _redeem_multipart_path(
+                item.get("path"), item.pop("pathToken"), secret, upload_root
+            )
+            if path is None:
+                raise ValueError("Invalid managed upload path token")
+            size = path.stat().st_size
+            total += size
+            if size > MAX_UI_UPLOAD_BYTES or total > MAX_UI_TOTAL_UPLOAD_BYTES:
+                raise ValueError("Managed upload request exceeds file or total size limits")
+            item["path"] = str(path)
+            item.pop("size", None)
+
+
 def _authorize_multipart_paths(
     projection: dict[str, Any], secret: bytes, upload_root: Path
 ) -> None:
@@ -1760,6 +1970,26 @@ def _capabilities(settings: DiscoverySettings | None = None) -> dict[str, Any]:
     tools = {name: bool(shutil.which(name)) for name in ("kubectl", "kind", "k6", "docker")}
     return {
         "schema_version": "chamber.ampule.dev/capabilities/v1",
+        "product": "ampule-chamber",
+        "version": version("ampule-chamber"),
+        "api_features": [
+            "cleanup_verification",
+            "run_metadata",
+            "managed_uploads",
+            "task_pagination",
+            "caller_provenance",
+            "scoped_integration_token",
+        ],
+        "goals": goal_catalog(),
+        "experiment_families": dict(FAMILIES),
+        "load_models": ["journeys", "arrival", "capacity", "soak"],
+        "integration_auth": {"studio_token_configured": load_studio_auth().enabled},
+        "readiness": {
+            "api": "available",
+            "cluster": "unchecked",
+            "target": "unchecked",
+            "telemetry": "unchecked",
+        },
         "tools": tools,
         "runtime_modes": ["local", "kubernetes-deploy", "kubernetes-attach"],
         "traffic_adapters": ["k6", "relayna"],

@@ -268,7 +268,14 @@ class ChamberApplication:
         return {
             "run_dir": str(run_dir),
             "run": _json_or_default(run_dir / "run.json", {}),
-            "metadata": _json_or_default(run_dir / "run-metadata.json", {}),
+            "metadata": {
+                **_mapping(_json_or_default(run_dir / "run-metadata.json", {})),
+                **(
+                    {"origin": _json_or_default(run_dir / "caller-origin.json", {})}
+                    if (run_dir / "caller-origin.json").exists()
+                    else {}
+                ),
+            },
             "result": _json_or_default(run_dir / "result.json", {}),
             "findings": findings,
             "evidence": evidence,

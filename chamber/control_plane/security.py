@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
+import re
 from dataclasses import dataclass
 from urllib.parse import unquote
 
@@ -88,3 +89,32 @@ def _environment_bool(name: str, *, default: bool) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+STUDIO_TOKEN_ENV = "AMPULE_CHAMBER_STUDIO_TOKEN"
+STUDIO_API_ROUTES = (
+    ("GET", r"/api/v1/(capabilities|scenarios|chambers|runs|kubernetes/discovery)"),
+    ("GET", r"/api/v1/scenarios/[^/]+/[^/]+"),
+    ("GET", r"/api/v1/runs/[^/]+(?:/(evidence-explorer|events|report|tasks|evidence/[^/]+))?"),
+    ("GET", r"/api/v1/jobs/[^/]+(?:/events)?"),
+    ("POST", r"/api/v1/(inspect|plans|runs|compare|uploads|chambers|scenarios)"),
+    ("POST", r"/api/v1/scenarios/(validate|propose)"),
+    ("POST", r"/api/v1/runs/[^/]+/(rerun|archive|tags)"),
+    ("POST", r"/api/v1/jobs/[^/]+/(cancel|cleanup-verified)"),
+)
+
+
+def load_studio_auth() -> AdminAuth:
+    """Integration credential grants explicit API routes, never a browser session."""
+
+    raw = os.environ.get(STUDIO_TOKEN_ENV, "").strip()
+    try:
+        return load_admin_auth(raw)
+    except ValueError as exc:
+        raise ValueError(str(exc).replace(ADMIN_TOKEN_ENV, STUDIO_TOKEN_ENV)) from exc
+
+
+def studio_api_allowed(method: str, path: str) -> bool:
+    return any(
+        method == verb and re.fullmatch(pattern, path) for verb, pattern in STUDIO_API_ROUTES
+    )

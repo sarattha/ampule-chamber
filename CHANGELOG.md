@@ -2,6 +2,12 @@
 
 All notable changes to Ampule Chamber are documented in this file.
 
+## 1.11.0 - 2026-10-03
+
+- Add scoped Studio API credentials, versioned capabilities, managed multipart uploads, caller provenance, paginated task evidence, cleanup confirmation, archive and tags.
+- Distinguish API availability from unchecked Kubernetes target readiness.
+- Preserve existing admin API, browser authentication, CSRF and execution admission contracts.
+
 ## 1.10.0 - 2026-09-12
 
 - Add bounded arrival-rate, capacity-step and soak suites with weighted mixed HTTP/Relayna

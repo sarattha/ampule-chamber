@@ -595,3 +595,50 @@ restart.
 See `examples/sample-service/chamber-kind.yaml` for isolated deploy mode and
 `examples/sample-service/chamber-attach.yaml` for attach mode. The sample README
 contains the image build and kind load commands.
+
+
+## Relayna Studio API integration
+
+Studio can operate Chamber through its private Kubernetes Service URL or an
+operator-managed port-forward; Chamber does not require an ingress or browser
+hostname. A URL configured in Studio must be reachable from the **Studio
+backend**, so a laptop's loopback port-forward is only suitable when that
+backend also runs on the laptop. In AKS, use the private Service address.
+
+Set `AMPULE_CHAMBER_STUDIO_TOKEN` to a separate `op_live_` credential (at least
+24 characters) alongside `AMPULE_CHAMBER_ADMIN_TOKEN`. Inject credentials from a
+Kubernetes Secret, never a ConfigMap. Studio sends the credential as a Bearer
+header to the explicit `/api/v1` integration routes. It cannot sign in to the
+Chamber UI or use UI form endpoints; browser sessions retain CSRF enforcement.
+The integration token has operational API privileges, including execution,
+scenario/chamber configuration and evidence access. Treat it as a secret.
+
+`GET /api/v1/capabilities` advertises product/version, API feature names, goals,
+load models and experiment families. Installed tools do not prove Kubernetes
+authorization, target readiness or telemetry health: those checks remain
+explicitly `unchecked` until discovery/preflight/execution supplies evidence.
+
+Additional native operations:
+
+- `POST /api/v1/uploads`: multipart `file` plus `field`, returning a managed
+  `file` descriptor with `path`, `pathToken`, `filename`, `contentType` and
+  `size`. Pass the descriptor in a journey's `multipart.files` during planning.
+  Signed paths must remain inside the workspace upload root. The existing
+  128 MiB per-file and 256 MiB per-plan limits apply. Existing trusted admin API
+  paths remain compatible.
+- `POST /api/v1/plans` and `POST /api/v1/runs`: optional bounded `origin` fields
+  `studio_service_id`, `studio_environment`, `studio_reference` and `actor`.
+  Run starts inherit the plan origin when omitted; job summaries and run
+  metadata expose it. The idempotency digest includes origin when supplied.
+- `GET /api/v1/runs/{run_id}/tasks`: `page`, `page_size` (1–100), `search`,
+  `status` and `failed_first`; returns `items`, `pagination` and `total_count`.
+  All available task records are pageable, including tasks beyond 200.
+- `POST /api/v1/runs/{run_id}/archive`: `{ "archived": true }` (or false).
+- `POST /api/v1/runs/{run_id}/tags`: `{ "tags": ["release", "staging"] }`.
+- `POST /api/v1/jobs/{job_id}/cleanup-verified`: `{ "confirmed": true }`.
+  Only terminal jobs can release admission; the failed assessment and its
+  evidence remain unchanged. Confirm restoration independently before calling.
+
+All existing target admission, named chamber, fault validation, result and
+evidence contracts remain authoritative. No native Studio operation skips
+Chamber preflight or silently starts a plan.

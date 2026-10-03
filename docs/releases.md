@@ -1,5 +1,25 @@
 # Releases
 
+## 1.11.0 - 2026-10-03
+
+Native Relayna Studio clients can use the private Chamber API for the complete
+planning, execution and evidence flow without a browser hostname.
+
+- Optional separate Studio integration credential restricted to explicit API
+  routes, with existing admin login and browser CSRF protection preserved.
+- Versioned capability discovery separates installed tools from unchecked
+  cluster, target and telemetry readiness.
+- Signed managed multipart upload descriptors are redeemed during planning
+  under the existing per-file and total-request limits.
+- Caller service/environment/reference metadata survives asynchronous execution
+  and appears in job summaries, run metadata and Chamber detail pages.
+- All available Relayna tasks can be paged and filtered, including tasks after
+  the first 200. Terminal cleanup confirmation, archive and tags have native
+  JSON endpoints.
+
+The existing runner, target admission, named chambers, faults, result artifacts
+and trusted administrator configuration paths remain compatible.
+
 ## 1.9.0 - 2026-08-08
 
 Ampule Chamber `1.9.0` makes the control plane an accessible operational

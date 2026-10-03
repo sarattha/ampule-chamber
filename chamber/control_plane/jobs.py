@@ -49,6 +49,7 @@ class AssessmentJob:
     cleanup_required: bool = False
     target_key: str | None = None
     chamber_id: str | None = None
+    origin: dict[str, str] | None = None
     process: subprocess.Popen[str] | None = field(default=None, repr=False)
     cancel_at: float | None = field(default=None, repr=False)
 
@@ -103,11 +104,16 @@ class AssessmentJobManager:
         context: str | None = None,
         prometheus_url: str | None = None,
         idempotency_key: str | None = None,
+        origin: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         config_bytes = config_path.read_bytes()
         digest = hashlib.sha256(
             config_bytes
-            + json.dumps([mode, context, prometheus_url], separators=(",", ":")).encode()
+            + json.dumps(
+                [mode, context, prometheus_url] + ([origin] if origin else []),
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
         ).hexdigest()
         config = yaml.safe_load(config_bytes)
         config = config if isinstance(config, dict) else {}
@@ -143,6 +149,8 @@ class AssessmentJobManager:
                         )
             run_dir = new_run_directory(self.workspace / "runs", "assessment")
             initialize_run_record(run_dir, mode=mode)
+            if origin:
+                write_json_atomic(run_dir / "caller-origin.json", origin)
             job_id = uuid.uuid4().hex
             snapshot = run_dir / "execution-config.yaml"
             snapshot.write_bytes(config_bytes)
@@ -158,6 +166,7 @@ class AssessmentJobManager:
                 request_digest=digest,
                 target_key=lock_key,
                 chamber_id=chamber["id"] if chamber else None,
+                origin=origin,
             )
             lease = (self.directory / f"{job_id}.lock").open("a")
             fcntl.flock(lease, fcntl.LOCK_EX)

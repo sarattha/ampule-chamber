@@ -701,3 +701,32 @@ the linked artifact. This final update changes documentation only.
 Implementation and review are complete. The authoritative landing record is
 [PR #42](https://github.com/sarattha/ampule-chamber/pull/42); merge is gated on the
 final documentation commit's CI checks.
+
+## Studio API workspace completion — 2026-10-03
+
+The user explicitly requested complete Studio access to Chamber without a browser hostname. Extend existing authenticated APIs with versioned integration capabilities, managed-upload planning, caller references, cleanup verification, archive and tags. Preserve the existing runner, target admission and evidence contracts. Studio implements native pages; no public Chamber ingress is required. Companion plan: `/Users/jobz/Works/relayna/docs/internal/ampule-studio-api-execplan.md`.
+
+### Progress
+
+- [x] Added scoped Studio integration authentication, explicit versioned API capabilities, managed upload/token redemption, caller provenance, task pagination, archive/tags and terminal cleanup confirmation.
+- [x] Preserved trusted administrator plan paths, existing runner/admission checks, browser authentication and CSRF enforcement.
+- [x] Added origin context to Chamber job/run views and corrected API-versus-target readiness wording and attach namespace guidance.
+- [x] Added focused authorization, browser CSRF, bounded upload, token containment, malformed configuration, all-task pagination, cleanup confirmation and idempotency regression tests.
+- [x] Bumped package, templates, deployment and public version metadata to 1.11.0; documented native API and private Service/port-forward access.
+- [x] Completed `make check`: 311 tests, 90% combined branch/line coverage, format/lint/typecheck, scenario/deployment/release validation, strict docs and wheel/source builds.
+
+### Decisions And Discoveries
+
+Use additive JSON endpoints over existing application/job operations; no parallel runner, ingress or public Chamber browser hostname is introduced. Caller origin is stored in a dedicated run artifact, so child-written execution metadata cannot erase it. Existing idempotency digests remain unchanged when origin is absent; supplied origin participates in request identity. Exact admitted task IDs and numeric durations remain available through all pages rather than an implicit 200-row cap.
+
+Installed executables indicate availability only: cluster, target and telemetry readiness are explicitly unchecked. The separate Studio credential is an operational API credential, with an explicit method/path allowlist and no browser session/login privilege. Configure it alongside the administrator credential, using Kubernetes Secrets. Managed upload signing retains the existing control-plane process lifetime and limits; redeem descriptors during planning instead of treating signed tokens as permanent reusable credentials.
+
+### Acceptance Evidence And Remaining Integration
+
+`make check` passed twice; the final runtime patch passed 311 tests (42.236s), coverage verification passed the same 311 tests (48.287s), and combined coverage was 90%. `node --check chamber/control_plane/static/app.js` passed. Task pagination regression retrieves every valid record in a 306-task fixture, including the final page, and preserves exact IDs/durations. Unsafe artifact fields are excluded from the task projection. Browser-CSRF checks and API-only token scope pass.
+
+Relayna owns the native Studio UI and Computer Use acceptance in the companion plan. No live Kubernetes traffic or fault was initiated by this API implementation. Preserve the unrelated untracked `docs/internal/studio-integration-audit-2026-09-12/` directory.
+
+### Outcomes
+
+The API extensions and Chamber-side UI context are complete. Public result artifacts, target admission, approved fault behavior and administrator configuration-path semantics remain compatible. Cross-repository native Studio integration and final UI validation are being completed in Relayna.
