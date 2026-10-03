@@ -897,3 +897,20 @@ lint, type, scenario, deployment, release, strict docs and build gate passed;
 the 96% floor and coverage scope remain unchanged. Final host CI and a new
 Codex review must verify the pushed review fixes before merge. The authoritative
 landing and review record is [PR #43](https://github.com/sarattha/ampule-chamber/pull/43).
+
+The second Codex pass on `72c4f4a` found equal-token privilege overlap and custom
+credential headers escaping document redaction. Reject identical configured
+admin/Studio digests before constructing the app, with explicit-token and
+environment-token startup regressions. Broaden static header redaction by
+authentication/credential/token/secret/password/API-key/cookie name markers.
+Endpoint tests verify custom headers are redacted in complete reads and both
+validation projections while ordinary request headers and environment-name
+references remain intact. No administrator credential or browser contract is
+changed for distinct tokens.
+
+Fresh acceptance for the second review fixes: `make check` passed 397 tests
+(43.593s), the 397-test coverage rerun (49.891s), and 97.76% whole-package
+statement/branch coverage (9219 statements, 3346 branches), with every format,
+lint, type, scenario, deployment, release, strict docs and build gate passing.
+The focused Studio API suite passed 12 tests. Final CI and another Codex review
+must verify the pushed credential fixes before landing.

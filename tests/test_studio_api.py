@@ -33,6 +33,17 @@ ORIGIN = {
 
 
 class StudioApiTests(unittest.TestCase):
+    def test_studio_credential_cannot_equal_admin_credential(self) -> None:
+        with (
+            TemporaryDirectory() as tmp,
+            patch.dict("os.environ", {"AMPULE_CHAMBER_STUDIO_TOKEN": ADMIN}),
+        ):
+            with self.assertRaisesRegex(ValueError, "STUDIO_TOKEN must differ"):
+                create_app(Path(tmp), admin_token=ADMIN)
+            with patch.dict("os.environ", {"AMPULE_CHAMBER_ADMIN_TOKEN": ADMIN}):
+                with self.assertRaisesRegex(ValueError, "STUDIO_TOKEN must differ"):
+                    create_app(Path(tmp))
+
     def test_scoped_token_auth_and_browser_csrf(self) -> None:
         with (
             TemporaryDirectory() as tmp,
@@ -548,9 +559,16 @@ class StudioApiTests(unittest.TestCase):
             journey["headers"] = {
                 "Authorization": "Bearer embedded-private",
                 "X-Api-Key": "embedded-key",
+                "X-Auth": "private-x-auth",
+                "Authentication": "private-authentication",
+                "X-Credential": "private-credential",
+                "X-Custom-Token": "private-custom-token",
+                "X-Service-Api-Key": "private-service-key",
+                "X-Client-Secret": "private-client-secret",
                 "Accept": "application/json",
+                "X-Idempotency-Key": "approved-request-id",
             }
-            journey["headersFromEnv"] = {"Authorization": "API_TOKEN"}
+            journey["headersFromEnv"] = {"Authorization": "API_TOKEN", "X-Auth": "TARGET_AUTH"}
             journey["body"] = {
                 "password": "private-password",
                 "message": "approved input",
@@ -608,9 +626,25 @@ class StudioApiTests(unittest.TestCase):
                 self.assertEqual(document["runtime"], config["runtime"])
                 self.assertEqual(document["traffic"]["load"], config["traffic"]["load"])
                 actual = document["traffic"]["journeys"][0]
-                self.assertEqual(actual["headersFromEnv"], {"Authorization": "API_TOKEN"})
+                self.assertEqual(actual["headersFromEnv"], journey["headersFromEnv"])
                 self.assertEqual(actual["headers"]["Accept"], "application/json")
                 self.assertEqual(actual["headers"]["Authorization"], "[redacted]")
+                self.assertEqual(actual["headers"]["X-Idempotency-Key"], "approved-request-id")
+                for name in (
+                    "X-Auth",
+                    "Authentication",
+                    "X-Credential",
+                    "X-Custom-Token",
+                    "X-Service-Api-Key",
+                    "X-Client-Secret",
+                ):
+                    self.assertEqual(actual["headers"][name], "[redacted]")
+                    self.assertEqual(
+                        validation["normalized"]["journeys"][0]["headers"][name], "[redacted]"
+                    )
+                    self.assertIn(
+                        f"/traffic/journeys/0/headers/{name}", envelope["redacted_fields"]
+                    )
                 self.assertEqual(actual["body"]["message"], "approved input")
                 self.assertNotIn("private", response.text)
                 self.assertIn(

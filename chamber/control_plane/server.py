@@ -147,6 +147,12 @@ def create_app(
 
     auth = load_admin_auth(admin_token)
     studio_auth = load_studio_auth()
+    if (
+        auth.enabled
+        and studio_auth.enabled
+        and hmac.compare_digest(auth.token_digest or b"", studio_auth.token_digest or b"")
+    ):
+        raise ValueError("AMPULE_CHAMBER_STUDIO_TOKEN must differ from AMPULE_CHAMBER_ADMIN_TOKEN")
     kubernetes_discovery = discovery or KubernetesDiscovery(DiscoverySettings.from_environment())
     application = ChamberApplication(workspace)
     application.initialize()
@@ -1877,7 +1883,25 @@ def _redact_document_credentials(document: dict[str, Any]) -> tuple[dict[str, An
             normalized = str(key).lower().replace("_", "").replace("-", "")
             if key == "headersFromEnv":
                 result[key] = copy.deepcopy(item)
-            elif normalized in secret_keys or key in declared:
+            elif (
+                normalized in secret_keys
+                or key in declared
+                or (
+                    path.endswith("/headers")
+                    and any(
+                        marker in normalized
+                        for marker in (
+                            "auth",
+                            "credential",
+                            "token",
+                            "secret",
+                            "password",
+                            "apikey",
+                            "cookie",
+                        )
+                    )
+                )
+            ):
                 result[key] = "[redacted]"
                 fields.append(selected)
             else:

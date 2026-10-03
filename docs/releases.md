@@ -8,7 +8,8 @@ planning, execution and evidence flow without a browser hostname.
 - Optional separate Studio integration credential restricted to explicit API
   routes, with existing admin login and browser CSRF protection preserved.
   Both Helm and raw Kubernetes deployments support an optional Secret-backed
-  Studio credential while retaining admin-only installations.
+  Studio credential while retaining admin-only installations. Startup rejects
+  identical admin and Studio credentials to preserve the API scope boundary.
 - Versioned capability discovery separates installed tools from unchecked
   cluster, target and telemetry readiness.
 - Signed managed multipart upload descriptors are redeemed during planning
@@ -16,7 +17,7 @@ planning, execution and evidence flow without a browser hostname.
   signed paths; trusted administrator paths remain compatible.
 - Caller service/environment/reference metadata survives asynchronous execution
   and appears in job summaries, run metadata and Chamber detail pages.
-- Full validated scenario documents and YAML/JSON previews retain advanced settings during native imports, while embedded credentials are redacted and managed upload paths remain authorized.
+- Full validated scenario documents and YAML/JSON previews retain advanced settings during native imports, while embedded credentials, including custom authentication headers, are redacted and managed upload paths remain authorized.
 - Optional bounded run summaries retain result views and disclose rendering truncation, while default full reads remain compatible. Setup reruns retain caller provenance.
 - All available Relayna tasks can be paged and filtered, including tasks after
   the first 200. Terminal cleanup confirmation, archive and tags have native
@@ -25,9 +26,9 @@ planning, execution and evidence flow without a browser hostname.
   reads, with explicit truncation and complete default responses preserved.
 - Refresh locked AnyIO, PyJWT and urllib3 dependencies to resolve fixed
   HIGH/CRITICAL security findings without scanner exclusions.
-- Add 80 regression tests across runtime, API, load, evidence, reporting and
+- Add 81 regression tests across runtime, API, load, evidence, reporting and
   deployment; enforce a 96% whole-package statement/branch coverage floor. The
-  final 396-test acceptance run measured 97.77% coverage.
+  final 397-test acceptance run measured 97.76% coverage.
 
 The existing runner, target admission, named chambers, faults, result artifacts
 and trusted administrator configuration paths remain compatible.

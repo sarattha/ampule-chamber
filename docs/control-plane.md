@@ -607,7 +607,8 @@ backend also runs on the laptop. In AKS, use the private Service address.
 
 Set `AMPULE_CHAMBER_STUDIO_TOKEN` to a separate `op_live_` credential (at least
 24 characters) alongside `AMPULE_CHAMBER_ADMIN_TOKEN`. Inject credentials from a
-Kubernetes Secret, never a ConfigMap. Studio sends the credential as a Bearer
+Kubernetes Secret, never a ConfigMap. The two credentials must differ; startup
+rejects identical values. Studio sends the credential as a Bearer
 header to the explicit `/api/v1` integration routes. It cannot sign in to the
 Chamber UI or use UI form endpoints; browser sessions retain CSRF enforcement.
 The integration token has operational API privileges, including execution,
@@ -643,6 +644,9 @@ Additional native operations:
   are retained. Embedded auth headers, credential fields and credential-bearing
   URLs are redacted; environment credential references remain intact. JSON
   pointer paths and warnings identify values to restore safely before execution.
+  Static header names containing authentication, credential, token, secret,
+  password, API-key or cookie markers are redacted; `headersFromEnv` references
+  and ordinary request headers remain intact.
   Managed multipart descriptors receive signed path tokens for planning.
 
 - `POST /api/v1/uploads`: multipart `file` plus `field`, returning a managed

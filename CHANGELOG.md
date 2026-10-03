@@ -11,8 +11,9 @@ All notable changes to Ampule Chamber are documented in this file.
 - Distinguish API availability from unchecked Kubernetes target readiness.
 - Preserve existing admin API, browser authentication, CSRF and execution admission contracts.
 - Refresh locked AnyIO, PyJWT and urllib3 dependencies to resolve fixed HIGH/CRITICAL security findings.
-- Add 80 runtime, API, load, evidence, report and deployment regression tests; enforce a 96% whole-package statement/branch coverage floor.
+- Add 81 runtime, API, load, evidence, report and deployment regression tests; enforce a 96% whole-package statement/branch coverage floor.
 - Require signed managed multipart paths for Studio plans while preserving trusted administrator paths, and expose optional Studio credentials through Helm and raw Kubernetes Secrets.
+- Reject identical admin/Studio credentials and redact custom authentication headers in complete scenario documents and validation previews.
 
 ## 1.10.0 - 2026-09-12
 
