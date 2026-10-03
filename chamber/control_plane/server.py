@@ -743,7 +743,9 @@ def create_app(
         return {"scenarios": scenarios.list(_ui_journeys)}
 
     @app.get("/api/v1/scenarios/{source}/{scenario_id}")
-    async def scenario_api(source: str, scenario_id: str, service_name: str = "") -> dict[str, Any]:
+    async def scenario_api(
+        request: Request, source: str, scenario_id: str, service_name: str = ""
+    ) -> dict[str, Any]:
         try:
             normalized = scenarios.read(source, scenario_id, _ui_journeys)
         except FileNotFoundError:
@@ -752,7 +754,7 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         normalized["warnings"] = compatibility_warnings(normalized, service_name=service_name)
         _authorize_multipart_paths(normalized, multipart_path_secret, multipart_upload_root)
-        return normalized
+        return _studio_response(request, normalized)
 
     @app.get("/api/v1/scenarios/{source}/{scenario_id}/document")
     async def scenario_document_api(source: str, scenario_id: str) -> dict[str, Any]:
@@ -806,17 +808,18 @@ def create_app(
             normalized, service_name=payload.service_name
         )
         _authorize_multipart_paths(normalized, multipart_path_secret, multipart_upload_root)
-        return normalized
+        return _studio_response(request, normalized)
 
     @app.post("/api/v1/scenarios", status_code=201)
     async def create_scenario_api(request: Request, payload: ScenarioSaveRequest) -> dict[str, Any]:
         _check_csrf(request, request.headers.get("X-CSRF-Token"))
         try:
-            return scenarios.save(
+            result = scenarios.save(
                 payload.document,
                 replace=payload.replace,
                 validate_journeys=_ui_journeys,
             )
+            return _studio_response(request, result)
         except FileExistsError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except (ScenarioCatalogError, ValueError) as exc:
@@ -966,9 +969,12 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.get("/api/v1/runs/{run_id}")
-    async def run_api(run_id: str, include_task_details: bool = True) -> dict[str, Any]:
+    async def run_api(
+        request: Request, run_id: str, include_task_details: bool = True
+    ) -> dict[str, Any]:
         try:
             run = application.get_run(run_id, include_task_details=include_task_details)
+            run = _studio_response(request, run)
             return run if include_task_details else _bounded_run_summary(run)
         except (FileNotFoundError, ValueError):
             raise HTTPException(status_code=404, detail="run not found") from None
@@ -981,6 +987,7 @@ def create_app(
         try:
             application.set_run_archived(run_id, archived=payload.archived)
             run = application.get_run(run_id, include_task_details=include_task_details)
+            run = _studio_response(request, run)
             return run if include_task_details else _bounded_run_summary(run)
         except (FileNotFoundError, ValueError):
             raise HTTPException(status_code=404, detail="run not found") from None
@@ -993,6 +1000,7 @@ def create_app(
         try:
             application.set_run_tags(run_id, tags=tuple(payload.tags))
             run = application.get_run(run_id, include_task_details=include_task_details)
+            run = _studio_response(request, run)
             return run if include_task_details else _bounded_run_summary(run)
         except FileNotFoundError:
             raise HTTPException(status_code=404, detail="run not found") from None
@@ -1178,6 +1186,7 @@ def create_app(
             run_dir = application.run_path(run_id)
             report_path = None
             run = application.get_run(run_id)
+            run = _studio_response(request, run)
         except (FileNotFoundError, ValueError):
             raise HTTPException(status_code=404, detail="run not found") from None
         if format == "markdown":
@@ -1216,7 +1225,20 @@ def create_app(
     async def compare_api(request: Request, payload: CompareRequest) -> dict[str, Any]:
         _check_csrf(request, request.headers.get("X-CSRF-Token"))
         try:
-            return asdict(application.compare(payload.baseline_run_id, payload.candidate_run_id))
+            result = asdict(application.compare(payload.baseline_run_id, payload.candidate_run_id))
+            if request.state.studio_authenticated:
+                for reason in result["compatibility_reasons"]:
+                    if reason["dimension"] in {"load contract", "experiment contract"}:
+                        reason["baseline"] = reason["candidate"] = "[redacted configuration]"
+                    reason["detail"] = f"{reason['dimension'].title()} " + (
+                        "matches." if reason["compatible"] else "differs or is unavailable."
+                    )
+                result["notes"] = [
+                    reason["detail"]
+                    for reason in result["compatibility_reasons"]
+                    if not reason["compatible"]
+                ]
+            return _studio_response(request, result)
         except (FileNotFoundError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -1829,6 +1851,22 @@ def _document_response(result: dict[str, Any], secret: bytes, upload_root: Path)
     return result
 
 
+def _studio_response(request: Request, result: dict[str, Any]) -> dict[str, Any]:
+    """Protect Studio projections without changing trusted administrator responses."""
+
+    if not request.state.studio_authenticated:
+        return result
+    result, fields = _redact_document_credentials(result)
+    if fields:
+        result["redacted_fields"] = fields
+        result["warnings"] = [
+            *result.get("warnings", []),
+            "Embedded credentials were redacted. Supply approved credentials "
+            "through environment references before execution.",
+        ]
+    return result
+
+
 def _redact_document_credentials(document: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """Preserve configuration and environment references, omit embedded credentials."""
 
@@ -1847,11 +1885,10 @@ def _redact_document_credentials(document: dict[str, Any]) -> tuple[dict[str, An
         "accesstoken",
         "clientsecret",
     }
-    declared = {str(name) for name in _mapping(document.get("runtime")).get("secretEnv", [])}
 
-    def redact(value: Any, path: str = "") -> Any:
-        if isinstance(value, list):
-            return [redact(item, f"{path}/{index}") for index, item in enumerate(value)]
+    def redact(value: Any, path: str = "", declared: frozenset[str] = frozenset()) -> Any:
+        if isinstance(value, list | tuple):
+            return [redact(item, f"{path}/{index}", declared) for index, item in enumerate(value)]
         if not isinstance(value, dict):
             if isinstance(value, str) and value.startswith(("http://", "https://")):
                 parts = urlsplit(value)
@@ -1877,6 +1914,9 @@ def _redact_document_credentials(document: dict[str, Any]) -> tuple[dict[str, An
                         )
                     )
             return value
+        declared = declared | frozenset(
+            str(name) for name in _mapping(value.get("runtime")).get("secretEnv", [])
+        )
         result = {}
         for key, item in value.items():
             selected = f"{path}/{str(key).replace('~', '~0').replace('/', '~1')}"
@@ -1905,7 +1945,7 @@ def _redact_document_credentials(document: dict[str, Any]) -> tuple[dict[str, An
                 result[key] = "[redacted]"
                 fields.append(selected)
             else:
-                result[key] = redact(item, selected)
+                result[key] = redact(item, selected, declared)
         return result
 
     return redact(document), fields

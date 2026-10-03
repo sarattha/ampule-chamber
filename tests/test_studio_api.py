@@ -740,6 +740,136 @@ class StudioApiTests(unittest.TestCase):
                 planned = client.post("/api/v1/plans", headers=headers, json={"config": document})
                 self.assertEqual(planned.status_code, 200, planned.text)
 
+    def test_studio_legacy_and_run_projections_redact_credentials_only_for_studio(self) -> None:
+        with (
+            TemporaryDirectory() as tmp,
+            patch.dict("os.environ", {"AMPULE_CHAMBER_STUDIO_TOKEN": STUDIO}),
+        ):
+            root = Path(tmp)
+            app = create_app(root / "workspace", admin_token=ADMIN)
+            admin = {"Authorization": f"Bearer {ADMIN}"}
+            studio = {"Authorization": f"Bearer {STUDIO}"}
+            config = infer_config(_fixture_repo(root))
+            config["scenarioId"] = "legacy-credentials"
+            journey = config["traffic"]["journeys"][0]
+            journey.update(
+                method="POST",
+                requestEncoding="json",
+                headers={"Authorization": "Bearer private-auth", "X-Credential": "private-custom"},
+                headersFromEnv={"X-Auth": "TARGET_AUTH"},
+                body={"password": "private-body", "message": "approved input"},
+            )
+            with TestClient(app) as client:
+                saved = client.post("/api/v1/scenarios", headers=admin, json={"document": config})
+                self.assertEqual(saved.status_code, 201, saved.text)
+                self.assertIn("private-auth", saved.text)
+                scenario_path = "/api/v1/scenarios/user/legacy-credentials"
+                response = client.get(scenario_path, headers=studio)
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertNotIn("private-", response.text)
+                self.assertIn(
+                    "/journeys/0/headers/Authorization", response.json()["redacted_fields"]
+                )
+                self.assertEqual(
+                    response.json()["journeys"][0]["headersFromEnv"], {"X-Auth": "TARGET_AUTH"}
+                )
+                self.assertTrue(response.json()["warnings"])
+                self.assertIn("private-auth", client.get(scenario_path, headers=admin).text)
+                for path, payload in (
+                    ("/api/v1/scenarios/validate", {"content": yaml.safe_dump(config)}),
+                    ("/api/v1/scenarios", {"document": config, "replace": True}),
+                ):
+                    response = client.post(path, headers=studio, json=payload)
+                    self.assertIn(response.status_code, (200, 201), response.text)
+                    self.assertNotIn("private-", response.text)
+                    self.assertTrue(response.json()["redacted_fields"])
+                planned = client.post("/api/v1/plans", headers=admin, json={"config": config})
+                self.assertEqual(planned.status_code, 200, planned.text)
+                run_id = planned.json()["run_id"]
+                run_path = f"/api/v1/runs/{run_id}"
+                directory = app.state.chamber.run_path(run_id)
+                stored = yaml.safe_load((directory / "chamber.yaml").read_text())
+                stored["runtime"]["secretEnv"] = ["CUSTOM_SETTING"]
+                stored["runtime"]["config"] = {"CUSTOM_SETTING": "private-environment"}
+                (directory / "chamber.yaml").write_text(yaml.safe_dump(stored))
+                for detail in ("true", "false"):
+                    suffix = f"?include_task_details={detail}"
+                    response = client.get(run_path + suffix, headers=studio)
+                    self.assertEqual(response.status_code, 200, response.text)
+                    self.assertNotIn("private-", response.text)
+                    projected = response.json()["config"]
+                    self.assertEqual(projected["runtime"]["config"]["CUSTOM_SETTING"], "[redacted]")
+                    self.assertEqual(
+                        projected["traffic"]["journeys"][0]["body"]["message"], "approved input"
+                    )
+                    for operation, payload in (
+                        ("archive", {"archived": True}),
+                        ("tags", {"tags": ["safe"]}),
+                    ):
+                        response = client.post(
+                            run_path + "/" + operation + suffix, headers=studio, json=payload
+                        )
+                        self.assertEqual(response.status_code, 200, response.text)
+                        self.assertNotIn("private-", response.text)
+                    response = client.get(run_path + suffix, headers=admin)
+                    self.assertIn("private-auth", response.text)
+                    self.assertIn("private-environment", response.text)
+                    self.assertNotIn("redacted_fields", response.json())
+                self.assertIn("private-auth", (directory / "chamber.yaml").read_text())
+                report = client.get(run_path + "/report?format=html", headers=studio)
+                self.assertEqual(report.status_code, 200, report.text)
+                self.assertNotIn("private-", report.text)
+                admin_report = client.get(run_path + "/report?format=html", headers=admin)
+                self.assertIn("private-auth", admin_report.text)
+
+    def test_studio_comparison_omits_serialized_credentials_without_changing_compatibility(
+        self,
+    ) -> None:
+        with (
+            TemporaryDirectory() as tmp,
+            patch.dict("os.environ", {"AMPULE_CHAMBER_STUDIO_TOKEN": STUDIO}),
+        ):
+            workspace = Path(tmp)
+            app = create_app(workspace, admin_token=ADMIN)
+            ids = []
+            for credential in ("private-baseline", "private-candidate"):
+                directory = new_run_directory(workspace / "runs", "comparison")
+                initialize_run_record(directory)
+                config = {
+                    "service": {"name": "orders"},
+                    "scenario": {"id": "baseline", "revision": "same"},
+                    "runtime": {
+                        "provider": "kubernetes",
+                        "mode": "attach",
+                        "prometheusUrl": "https://metrics-user:private-metrics@prometheus.test",
+                    },
+                    "traffic": {
+                        "load": {"model": "arrival"},
+                        "journeys": [{"headers": {"Authorization": credential}}],
+                    },
+                    "experiment": {"family": "dependency_outage", "password": credential},
+                }
+                (directory / "chamber.yaml").write_text(yaml.safe_dump(config))
+                ids.append(directory.name)
+            with TestClient(app) as client:
+                payload = {"baseline_run_id": ids[0], "candidate_run_id": ids[1]}
+                admin = client.post(
+                    "/api/v1/compare", headers={"Authorization": f"Bearer {ADMIN}"}, json=payload
+                )
+                studio = client.post(
+                    "/api/v1/compare", headers={"Authorization": f"Bearer {STUDIO}"}, json=payload
+                )
+                self.assertEqual(admin.status_code, 200, admin.text)
+                self.assertEqual(studio.status_code, 200, studio.text)
+                self.assertIn("private-baseline", admin.text)
+                self.assertNotIn("private-", studio.text)
+                self.assertEqual(admin.json()["compatible"], studio.json()["compatible"])
+                self.assertFalse(studio.json()["compatible"])
+                self.assertEqual(
+                    [item["compatible"] for item in admin.json()["compatibility_reasons"]],
+                    [item["compatible"] for item in studio.json()["compatibility_reasons"]],
+                )
+
     def test_run_summary_bounds_large_task_events_http_views_and_preserves_default(self) -> None:
         with TemporaryDirectory() as tmp:
             workspace = Path(tmp)

@@ -914,3 +914,25 @@ statement/branch coverage (9219 statements, 3346 branches), with every format,
 lint, type, scenario, deployment, release, strict docs and build gate passing.
 The focused Studio API suite passed 12 tests. Final CI and another Codex review
 must verify the pushed credential fixes before landing.
+
+The third Codex pass on `04fdfd1` identified credential retrieval through
+allowlisted legacy scenario reads and run configurations. Apply conditional
+Studio redaction to normalized scenario reads, validation/save responses, full
+and bounded run reads, archive/tag responses and HTML reports. Preserve
+administrator responses and stored artifacts. Nested configurations retain
+their own declared secret-environment redaction context. Also omit serialized
+load/experiment contracts and raw comparison reason text from Studio responses
+without changing the original compatibility decision or measured deltas.
+Endpoint regressions prove redaction, disclosed paths/warnings, environment
+reference preservation, administrator compatibility and nonmutation of stored
+files. A comparison regression proves different embedded credentials still
+produce incompatibility after response redaction. All 14 focused API tests pass.
+
+Final stable local acceptance for projection fixes: `make check` passed 399
+tests (43.569s), the 399-test coverage rerun (50.380s), and 97.78% whole-package
+statement/branch coverage (9239 statements, 3356 branches). Every formatting,
+lint, type, scenario, deployment, release, strict docs and build gate passed.
+Comparison tests include credential-bearing metrics URLs in tuple-based
+compatibility reasons, and redaction traverses both tuples and lists. All
+reported compatibility flags remain unchanged. Final host CI/review acceptance
+and merge status are recorded in the linked PR before landing.

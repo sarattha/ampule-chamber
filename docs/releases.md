@@ -18,6 +18,10 @@ planning, execution and evidence flow without a browser hostname.
 - Caller service/environment/reference metadata survives asynchronous execution
   and appears in job summaries, run metadata and Chamber detail pages.
 - Full validated scenario documents and YAML/JSON previews retain advanced settings during native imports, while embedded credentials, including custom authentication headers, are redacted and managed upload paths remain authorized.
+- Studio legacy scenario, run and HTML report projections also redact embedded
+  credentials. Comparison responses omit serialized load/experiment credentials
+  while retaining authoritative compatibility decisions; administrator responses
+  and persisted artifacts remain compatible.
 - Optional bounded run summaries retain result views and disclose rendering truncation, while default full reads remain compatible. Setup reruns retain caller provenance.
 - All available Relayna tasks can be paged and filtered, including tasks after
   the first 200. Terminal cleanup confirmation, archive and tags have native
@@ -26,9 +30,9 @@ planning, execution and evidence flow without a browser hostname.
   reads, with explicit truncation and complete default responses preserved.
 - Refresh locked AnyIO, PyJWT and urllib3 dependencies to resolve fixed
   HIGH/CRITICAL security findings without scanner exclusions.
-- Add 81 regression tests across runtime, API, load, evidence, reporting and
+- Add 83 regression tests across runtime, API, load, evidence, reporting and
   deployment; enforce a 96% whole-package statement/branch coverage floor. The
-  final 397-test acceptance run measured 97.76% coverage.
+  final 399-test acceptance run measured 97.78% coverage.
 
 The existing runner, target admission, named chambers, faults, result artifacts
 and trusted administrator configuration paths remain compatible.

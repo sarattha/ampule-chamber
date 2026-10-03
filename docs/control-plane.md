@@ -614,6 +614,14 @@ Chamber UI or use UI form endpoints; browser sessions retain CSRF enforcement.
 The integration token has operational API privileges, including execution,
 scenario/chamber configuration and evidence access. Treat it as a secret.
 
+Studio responses also redact credentials in legacy normalized scenario reads,
+validation/save responses, run projections and HTML report configuration.
+Archive and tag responses apply the same redaction in full and bounded modes.
+Redacted JSON-pointer paths and warnings disclose changes; stored artifacts and
+administrator responses retain their existing contracts. Studio comparison
+responses omit serialized load/experiment configurations and use safe reason
+text while preserving the original compatibility decision and measured deltas.
+
 The Helm chart reads the optional `studio-token` key from `auth.existingSecret`;
 override its name with `auth.studioSecretKey`. For local installations where
 Helm manages the Secret, `auth.studioToken` populates that key. Keep it empty
