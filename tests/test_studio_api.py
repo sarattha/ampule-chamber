@@ -477,6 +477,36 @@ class StudioApiTests(unittest.TestCase):
             validate_experiment(config)
             validate_suite(config["traffic"])
             with TestClient(app) as client:
+                validated = client.post(
+                    "/api/v1/scenarios/validate-document",
+                    headers=headers,
+                    json={"content": yaml.safe_dump(config), "service_name": "another-service"},
+                )
+                self.assertEqual(validated.status_code, 200, validated.text)
+                validation = validated.json()
+                self.assertEqual(validation["document"]["experiment"], config["experiment"])
+                self.assertEqual(validation["document"]["chamber"], config["chamber"])
+                self.assertEqual(validation["document"]["agents"], config["agents"])
+                self.assertEqual(validation["document"]["runtime"], config["runtime"])
+                self.assertEqual(
+                    validation["document"]["traffic"]["load"], config["traffic"]["load"]
+                )
+                self.assertEqual(validation["source"], "imported")
+                self.assertEqual(validation["normalized"]["kind"], "ChamberConfig")
+                self.assertNotIn("private", validated.text)
+                self.assertEqual(
+                    validation["normalized"]["journeys"][0]["body"]["password"], "[redacted]"
+                )
+                self.assertTrue(any("another-service" in item for item in validation["warnings"]))
+                self.assertTrue(validation["redacted_fields"])
+                legacy = client.post(
+                    "/api/v1/scenarios/validate",
+                    headers=headers,
+                    json={"content": yaml.safe_dump(config)},
+                )
+                self.assertEqual(legacy.status_code, 200)
+                self.assertIn("journeys", legacy.json())
+                self.assertNotIn("document", legacy.json())
                 saved = client.post("/api/v1/scenarios", headers=headers, json={"document": config})
                 self.assertEqual(saved.status_code, 201, saved.text)
                 response = client.get(
@@ -575,6 +605,20 @@ class StudioApiTests(unittest.TestCase):
                 document = response.json()["document"]
                 self.assertIn(
                     "pathToken", document["traffic"]["journeys"][0]["multipart"]["files"][0]
+                )
+                validated = client.post(
+                    "/api/v1/scenarios/validate-document",
+                    headers=headers,
+                    json={"content": json.dumps(document)},
+                )
+                self.assertEqual(validated.status_code, 200, validated.text)
+                self.assertIn(
+                    "pathToken",
+                    validated.json()["document"]["traffic"]["journeys"][0]["multipart"]["files"][0],
+                )
+                self.assertIn(
+                    "pathToken",
+                    validated.json()["normalized"]["journeys"][0]["multipart"]["files"][0],
                 )
                 planned = client.post("/api/v1/plans", headers=headers, json={"config": document})
                 self.assertEqual(planned.status_code, 200, planned.text)
@@ -693,3 +737,40 @@ class StudioApiTests(unittest.TestCase):
                     )
                     self.assertEqual(started.status_code, 202, started.text)
                     self.assertEqual(started.json()["origin"], ORIGIN)
+
+    def test_validate_document_requires_auth_csrf_and_valid_bounded_input(self) -> None:
+        with (
+            TemporaryDirectory() as tmp,
+            patch.dict("os.environ", {"AMPULE_CHAMBER_STUDIO_TOKEN": STUDIO}),
+        ):
+            app = create_app(Path(tmp), admin_token=ADMIN)
+            config = Path("examples/sample-service/chamber-attach.yaml").read_text()
+            headers = {"Authorization": f"Bearer {STUDIO}"}
+            with TestClient(app) as client:
+                path = "/api/v1/scenarios/validate-document"
+                self.assertEqual(client.post(path, json={"content": config}).status_code, 401)
+                self.assertEqual(
+                    client.post(path, headers=headers, json={"content": config}).status_code, 200
+                )
+                for bad in ("bad: [", "[1, 2, 3]", "kind: Wrong", "x" * (256 * 1024 + 1)):
+                    self.assertEqual(
+                        client.post(path, headers=headers, json={"content": bad}).status_code, 400
+                    )
+                capabilities = client.get("/api/v1/capabilities", headers=headers).json()
+                self.assertIn("validate_document", capabilities["api_features"])
+                client.get("/login")
+                csrf = client.cookies["ampule_csrf"]
+                client.post("/login", data={"_csrf": csrf, "admin_token": ADMIN})
+                self.assertEqual(client.post(path, json={"content": config}).status_code, 403)
+                self.assertEqual(
+                    client.post(
+                        path, headers={"X-CSRF-Token": csrf}, json={"content": config}
+                    ).status_code,
+                    200,
+                )
+                self.assertFalse(
+                    any(
+                        item["source"] == "user"
+                        for item in client.get("/api/v1/scenarios").json()["scenarios"]
+                    )
+                )

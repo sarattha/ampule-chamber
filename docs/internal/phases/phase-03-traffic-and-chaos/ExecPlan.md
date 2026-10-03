@@ -763,3 +763,23 @@ JSON limit, preserves score/status/caller metadata, and exposes truncation,
 while default reads retain every task/event/window and the complete report.
 Setup rerun plans now inherit source caller metadata; a regression verifies
 that the subsequent asynchronous start receives that origin. Final `make check` passed: 315 tests (42.353s), coverage rerun 315 tests (48.133s), 90% combined coverage, format/lint/typecheck, scenario/deployment/release validation, strict docs and source/wheel builds. A separate 500-canonical-event regression verifies tuple-based event rendering is bounded; default reads preserve all 500 events. Generated `site/` remains available for the parent PR workflow clean.
+
+
+### Complete YAML/JSON validation follow-up
+
+Add `POST /api/v1/scenarios/validate-document` for arbitrary bounded YAML/JSON
+without reducing advanced fields to the legacy normalized form. Return the
+same safe full-document envelope and a `normalized` form projection; preserve
+experiments, bindings, load-suite, runtime and agents in the full document.
+Share managed path signing and embedded credential redaction with catalog
+document reads, including safe normalized previews and explicit warnings.
+Advertise `validate_document` and permit the scoped API credential. Legacy
+normalized-only validation remains unchanged.
+
+Focused tests verify advanced YAML fidelity and redaction, managed multipart
+descriptors in JSON previews, compatible legacy validation, authenticated
+read-only behavior, browser CSRF and invalid/oversized input rejection. Final
+`make check` passed: 316 tests (42.320s), coverage rerun 316 tests (48.538s),
+90% combined coverage, formatting, linting, type checking, scenario/deployment/
+release validation, strict documentation and source/wheel builds. Generated
+`site/` remains available for the parent PR workflow clean.

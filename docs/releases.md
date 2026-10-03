@@ -13,7 +13,7 @@ planning, execution and evidence flow without a browser hostname.
   under the existing per-file and total-request limits.
 - Caller service/environment/reference metadata survives asynchronous execution
   and appears in job summaries, run metadata and Chamber detail pages.
-- Full validated scenario documents retain advanced settings during native imports, while embedded credentials are redacted and managed upload paths remain authorized.
+- Full validated scenario documents and YAML/JSON previews retain advanced settings during native imports, while embedded credentials are redacted and managed upload paths remain authorized.
 - Optional bounded run summaries retain result views and disclose rendering truncation, while default full reads remain compatible. Setup reruns retain caller provenance.
 - All available Relayna tasks can be paged and filtered, including tasks after
   the first 200. Terminal cleanup confirmation, archive and tags have native

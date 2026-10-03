@@ -753,20 +753,32 @@ def create_app(
             raise HTTPException(status_code=404, detail="scenario not found") from None
         except (OSError, ScenarioCatalogError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        document = result["document"]
-        traffic = _mapping(document.get("traffic"))
-        _authorize_multipart_paths(
-            {"journeys": traffic.get("journeys", [])}, multipart_path_secret, multipart_upload_root
+        return _document_response(result, multipart_path_secret, multipart_upload_root)
+
+    @app.post("/api/v1/scenarios/validate-document")
+    async def validate_scenario_document_api(
+        request: Request, payload: ScenarioValidateRequest
+    ) -> dict[str, Any]:
+        _check_csrf(request, request.headers.get("X-CSRF-Token"))
+        try:
+            document = parse_scenario_document(payload.content)
+            normalized = normalize_document(
+                document, source="imported", validate_journeys=_ui_journeys
+            )
+        except (ScenarioCatalogError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        normalized["warnings"] = compatibility_warnings(
+            normalized, service_name=payload.service_name
         )
-        document, redacted_fields = _redact_document_credentials(document)
-        result.update(document=document, redacted_fields=redacted_fields)
-        if redacted_fields:
-            result["warnings"] = [
-                *result["warnings"],
-                "Embedded credentials were redacted. Supply approved credentials "
-                "through environment references before execution.",
-            ]
-        return result
+        result = {
+            "schema_version": "chamber.ampule.dev/scenario-document/v1",
+            "document": document,
+            "normalized": normalized,
+            "source": "imported",
+            "revision": normalized["revision"],
+            "warnings": normalized["warnings"],
+        }
+        return _document_response(result, multipart_path_secret, multipart_upload_root)
 
     @app.post("/api/v1/scenarios/validate")
     async def validate_scenario_api(
@@ -1759,6 +1771,32 @@ async def _persist_journey_files(
     return json.dumps(journeys), upload_dir
 
 
+def _document_response(result: dict[str, Any], secret: bytes, upload_root: Path) -> dict[str, Any]:
+    """Share upload authorization and credential redaction for complete document reads."""
+
+    document = result["document"]
+    traffic = _mapping(document.get("traffic"))
+    _authorize_multipart_paths({"journeys": traffic.get("journeys", [])}, secret, upload_root)
+    document, redacted_fields = _redact_document_credentials(document)
+    result.update(document=document)
+    normalized = result.get("normalized")
+    if isinstance(normalized, dict):
+        _authorize_multipart_paths(normalized, secret, upload_root)
+        normalized, normalized_redactions = _redact_document_credentials(normalized)
+        redacted_fields.extend(f"/normalized{path}" for path in normalized_redactions)
+        result["normalized"] = normalized
+    result["redacted_fields"] = redacted_fields
+    if redacted_fields:
+        result["warnings"] = [
+            *result["warnings"],
+            "Embedded credentials were redacted. Supply approved credentials "
+            "through environment references before execution.",
+        ]
+    if isinstance(result.get("normalized"), dict):
+        result["normalized"]["warnings"] = result["warnings"]
+    return result
+
+
 def _redact_document_credentials(document: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """Preserve configuration and environment references, omit embedded credentials."""
 
@@ -2180,6 +2218,7 @@ def _capabilities(settings: DiscoverySettings | None = None) -> dict[str, Any]:
             "scoped_integration_token",
             "scenario_document",
             "run_summary",
+            "validate_document",
         ],
         "goals": goal_catalog(),
         "experiment_families": dict(FAMILIES),

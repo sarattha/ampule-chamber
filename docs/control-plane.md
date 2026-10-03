@@ -620,6 +620,14 @@ explicitly `unchecked` until discovery/preflight/execution supplies evidence.
 
 Additional native operations:
 
+- `POST /api/v1/scenarios/validate-document`: `{ "content": "YAML or JSON",
+  "service_name": "optional target" }` validates a complete advanced document
+  without saving or executing it. It returns the same full-document envelope
+  as catalog document reads, plus `normalized` for form initialization.
+  Experiments, runtime, bindings, load suites and agents remain in `document`;
+  use that full field for subsequent planning. Both projections redact
+  embedded credentials and authorize managed upload descriptors. The existing
+  `/scenarios/validate` normalized-only response remains compatible.
 - `GET /api/v1/scenarios/{source}/{scenario_id}/document`: the complete validated
   source document in a `chamber.ampule.dev/scenario-document/v1` envelope with
   `document`, `source`, `revision`, `warnings` and `redacted_fields`. Use this

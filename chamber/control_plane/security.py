@@ -98,7 +98,7 @@ STUDIO_API_ROUTES = (
     ("GET", r"/api/v1/runs/[^/]+(?:/(evidence-explorer|events|report|tasks|evidence/[^/]+))?"),
     ("GET", r"/api/v1/jobs/[^/]+(?:/events)?"),
     ("POST", r"/api/v1/(inspect|plans|runs|compare|uploads|chambers|scenarios)"),
-    ("POST", r"/api/v1/scenarios/(validate|propose)"),
+    ("POST", r"/api/v1/scenarios/(validate|validate-document|propose)"),
     ("POST", r"/api/v1/runs/[^/]+/(rerun|archive|tags)"),
     ("POST", r"/api/v1/jobs/[^/]+/(cancel|cleanup-verified)"),
 )
