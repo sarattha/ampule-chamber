@@ -826,3 +826,22 @@ reports zero fixed HIGH/CRITICAL findings after the lock refresh. `make check`
 passed: 316 tests (43.210s), coverage rerun 316 tests (49.310s), 90% combined
 coverage and all format/lint/type/schema/deployment/release/docs/build gates.
 Replacement GitHub CI acceptance will be checked after the fix is pushed.
+
+
+### Regression coverage above 95 percent
+
+The user requires measured global coverage strictly above 95 percent in both
+repositories. Retain the existing whole-package statement and branch measurement
+(`source = ["chamber"]`, `branch = true`) and add meaningful regression tests
+without exclusions or suppression changes. Tests cover corrupted evidence,
+scoped API and multipart boundaries, planning/runtime validation, process
+supervision, failed attach preflight/rollback, load-suite decision gates,
+report fidelity and safe run-history projections. New independent test files
+avoid edits to existing scenarios or runtime behavior. Enforce `fail_under = 96`
+with two-decimal reporting so `make check` prevents regression below the
+requested target. Fresh `make check` passed 394 tests (42.768s), the coverage
+rerun passed 394 tests (49.578s), and global statement/branch coverage measured
+97.79% (9205 statements, 3336 branches). All formatting, lint, type, schema,
+deployment, release, strict docs and source/wheel gates passed. The 78 new
+regression tests introduce no production-code or coverage-scope changes.
+Replacement PR CI will verify the pushed commit.
