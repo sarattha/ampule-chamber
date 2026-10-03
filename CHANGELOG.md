@@ -5,6 +5,7 @@ All notable changes to Ampule Chamber are documented in this file.
 ## 1.11.0 - 2026-10-03
 
 - Add scoped Studio API credentials, versioned capabilities, managed multipart uploads, caller provenance, paginated task evidence, cleanup confirmation, archive and tags.
+- Add complete validated scenario-document retrieval for lossless advanced imports, with credential redaction and managed upload authorization.
 - Distinguish API availability from unchecked Kubernetes target readiness.
 - Preserve existing admin API, browser authentication, CSRF and execution admission contracts.
 

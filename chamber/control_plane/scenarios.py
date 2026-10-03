@@ -60,6 +60,26 @@ class ScenarioCatalog:
             _read_document(path), source=source, validate_journeys=validate_journeys
         )
 
+    def document(
+        self, source: str, scenario_id: str, validate_journeys: JourneyValidator
+    ) -> dict[str, Any]:
+        """Return the complete validated document without lossy UI projection."""
+
+        path = self._path(source, scenario_id)
+        if not path.is_file():
+            raise FileNotFoundError(scenario_id)
+        document = _read_document(path)
+        normalized = normalize_document(
+            document, source=source, validate_journeys=validate_journeys
+        )
+        return {
+            "schema_version": "chamber.ampule.dev/scenario-document/v1",
+            "document": document,
+            "source": source,
+            "revision": normalized["revision"],
+            "warnings": normalized.get("warnings", []),
+        }
+
     def save(
         self,
         document: dict[str, Any],

@@ -17,7 +17,7 @@ from dataclasses import asdict
 from importlib.metadata import version
 from pathlib import Path
 from typing import Annotated, Any, cast
-from urllib.parse import urlencode
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import yaml
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
@@ -744,6 +744,29 @@ def create_app(
         normalized["warnings"] = compatibility_warnings(normalized, service_name=service_name)
         _authorize_multipart_paths(normalized, multipart_path_secret, multipart_upload_root)
         return normalized
+
+    @app.get("/api/v1/scenarios/{source}/{scenario_id}/document")
+    async def scenario_document_api(source: str, scenario_id: str) -> dict[str, Any]:
+        try:
+            result = scenarios.document(source, scenario_id, _ui_journeys)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="scenario not found") from None
+        except (OSError, ScenarioCatalogError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        document = result["document"]
+        traffic = _mapping(document.get("traffic"))
+        _authorize_multipart_paths(
+            {"journeys": traffic.get("journeys", [])}, multipart_path_secret, multipart_upload_root
+        )
+        document, redacted_fields = _redact_document_credentials(document)
+        result.update(document=document, redacted_fields=redacted_fields)
+        if redacted_fields:
+            result["warnings"] = [
+                *result["warnings"],
+                "Embedded credentials were redacted. Supply approved credentials "
+                "through environment references before execution.",
+            ]
+        return result
 
     @app.post("/api/v1/scenarios/validate")
     async def validate_scenario_api(
@@ -1735,6 +1758,70 @@ async def _persist_journey_files(
     return json.dumps(journeys), upload_dir
 
 
+def _redact_document_credentials(document: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """Preserve configuration and environment references, omit embedded credentials."""
+
+    fields: list[str] = []
+    secret_keys = {
+        "authorization",
+        "proxyauthorization",
+        "xauthtoken",
+        "cookie",
+        "setcookie",
+        "password",
+        "secret",
+        "token",
+        "apikey",
+        "xapikey",
+        "accesstoken",
+        "clientsecret",
+    }
+    declared = {str(name) for name in _mapping(document.get("runtime")).get("secretEnv", [])}
+
+    def redact(value: Any, path: str = "") -> Any:
+        if isinstance(value, list):
+            return [redact(item, f"{path}/{index}") for index, item in enumerate(value)]
+        if not isinstance(value, dict):
+            if isinstance(value, str) and value.startswith(("http://", "https://")):
+                parts = urlsplit(value)
+                query = parse_qsl(parts.query, keep_blank_values=True)
+                hidden_query = [
+                    (
+                        key,
+                        "[redacted]"
+                        if key.lower().replace("_", "").replace("-", "") in secret_keys
+                        else selected,
+                    )
+                    for key, selected in query
+                ]
+                if parts.username is not None or hidden_query != query:
+                    fields.append(path)
+                    return urlunsplit(
+                        (
+                            parts.scheme,
+                            parts.netloc.rsplit("@", 1)[-1],
+                            parts.path,
+                            urlencode(hidden_query),
+                            parts.fragment,
+                        )
+                    )
+            return value
+        result = {}
+        for key, item in value.items():
+            selected = f"{path}/{str(key).replace('~', '~0').replace('/', '~1')}"
+            normalized = str(key).lower().replace("_", "").replace("-", "")
+            if key == "headersFromEnv":
+                result[key] = copy.deepcopy(item)
+            elif normalized in secret_keys or key in declared:
+                result[key] = "[redacted]"
+                fields.append(selected)
+            else:
+                result[key] = redact(item, selected)
+        return result
+
+    return redact(document), fields
+
+
 def _task_projection(task: dict[str, Any]) -> dict[str, Any]:
     duration = task.get("total_duration_ms")
     iteration = task.get("iteration")
@@ -1979,6 +2066,7 @@ def _capabilities(settings: DiscoverySettings | None = None) -> dict[str, Any]:
             "task_pagination",
             "caller_provenance",
             "scoped_integration_token",
+            "scenario_document",
         ],
         "goals": goal_catalog(),
         "experiment_families": dict(FAMILIES),

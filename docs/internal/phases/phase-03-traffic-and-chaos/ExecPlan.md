@@ -730,3 +730,17 @@ Relayna owns the native Studio UI and Computer Use acceptance in the companion p
 ### Outcomes
 
 The API extensions and Chamber-side UI context are complete. Public result artifacts, target admission, approved fault behavior and administrator configuration-path semantics remain compatible. Cross-repository native Studio integration and final UI validation are being completed in Relayna.
+
+
+### Full advanced scenario import follow-up
+
+Integration review showed the legacy normalized scenario projection omits
+experiments, named bindings, deployment/runtime details and complete agent
+settings. Add `GET /api/v1/scenarios/{source}/{id}/document`, a validated full
+source-document envelope with explicit revision, warnings and JSON-pointer
+credential redaction paths. Preserve environment credential references and
+issue the existing signed path tokens for managed multipart descriptors.
+`scenario_document` advertises support; the scoped Studio token permits this
+read operation. Focused tests cover advanced field preservation, authorization,
+missing/invalid sources, bundled Scenario reads, auth redaction and redeemed
+managed file descriptors. Final `make check` passed: 313 tests (41.772s), a second 313-test coverage run (47.295s), 90% combined coverage, format/lint/typecheck, scenario/deployment/release validation, strict docs and source/wheel builds at the unreleased 1.11.0 version. Generated `site/` is retained until the parent PR workflow performs its required clean.

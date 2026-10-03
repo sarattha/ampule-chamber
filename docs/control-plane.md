@@ -620,6 +620,16 @@ explicitly `unchecked` until discovery/preflight/execution supplies evidence.
 
 Additional native operations:
 
+- `GET /api/v1/scenarios/{source}/{scenario_id}/document`: the complete validated
+  source document in a `chamber.ampule.dev/scenario-document/v1` envelope with
+  `document`, `source`, `revision`, `warnings` and `redacted_fields`. Use this
+  instead of the normalized UI projection when importing advanced settings:
+  experiments, named bindings, load suites, deployment/runtime and agent fields
+  are retained. Embedded auth headers, credential fields and credential-bearing
+  URLs are redacted; environment credential references remain intact. JSON
+  pointer paths and warnings identify values to restore safely before execution.
+  Managed multipart descriptors receive signed path tokens for planning.
+
 - `POST /api/v1/uploads`: multipart `file` plus `field`, returning a managed
   `file` descriptor with `path`, `pathToken`, `filename`, `contentType` and
   `size`. Pass the descriptor in a journey's `multipart.files` during planning.

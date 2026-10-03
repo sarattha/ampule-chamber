@@ -10,11 +10,14 @@ from tempfile import TemporaryDirectory
 from typing import Any
 from unittest.mock import patch
 
+import yaml
 from fastapi.testclient import TestClient
 
+from chamber.chaos.experiments import validate_experiment
 from chamber.control_plane.jobs import AssessmentJob
 from chamber.control_plane.security import load_studio_auth, studio_api_allowed
 from chamber.control_plane.server import create_app
+from chamber.load.suite import validate_suite
 from chamber.runs import initialize_run_record, new_run_directory, write_json_atomic
 from chamber.workflow import infer_config
 from tests.test_control_plane import _fixture_repo
@@ -409,3 +412,169 @@ class StudioApiTests(unittest.TestCase):
                     ).status_code,
                     404,
                 )
+
+    def test_full_scenario_document_preserves_advanced_fields_and_redacts_auth(self) -> None:
+        with (
+            TemporaryDirectory() as tmp,
+            patch.dict("os.environ", {"AMPULE_CHAMBER_STUDIO_TOKEN": STUDIO}),
+        ):
+            app = create_app(Path(tmp), admin_token=ADMIN)
+            headers = {"Authorization": f"Bearer {STUDIO}"}
+            config = yaml.safe_load(Path("examples/sample-service/chamber-attach.yaml").read_text())
+            config["scenario"] = {
+                "id": "full.assessment",
+                "name": "Full assessment",
+                "source": "custom",
+                "revision": "draft",
+                "tags": ["native"],
+                "requiredSignals": ["logs"],
+            }
+            config["agents"] = {"mode": "live", "exclude": ["traffic-chaos-agent"]}
+            config["runtime"]["prometheusUrl"] = "http://metrics.monitoring:9090"
+            config["runtime"]["secretEnv"] = ["API_TOKEN"]
+            config["experiment"] = {
+                "family": "memory_pressure",
+                "pod": "api-pod",
+                "container": "api",
+                "memoryMiB": 64,
+                "durationSeconds": 10,
+                "recoverySeconds": 5,
+            }
+            config["chamber"] = {
+                "id": "a" * 32,
+                "revision": 1,
+                "name": "Dev chamber",
+                "context": config["runtime"]["kubernetesContext"],
+                "namespace": config["runtime"]["namespace"],
+                "service": "sample-service",
+                "workload": "sample-service",
+                "prometheus_url": config["runtime"]["prometheusUrl"],
+                "allow_faults": True,
+                "chaos_mesh": True,
+                "max_vus": 25,
+                "max_duration_seconds": 300,
+            }
+            config["traffic"]["load"] = {
+                "model": "arrival",
+                "durationSeconds": 10,
+                "ratePerSecond": 1,
+                "timeoutSeconds": 2,
+                "maxInFlight": 2,
+            }
+            journey = config["traffic"]["journeys"][0]
+            journey["headers"] = {
+                "Authorization": "Bearer embedded-private",
+                "X-Api-Key": "embedded-key",
+                "Accept": "application/json",
+            }
+            journey["headersFromEnv"] = {"Authorization": "API_TOKEN"}
+            journey["body"] = {
+                "password": "private-password",
+                "message": "approved input",
+                "callback": "https://operator:private-url@callback.test/task?token=private-query&mode=dev",
+            }
+            journey["requestEncoding"] = "json"
+            validate_experiment(config)
+            validate_suite(config["traffic"])
+            with TestClient(app) as client:
+                saved = client.post("/api/v1/scenarios", headers=headers, json={"document": config})
+                self.assertEqual(saved.status_code, 201, saved.text)
+                response = client.get(
+                    "/api/v1/scenarios/user/full.assessment/document", headers=headers
+                )
+                self.assertEqual(response.status_code, 200, response.text)
+                envelope = response.json()
+                document = envelope["document"]
+                self.assertEqual(
+                    envelope["schema_version"], "chamber.ampule.dev/scenario-document/v1"
+                )
+                self.assertEqual(document["experiment"], config["experiment"])
+                self.assertEqual(document["chamber"], config["chamber"])
+                self.assertEqual(document["deployment"], config["deployment"])
+                self.assertEqual(document["agents"], config["agents"])
+                self.assertEqual(document["runtime"], config["runtime"])
+                self.assertEqual(document["traffic"]["load"], config["traffic"]["load"])
+                actual = document["traffic"]["journeys"][0]
+                self.assertEqual(actual["headersFromEnv"], {"Authorization": "API_TOKEN"})
+                self.assertEqual(actual["headers"]["Accept"], "application/json")
+                self.assertEqual(actual["headers"]["Authorization"], "[redacted]")
+                self.assertEqual(actual["body"]["message"], "approved input")
+                self.assertNotIn("private", response.text)
+                self.assertIn(
+                    "/traffic/journeys/0/headers/Authorization", envelope["redacted_fields"]
+                )
+                self.assertIn("/traffic/journeys/0/body/callback", envelope["redacted_fields"])
+                self.assertTrue(envelope["warnings"])
+                self.assertIn(
+                    "scenario_document",
+                    client.get("/api/v1/capabilities", headers=headers).json()["api_features"],
+                )
+                self.assertEqual(
+                    client.get(
+                        "/api/v1/scenarios/user/missing/document", headers=headers
+                    ).status_code,
+                    404,
+                )
+                self.assertEqual(
+                    client.get(
+                        "/api/v1/scenarios/unknown/valid/document", headers=headers
+                    ).status_code,
+                    400,
+                )
+                self.assertEqual(
+                    client.get("/api/v1/scenarios/user/full.assessment/document").status_code, 401
+                )
+                bundled = client.get(
+                    "/api/v1/scenarios/bundled/baseline-health-001/document", headers=headers
+                ).json()
+                self.assertEqual(bundled["document"]["kind"], "Scenario")
+                self.assertEqual(bundled["redacted_fields"], [])
+                self.assertIn("safety", bundled["document"])
+                (app.state.scenarios.user_dir / "invalid.yaml").write_text("kind: Wrong")
+                self.assertEqual(
+                    client.get(
+                        "/api/v1/scenarios/user/invalid/document", headers=headers
+                    ).status_code,
+                    400,
+                )
+
+    def test_document_managed_upload_descriptor_can_be_redeemed(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app = create_app(root / "workspace", admin_token=ADMIN)
+            headers = {"Authorization": f"Bearer {ADMIN}"}
+            config = infer_config(_fixture_repo(root))
+            config["scenarioId"] = "managed-document"
+            with TestClient(app) as client:
+                descriptor = client.post(
+                    "/api/v1/uploads",
+                    headers=headers,
+                    files={"file": ("sample.txt", b"safe sample", "text/plain")},
+                    data={"field": "file"},
+                ).json()["file"]
+                descriptor.pop("pathToken")
+                descriptor.pop("size")
+                config["traffic"]["journeys"] = [
+                    {
+                        "name": "upload",
+                        "method": "POST",
+                        "path": "/upload",
+                        "expectedStatus": 200,
+                        "requestEncoding": "multipart",
+                        "multipart": {"files": [descriptor], "fields": {}},
+                        "vus": 1,
+                        "iterations": 1,
+                        "durationSeconds": 1,
+                    }
+                ]
+                saved = client.post("/api/v1/scenarios", headers=headers, json={"document": config})
+                self.assertEqual(saved.status_code, 201, saved.text)
+                response = client.get(
+                    "/api/v1/scenarios/user/managed-document/document", headers=headers
+                )
+                document = response.json()["document"]
+                self.assertIn(
+                    "pathToken", document["traffic"]["journeys"][0]["multipart"]["files"][0]
+                )
+                planned = client.post("/api/v1/plans", headers=headers, json={"config": document})
+                self.assertEqual(planned.status_code, 200, planned.text)

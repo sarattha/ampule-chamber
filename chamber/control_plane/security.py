@@ -94,7 +94,7 @@ def _environment_bool(name: str, *, default: bool) -> bool:
 STUDIO_TOKEN_ENV = "AMPULE_CHAMBER_STUDIO_TOKEN"
 STUDIO_API_ROUTES = (
     ("GET", r"/api/v1/(capabilities|scenarios|chambers|runs|kubernetes/discovery)"),
-    ("GET", r"/api/v1/scenarios/[^/]+/[^/]+"),
+    ("GET", r"/api/v1/scenarios/[^/]+/[^/]+(?:/document)?"),
     ("GET", r"/api/v1/runs/[^/]+(?:/(evidence-explorer|events|report|tasks|evidence/[^/]+))?"),
     ("GET", r"/api/v1/jobs/[^/]+(?:/events)?"),
     ("POST", r"/api/v1/(inspect|plans|runs|compare|uploads|chambers|scenarios)"),
