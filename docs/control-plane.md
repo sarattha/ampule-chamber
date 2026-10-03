@@ -615,7 +615,11 @@ The integration token has operational API privileges, including execution,
 scenario/chamber configuration and evidence access. Treat it as a secret.
 
 Studio responses also redact credentials in legacy normalized scenario reads,
-validation/save responses, run projections and HTML report configuration.
+validation/save responses, chamber listings/creation, run projections and HTML
+report configuration. Header and URL-query names share the same credential
+matching rule, including custom authentication and credential parameters.
+URL userinfo is removed, including uppercase HTTP/HTTPS schemes; malformed
+HTTP/HTTPS URLs are withheld rather than breaking the projection.
 Archive and tag responses apply the same redaction in full and bounded modes.
 Redacted JSON-pointer paths and warnings disclose changes; stored artifacts and
 administrator responses retain their existing contracts. Studio comparison

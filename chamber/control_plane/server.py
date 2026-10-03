@@ -341,7 +341,7 @@ def create_app(
         )
 
     @app.get("/api/v1/chambers")
-    async def chambers_api() -> dict[str, Any]:
+    async def chambers_api(request: Request) -> dict[str, Any]:
         profiles = chambers.list()
         for profile in profiles:
             profile["jobs"] = [job for job in jobs.list() if job.get("chamber_id") == profile["id"]]
@@ -377,12 +377,12 @@ def create_app(
                 job for job in namespace_jobs if job.get("cleanup_required")
             ]
             profile["readiness"] = "not checked"
-        return {"chambers": profiles}
+        return _studio_response(request, {"chambers": profiles})
 
     @app.post("/api/v1/chambers", status_code=201)
     async def create_chamber_api(request: Request, payload: ChamberProfile) -> dict[str, Any]:
         _check_csrf(request, request.headers.get("X-CSRF-Token"))
-        return chambers.create(payload)
+        return _studio_response(request, chambers.create(payload))
 
     @app.get("/chambers", response_class=HTMLResponse, include_in_schema=False)
     async def chambers_page(request: Request, clone: str = "") -> Response:
@@ -396,7 +396,7 @@ def create_app(
             context={
                 "active_nav": "chambers",
                 "csrf_token": request.state.csrf_token,
-                "profiles": (await chambers_api())["chambers"],
+                "profiles": (await chambers_api(request))["chambers"],
                 "selected": selected,
             },
         )
@@ -1884,21 +1884,33 @@ def _redact_document_credentials(document: dict[str, Any]) -> tuple[dict[str, An
         "xapikey",
         "accesstoken",
         "clientsecret",
+        "auth",
+        "credential",
+        "credentials",
     }
+
+    def credential_name(key: Any) -> bool:
+        normalized = str(key).lower().replace("_", "").replace("-", "")
+        return normalized in secret_keys or any(
+            marker in normalized
+            for marker in ("auth", "credential", "token", "secret", "password", "apikey", "cookie")
+        )
 
     def redact(value: Any, path: str = "", declared: frozenset[str] = frozenset()) -> Any:
         if isinstance(value, list | tuple):
             return [redact(item, f"{path}/{index}", declared) for index, item in enumerate(value)]
         if not isinstance(value, dict):
-            if isinstance(value, str) and value.startswith(("http://", "https://")):
-                parts = urlsplit(value)
+            if isinstance(value, str) and value.lower().startswith(("http://", "https://")):
+                try:
+                    parts = urlsplit(value)
+                except ValueError:
+                    fields.append(path)
+                    return "[redacted]"
                 query = parse_qsl(parts.query, keep_blank_values=True)
                 hidden_query = [
                     (
                         key,
-                        "[redacted]"
-                        if key.lower().replace("_", "").replace("-", "") in secret_keys
-                        else selected,
+                        "[redacted]" if credential_name(key) else selected,
                     )
                     for key, selected in query
                 ]
@@ -1926,21 +1938,7 @@ def _redact_document_credentials(document: dict[str, Any]) -> tuple[dict[str, An
             elif (
                 normalized in secret_keys
                 or key in declared
-                or (
-                    path.endswith("/headers")
-                    and any(
-                        marker in normalized
-                        for marker in (
-                            "auth",
-                            "credential",
-                            "token",
-                            "secret",
-                            "password",
-                            "apikey",
-                            "cookie",
-                        )
-                    )
-                )
+                or (path.endswith("/headers") and credential_name(key))
             ):
                 result[key] = "[redacted]"
                 fields.append(selected)

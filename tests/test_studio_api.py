@@ -572,7 +572,7 @@ class StudioApiTests(unittest.TestCase):
             journey["body"] = {
                 "password": "private-password",
                 "message": "approved input",
-                "callback": "https://operator:private-url@callback.test/task?token=private-query&mode=dev",
+                "callback": "https://operator:private-url@callback.test/task?token=private-query&auth=private-auth-query&credential=private-credential-query&x-auth=private-custom-query&mode=dev",
             }
             journey["requestEncoding"] = "json"
             validate_experiment(config)
@@ -757,7 +757,13 @@ class StudioApiTests(unittest.TestCase):
                 requestEncoding="json",
                 headers={"Authorization": "Bearer private-auth", "X-Credential": "private-custom"},
                 headersFromEnv={"X-Auth": "TARGET_AUTH"},
-                body={"password": "private-body", "message": "approved input"},
+                body={
+                    "password": "private-body",
+                    "message": "approved input",
+                    "auth": "private-body-auth",
+                    "credential": "private-body-credential",
+                    "callback": "https://target.test/callback?auth=private-url-auth&credential=private-url-credential&format=json",
+                },
             )
             with TestClient(app) as client:
                 saved = client.post("/api/v1/scenarios", headers=admin, json={"document": config})
@@ -869,6 +875,54 @@ class StudioApiTests(unittest.TestCase):
                     [item["compatible"] for item in admin.json()["compatibility_reasons"]],
                     [item["compatible"] for item in studio.json()["compatibility_reasons"]],
                 )
+
+    def test_studio_chamber_responses_redact_url_credentials_and_preserve_admin(self) -> None:
+        with (
+            TemporaryDirectory() as tmp,
+            patch.dict("os.environ", {"AMPULE_CHAMBER_STUDIO_TOKEN": STUDIO}),
+        ):
+            app = create_app(Path(tmp), admin_token=ADMIN)
+            studio = {"Authorization": f"Bearer {STUDIO}"}
+            admin = {"Authorization": f"Bearer {ADMIN}"}
+            profile = {
+                "name": "metrics",
+                "context": "dev",
+                "namespace": "dev",
+                "service": "orders",
+                "workload": "orders",
+                "prometheus_url": "HTTPS://operator:private-userinfo@metrics.test/api?auth=private-auth&credential=private-credential&x-token=private-token&client-secret=private-secret&format=json",
+            }
+            with TestClient(app) as client:
+                created = client.post("/api/v1/chambers", headers=admin, json=profile)
+                self.assertEqual(created.status_code, 201, created.text)
+                self.assertIn("private-userinfo", created.text)
+                studio_created = client.post("/api/v1/chambers", headers=studio, json=profile)
+                self.assertEqual(studio_created.status_code, 201, studio_created.text)
+                self.assertNotIn("private-", studio_created.text)
+                self.assertIn("/prometheus_url", studio_created.json()["redacted_fields"])
+                malformed = {
+                    **profile,
+                    "prometheus_url": "https://operator:private-broken@[invalid",
+                }
+                self.assertEqual(
+                    client.post("/api/v1/chambers", headers=admin, json=malformed).status_code, 201
+                )
+                response = client.get("/api/v1/chambers", headers=studio)
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertNotIn("private-", response.text)
+                self.assertTrue(response.json()["redacted_fields"])
+                self.assertTrue(response.json()["warnings"])
+                for chamber in response.json()["chambers"]:
+                    if chamber["prometheus_url"] != "[redacted]":
+                        self.assertIn("format=json", chamber["prometheus_url"])
+                        self.assertNotIn("operator", chamber["prometheus_url"])
+                self.assertIn("private-auth", client.get("/api/v1/chambers", headers=admin).text)
+                self.assertIn(
+                    "private-auth",
+                    client.get(f"/chambers?clone={created.json()['id']}", headers=admin).text,
+                )
+                persisted = Path(tmp) / "chambers" / f"{studio_created.json()['id']}.json"
+                self.assertIn("private-userinfo", persisted.read_text())
 
     def test_run_summary_bounds_large_task_events_http_views_and_preserves_default(self) -> None:
         with TemporaryDirectory() as tmp:

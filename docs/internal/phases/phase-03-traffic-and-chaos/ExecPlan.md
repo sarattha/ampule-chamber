@@ -936,3 +936,26 @@ Comparison tests include credential-bearing metrics URLs in tuple-based
 compatibility reasons, and redaction traverses both tuples and lists. All
 reported compatibility flags remain unchanged. Final host CI/review acceptance
 and merge status are recorded in the linked PR before landing.
+
+The fourth Codex pass on `4664b59` found custom URL query credentials and raw
+Prometheus URLs in chamber listings. Share the credential-name predicate across
+headers and URL queries, include explicit auth/credential fields, and apply
+Studio redaction to chamber listing/creation responses. Preserve administrator
+API/browser views and stored profiles. Regressions cover URL userinfo, uppercase
+HTTP/HTTPS schemes, custom auth/credential/token/secret parameters, ordinary
+query preservation, and malformed URLs withheld without breaking a listing.
+Expanded document/run regressions cover the same query boundary. The focused
+15-test Studio API suite passed.
+
+The initial browser compatibility assertion expected the saved URL on the
+unselected creation form. Corrected the test to inspect that profile's clone
+form, where the released administrator UI exposes its settings. The earlier
+full test attempt retained the old assertion and failed; the corrected focused
+suite passed all 15 tests before a fresh stable full gate.
+
+Fresh stable `make check` passed 400 tests (43.596s), the 400-test coverage
+rerun (50.601s), and 97.79% whole-package statement/branch coverage (9246
+statements, 3356 branches). Every formatting, lint, type, scenario, deployment,
+release, strict docs and build gate passed. The 96% floor and source scope are
+unchanged. The final pushed URL/chamber fixes require host CI and Codex review
+acceptance before landing; the linked PR records the final decision.
