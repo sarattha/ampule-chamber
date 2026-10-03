@@ -181,6 +181,9 @@ def create_app(
             and studio_auth.authenticates_token(candidate.strip())
             and studio_api_allowed(request.method, request.url.path)
         )
+        request.state.studio_authenticated = (
+            integration_authenticated and not request.state.bearer_authenticated
+        )
         request.state.authenticated = request.state.authenticated or integration_authenticated
         request.state.bearer_authenticated = (
             request.state.bearer_authenticated or integration_authenticated
@@ -854,7 +857,12 @@ def create_app(
         _check_csrf(request, request.headers.get("X-CSRF-Token"))
         try:
             config = copy.deepcopy(payload.config)
-            _redeem_api_uploads(config, multipart_path_secret, multipart_upload_root)
+            _redeem_api_uploads(
+                config,
+                multipart_path_secret,
+                multipart_upload_root,
+                require_managed_paths=request.state.studio_authenticated,
+            )
             if payload.config.get("chamber"):
                 chambers.bind(config, config["chamber"]["id"])
             config_path = _write_draft(workspace, config)
@@ -914,6 +922,20 @@ def create_app(
                 if payload.plan_id
                 else _safe_config_path(workspace, payload.config_path or "")
             )
+            if request.state.studio_authenticated:
+                config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+                if not isinstance(config, dict):
+                    raise ValueError("Studio execution configuration must be an object")
+                journeys = _mapping(config.get("traffic")).get("journeys", [])
+                if not isinstance(journeys, list):
+                    raise ValueError("Traffic journeys must be an array")
+                # Persisted plans have redeemed tokens; reauthorize only managed files.
+                _authorize_multipart_paths(
+                    {"journeys": journeys}, multipart_path_secret, multipart_upload_root
+                )
+                _redeem_api_uploads(
+                    config, multipart_path_secret, multipart_upload_root, require_managed_paths=True
+                )
             key = request.headers.get("Idempotency-Key")
             if key is not None and (not key.strip() or len(key) > 200):
                 raise HTTPException(status_code=400, detail="Invalid Idempotency-Key")
@@ -1996,7 +2018,9 @@ def _bounded_run_summary(run: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _redeem_api_uploads(config: dict[str, Any], secret: bytes, upload_root: Path) -> None:
+def _redeem_api_uploads(
+    config: dict[str, Any], secret: bytes, upload_root: Path, *, require_managed_paths: bool = False
+) -> None:
     """Redeem signed descriptors; preserve trusted admin API paths without tokens."""
 
     total = 0
@@ -2013,6 +2037,8 @@ def _redeem_api_uploads(config: dict[str, Any], secret: bytes, upload_root: Path
             if not isinstance(item, dict):
                 raise ValueError("Multipart file must be an object")
             if "pathToken" not in item:
+                if require_managed_paths and item.get("path"):
+                    raise ValueError("Studio multipart paths require a managed upload path token")
                 continue
             path = _redeem_multipart_path(
                 item.get("path"), item.pop("pathToken"), secret, upload_root

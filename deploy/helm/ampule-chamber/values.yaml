@@ -11,8 +11,10 @@ fullnameOverride: ""
 
 auth:
   adminToken: ""
+  studioToken: ""
   existingSecret: ""
   secretKey: admin-token
+  studioSecretKey: studio-token
   secureCookies: false
 
 kubernetes:

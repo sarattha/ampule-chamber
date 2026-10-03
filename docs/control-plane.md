@@ -613,6 +613,13 @@ Chamber UI or use UI form endpoints; browser sessions retain CSRF enforcement.
 The integration token has operational API privileges, including execution,
 scenario/chamber configuration and evidence access. Treat it as a secret.
 
+The Helm chart reads the optional `studio-token` key from `auth.existingSecret`;
+override its name with `auth.studioSecretKey`. For local installations where
+Helm manages the Secret, `auth.studioToken` populates that key. Keep it empty
+when Studio integration is disabled. The raw manifest also reads the optional
+`studio-token` key from `ampule-chamber-auth`; add a separate credential to that
+Secret before enabling Studio. Existing admin-only Secrets continue to work.
+
 `GET /api/v1/capabilities` advertises product/version, API feature names, goals,
 load models and experiment families. Installed tools do not prove Kubernetes
 authorization, target readiness or telemetry health: those checks remain
@@ -643,7 +650,11 @@ Additional native operations:
   `size`. Pass the descriptor in a journey's `multipart.files` during planning.
   Signed paths must remain inside the workspace upload root. The existing
   128 MiB per-file and 256 MiB per-plan limits apply. Existing trusted admin API
-  paths remain compatible.
+  paths remain compatible. Studio-authenticated plans require valid managed
+  upload tokens for every supplied multipart path; tokenless container paths
+  are rejected. Execution also checks that persisted multipart paths remain
+  within managed uploads, including existing plans and configuration-path
+  starts. Pathless optional file rows remain supported.
 - `POST /api/v1/plans` and `POST /api/v1/runs`: optional bounded `origin` fields
   `studio_service_id`, `studio_environment`, `studio_reference` and `actor`.
   Run starts inherit the plan origin when omitted; setup rerun plans inherit

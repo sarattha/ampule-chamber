@@ -1,12 +1,47 @@
 from __future__ import annotations
 
 import unittest
+from copy import deepcopy
 from pathlib import Path
+
+import yaml
+
+from scripts.validate_deployment import _require_studio_secret
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class ReleasePipelineTest(unittest.TestCase):
+    def test_deployment_validation_requires_optional_secret_backed_studio_token(self) -> None:
+        manifests = list(
+            yaml.safe_load_all((ROOT / "deploy/kubernetes/ampule-chamber.yaml").read_text())
+        )
+        _require_studio_secret(manifests, label="fixture")
+        deployment = next(item for item in manifests if item.get("kind") == "Deployment")
+        env = deployment["spec"]["template"]["spec"]["containers"][0]["env"]
+        token = next(item for item in env if item["name"] == "AMPULE_CHAMBER_STUDIO_TOKEN")
+        for invalid in (
+            {"name": token["name"], "value": "embedded credential"},
+            {
+                "name": token["name"],
+                "valueFrom": {"configMapKeyRef": {"name": "config", "key": "token"}},
+            },
+            {
+                "name": token["name"],
+                "valueFrom": {"secretKeyRef": {"name": "auth", "key": "studio-token"}},
+            },
+        ):
+            original = deepcopy(token)
+            token.clear()
+            token.update(invalid)
+            with self.assertRaisesRegex(SystemExit, "optional Secret key reference"):
+                _require_studio_secret(manifests, label="fixture")
+            token.clear()
+            token.update(original)
+        env.remove(token)
+        with self.assertRaisesRegex(SystemExit, "optional Secret key reference"):
+            _require_studio_secret(manifests, label="fixture")
+
     def test_container_builds_embedded_tools_from_source(self) -> None:
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
 

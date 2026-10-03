@@ -869,3 +869,31 @@ builds all passed. `git diff --check` and the phase-directory structural check
 also passed. PR #43 is now ready for review; Codex review was requested and
 reports running on runtime commit `d1bda43`. The release-note follow-up changes
 documentation only; final GitHub checks and review must pass before landing.
+
+### PR #43 review follow-up
+
+Codex reviewed `d1bda43` and identified two P1 issues: tokenless multipart paths
+gave Studio callers the trusted administrator file-path behavior, and shipped
+deployment forms omitted the Studio credential. Require managed path tokens
+for Studio-authenticated plans while retaining administrator paths and pathless
+optional files. Add optional Secret-backed Studio credentials to Helm and raw
+Kubernetes deployments, preserving existing admin-only Secrets. Regressions
+must prove signed Studio uploads work, tokenless managed and external paths are
+rejected, and administrator compatibility remains. Validate rendered Helm
+output with generated, absent and externally managed Studio credentials.
+
+Execution rechecks persisted multipart paths against the managed upload root,
+preventing bypass through an older administrator plan or configuration-path
+start. The focused 17-test API/release suite passed. Helm lint passed, and real
+Helm rendering passed admin-only, generated Studio Secret and external Secret
+with a custom key cases. Deployment validation now rejects missing, literal,
+ConfigMap-backed or nonoptional Studio credentials in raw and rendered forms.
+
+An intermediate coverage run overlapped source edits and reported 94.69%; it
+is not acceptance evidence. A fresh stable `make check` passed all 396 tests
+(43.236s), the 396-test coverage rerun (50.182s), and 97.77% whole-package
+statement/branch coverage (9217 statements, 3344 branches). Every formatting,
+lint, type, scenario, deployment, release, strict docs and build gate passed;
+the 96% floor and coverage scope remain unchanged. Final host CI and a new
+Codex review must verify the pushed review fixes before merge. The authoritative
+landing and review record is [PR #43](https://github.com/sarattha/ampule-chamber/pull/43).

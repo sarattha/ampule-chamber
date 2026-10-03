@@ -48,6 +48,12 @@ spec:
                 secretKeyRef:
                   name: {{ include "ampule-chamber.authSecretName" . }}
                   key: {{ .Values.auth.secretKey }}
+            - name: AMPULE_CHAMBER_STUDIO_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "ampule-chamber.authSecretName" . }}
+                  key: {{ .Values.auth.studioSecretKey }}
+                  optional: true
             - name: AMPULE_CHAMBER_SECURE_COOKIES
               value: {{ .Values.auth.secureCookies | quote }}
             - name: AMPULE_CHAMBER_KUBERNETES_CONTEXT

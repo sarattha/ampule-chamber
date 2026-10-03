@@ -214,6 +214,89 @@ class StudioApiTests(unittest.TestCase):
                     200,
                 )
 
+    def test_studio_plans_require_managed_multipart_paths(self) -> None:
+        with (
+            TemporaryDirectory() as tmp,
+            patch.dict("os.environ", {"AMPULE_CHAMBER_STUDIO_TOKEN": STUDIO}),
+        ):
+            root = Path(tmp)
+            app = create_app(root / "workspace", admin_token=ADMIN)
+            headers = {"Authorization": f"Bearer {STUDIO}"}
+            config = infer_config(_fixture_repo(root))
+            with TestClient(app) as client:
+                uploaded = client.post(
+                    "/api/v1/uploads",
+                    headers=headers,
+                    files={"file": ("sample.txt", b"approved upload", "text/plain")},
+                    data={"field": "file"},
+                )
+                self.assertEqual(uploaded.status_code, 201)
+                descriptor = uploaded.json()["file"]
+                config["traffic"]["journeys"] = [
+                    {
+                        "name": "upload",
+                        "method": "POST",
+                        "path": "/upload",
+                        "expectedStatus": 200,
+                        "requestEncoding": "multipart",
+                        "multipart": {"files": [descriptor], "fields": {}},
+                        "vus": 1,
+                        "iterations": 1,
+                        "durationSeconds": 1,
+                    }
+                ]
+                response = client.post("/api/v1/plans", headers=headers, json={"config": config})
+                self.assertEqual(response.status_code, 200, response.text)
+                plan_id = response.json()["run_id"]
+                with patch.object(app.state.jobs, "_execute"):
+                    started = client.post(
+                        "/api/v1/runs", headers=headers, json={"plan_id": plan_id, "mode": "local"}
+                    )
+                    self.assertEqual(started.status_code, 202, started.text)
+                outside = root / "private.txt"
+                outside.write_text("private container file")
+                for path in (descriptor["path"], str(outside)):
+                    tokenless = copy.deepcopy(config)
+                    item = tokenless["traffic"]["journeys"][0]["multipart"]["files"][0]
+                    item.pop("pathToken")
+                    item.pop("size")
+                    item["path"] = path
+                    response = client.post(
+                        "/api/v1/plans", headers=headers, json={"config": tokenless}
+                    )
+                    self.assertEqual(response.status_code, 400)
+                    self.assertIn("managed upload path token", response.json()["detail"])
+                    admin_response = client.post(
+                        "/api/v1/plans",
+                        headers={"Authorization": f"Bearer {ADMIN}"},
+                        json={"config": tokenless},
+                    )
+                    self.assertEqual(admin_response.status_code, 200, admin_response.text)
+                    if path == str(outside):
+                        with patch.object(app.state.jobs, "start") as start:
+                            rejected = client.post(
+                                "/api/v1/runs",
+                                headers=headers,
+                                json={"plan_id": admin_response.json()["run_id"], "mode": "local"},
+                            )
+                            self.assertEqual(rejected.status_code, 409)
+                            start.assert_not_called()
+                            stored = root / "workspace" / "external.yaml"
+                            stored.write_text(yaml.safe_dump(tokenless))
+                            rejected = client.post(
+                                "/api/v1/runs",
+                                headers=headers,
+                                json={"config_path": str(stored), "mode": "local"},
+                            )
+                            self.assertEqual(rejected.status_code, 409)
+                            start.assert_not_called()
+                optional = copy.deepcopy(config)
+                optional["traffic"]["journeys"][0]["multipart"]["files"].append(
+                    {"field": "optional", "required": False}
+                )
+                response = client.post("/api/v1/plans", headers=headers, json={"config": optional})
+                self.assertEqual(response.status_code, 200, response.text)
+
     def test_task_pagination_preserves_all_exact_ids_and_metadata(self) -> None:
         with TemporaryDirectory() as tmp:
             workspace = Path(tmp)

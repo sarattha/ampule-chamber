@@ -7,10 +7,13 @@ planning, execution and evidence flow without a browser hostname.
 
 - Optional separate Studio integration credential restricted to explicit API
   routes, with existing admin login and browser CSRF protection preserved.
+  Both Helm and raw Kubernetes deployments support an optional Secret-backed
+  Studio credential while retaining admin-only installations.
 - Versioned capability discovery separates installed tools from unchecked
   cluster, target and telemetry readiness.
 - Signed managed multipart upload descriptors are redeemed during planning
-  under the existing per-file and total-request limits.
+  under the existing per-file and total-request limits. Studio plans require
+  signed paths; trusted administrator paths remain compatible.
 - Caller service/environment/reference metadata survives asynchronous execution
   and appears in job summaries, run metadata and Chamber detail pages.
 - Full validated scenario documents and YAML/JSON previews retain advanced settings during native imports, while embedded credentials are redacted and managed upload paths remain authorized.
@@ -22,9 +25,9 @@ planning, execution and evidence flow without a browser hostname.
   reads, with explicit truncation and complete default responses preserved.
 - Refresh locked AnyIO, PyJWT and urllib3 dependencies to resolve fixed
   HIGH/CRITICAL security findings without scanner exclusions.
-- Add 78 regression tests across runtime, API, load, evidence and reporting;
-  enforce a 96% whole-package statement/branch coverage floor. The 394-test
-  acceptance run measured 97.79% coverage.
+- Add 80 regression tests across runtime, API, load, evidence, reporting and
+  deployment; enforce a 96% whole-package statement/branch coverage floor. The
+  final 396-test acceptance run measured 97.77% coverage.
 
 The existing runner, target admission, named chambers, faults, result artifacts
 and trusted administrator configuration paths remain compatible.
