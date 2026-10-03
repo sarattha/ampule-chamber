@@ -18,9 +18,22 @@ planning, execution and evidence flow without a browser hostname.
 - All available Relayna tasks can be paged and filtered, including tasks after
   the first 200. Terminal cleanup confirmation, archive and tags have native
   JSON endpoints.
+- Archive and tag mutations support the same optional bounded response as run
+  reads, with explicit truncation and complete default responses preserved.
+- Refresh locked AnyIO, PyJWT and urllib3 dependencies to resolve fixed
+  HIGH/CRITICAL security findings without scanner exclusions.
+- Add 78 regression tests across runtime, API, load, evidence and reporting;
+  enforce a 96% whole-package statement/branch coverage floor. The 394-test
+  acceptance run measured 97.79% coverage.
 
 The existing runner, target admission, named chambers, faults, result artifacts
 and trusted administrator configuration paths remain compatible.
+
+The native API acceptance smoke exercised 23 operations through Studio's actual
+client and Chamber's ASGI app with isolated fixtures. Execution supervision was
+stubbed; live Kubernetes traffic and fault validation remain an operational
+acceptance step. See [the integration contract](control-plane.md#relayna-studio-api-integration)
+for private connectivity, credential scope and endpoint details.
 
 ## 1.9.0 - 2026-08-08
 

@@ -10,6 +10,8 @@ All notable changes to Ampule Chamber are documented in this file.
 - Preserve Studio caller provenance in setup rerun plans.
 - Distinguish API availability from unchecked Kubernetes target readiness.
 - Preserve existing admin API, browser authentication, CSRF and execution admission contracts.
+- Refresh locked AnyIO, PyJWT and urllib3 dependencies to resolve fixed HIGH/CRITICAL security findings.
+- Add 78 runtime, API, load, evidence and report regression tests; enforce a 96% whole-package statement/branch coverage floor.
 
 ## 1.10.0 - 2026-09-12
 

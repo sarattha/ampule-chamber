@@ -845,3 +845,27 @@ rerun passed 394 tests (49.578s), and global statement/branch coverage measured
 deployment, release, strict docs and source/wheel gates passed. The 78 new
 regression tests introduce no production-code or coverage-scope changes.
 Replacement PR CI will verify the pushed commit.
+
+### Review and landing preparation — 2026-10-03
+
+The user authorized marking PR #43 ready for review, monitoring checks and
+review feedback, and merging after acceptance. The existing SemVer bump from
+1.10.0 to 1.11.0 already covers this unreleased feature; retain it across package,
+deployment, template and public metadata. Complete the 1.11.0 changelog and
+release notes with locked dependency security fixes, bounded mutation responses,
+the 78 new regression tests and the enforced 96% coverage floor. Document the
+23-operation fixture smoke's execution limitation explicitly.
+
+Initial host inspection: PR #43 is mergeable, all current CI checks pass, and
+there are no submitted reviews or inline review threads. A fresh local full
+quality gate and final-commit GitHub CI/review remain required before merge.
+Preserve the unrelated untracked audit directory throughout this workflow.
+
+Fresh local acceptance passed: `make check` completed with 394 tests (42.903s),
+a second 394-test coverage run (49.500s), and 97.79% whole-package statement/
+branch coverage (9205 statements, 3336 branches). Formatting, lint, type checks,
+scenario/deployment/release validation, strict docs and 1.11.0 source/wheel
+builds all passed. `git diff --check` and the phase-directory structural check
+also passed. PR #43 is now ready for review; Codex review was requested and
+reports running on runtime commit `d1bda43`. The release-note follow-up changes
+documentation only; final GitHub checks and review must pass before landing.
