@@ -25,6 +25,9 @@ planning, execution and evidence flow without a browser hostname.
 - Studio chamber listings and creation responses redact Prometheus URL
   credentials. Header and URL-query credential names use the same matching
   rule, including custom authentication and credential parameters.
+- Studio job summaries, mutation responses and job/run event streams redact
+  credential URLs, including URLs embedded in messages. Private, access and
+  signing key material is redacted across document and run projections.
 - Optional bounded run summaries retain result views and disclose rendering truncation, while default full reads remain compatible. Setup reruns retain caller provenance.
 - All available Relayna tasks can be paged and filtered, including tasks after
   the first 200. Terminal cleanup confirmation, archive and tags have native
@@ -33,9 +36,9 @@ planning, execution and evidence flow without a browser hostname.
   reads, with explicit truncation and complete default responses preserved.
 - Refresh locked AnyIO, PyJWT and urllib3 dependencies to resolve fixed
   HIGH/CRITICAL security findings without scanner exclusions.
-- Add 84 regression tests across runtime, API, load, evidence, reporting and
+- Add 86 regression tests across runtime, API, load, evidence, reporting and
   deployment; enforce a 96% whole-package statement/branch coverage floor. The
-  final 400-test acceptance run measured 97.79% coverage.
+  final 402-test acceptance run measured 97.79% coverage.
 
 The existing runner, target admission, named chambers, faults, result artifacts
 and trusted administrator configuration paths remain compatible.

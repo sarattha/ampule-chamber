@@ -571,6 +571,9 @@ class StudioApiTests(unittest.TestCase):
             journey["headersFromEnv"] = {"Authorization": "API_TOKEN", "X-Auth": "TARGET_AUTH"}
             journey["body"] = {
                 "password": "private-password",
+                "privateKey": "private-key-material",
+                "accessKey": "private-access-key",
+                "signingKey": "private-signing-key",
                 "message": "approved input",
                 "callback": "https://operator:private-url@callback.test/task?token=private-query&auth=private-auth-query&credential=private-credential-query&x-auth=private-custom-query&mode=dev",
             }
@@ -594,7 +597,7 @@ class StudioApiTests(unittest.TestCase):
                 )
                 self.assertEqual(validation["source"], "imported")
                 self.assertEqual(validation["normalized"]["kind"], "ChamberConfig")
-                self.assertNotIn("private", validated.text)
+                self.assertNotIn("private-", validated.text)
                 self.assertEqual(
                     validation["normalized"]["journeys"][0]["body"]["password"], "[redacted]"
                 )
@@ -645,8 +648,14 @@ class StudioApiTests(unittest.TestCase):
                     self.assertIn(
                         f"/traffic/journeys/0/headers/{name}", envelope["redacted_fields"]
                     )
+                for name in ("privateKey", "accessKey", "signingKey"):
+                    self.assertEqual(actual["body"][name], "[redacted]")
+                    self.assertEqual(
+                        validation["normalized"]["journeys"][0]["body"][name], "[redacted]"
+                    )
+                    self.assertIn(f"/traffic/journeys/0/body/{name}", envelope["redacted_fields"])
                 self.assertEqual(actual["body"]["message"], "approved input")
-                self.assertNotIn("private", response.text)
+                self.assertNotIn("private-", response.text)
                 self.assertIn(
                     "/traffic/journeys/0/headers/Authorization", envelope["redacted_fields"]
                 )
@@ -762,6 +771,9 @@ class StudioApiTests(unittest.TestCase):
                     "message": "approved input",
                     "auth": "private-body-auth",
                     "credential": "private-body-credential",
+                    "privateKey": "private-key-material",
+                    "accessKey": "private-access-key",
+                    "signingKey": "private-signing-key",
                     "callback": "https://target.test/callback?auth=private-url-auth&credential=private-url-credential&format=json",
                 },
             )
@@ -923,6 +935,92 @@ class StudioApiTests(unittest.TestCase):
                 )
                 persisted = Path(tmp) / "chambers" / f"{studio_created.json()['id']}.json"
                 self.assertIn("private-userinfo", persisted.read_text())
+
+    def test_studio_job_responses_redact_credentials_and_preserve_persisted_jobs(self) -> None:
+        with (
+            TemporaryDirectory() as tmp,
+            patch.dict("os.environ", {"AMPULE_CHAMBER_STUDIO_TOKEN": STUDIO}),
+        ):
+            root = Path(tmp)
+            app = create_app(root / "workspace", admin_token=ADMIN)
+            admin = {"Authorization": f"Bearer {ADMIN}"}
+            studio = {"Authorization": f"Bearer {STUDIO}"}
+            url = "https://operator:private-userinfo@metrics.test?token=private-query&accessKey=private-access-key&mode=dev"
+            config = infer_config(_fixture_repo(root))
+            with TestClient(app) as client:
+                planned = client.post("/api/v1/plans", headers=admin, json={"config": config})
+                with patch.object(app.state.jobs, "_execute"):
+                    started = client.post(
+                        "/api/v1/runs",
+                        headers=studio,
+                        json={
+                            "plan_id": planned.json()["run_id"],
+                            "mode": "local",
+                            "prometheus_url": url,
+                        },
+                    )
+                self.assertEqual(started.status_code, 202, started.text)
+                self.assertNotIn("private-", started.text)
+                job_id = started.json()["job_id"]
+                job = app.state.jobs._jobs[job_id]
+                job.state = "failed"
+                job.cleanup_required = True
+                job.output = f"Metrics request failed ({url})."
+                job.error = f"Try {url} again."
+                app.state.jobs._persist(job)
+                path = f"/api/v1/jobs/{job_id}"
+                for suffix in ("", "/events"):
+                    response = client.get(path + suffix, headers=studio)
+                    self.assertEqual(response.status_code, 200, response.text)
+                    self.assertNotIn("private-", response.text)
+                    self.assertIn("Metrics request failed", response.text)
+                    self.assertIn("private-userinfo", client.get(path + suffix, headers=admin).text)
+                for operation, payload in (
+                    ("cancel", {}),
+                    ("cleanup-verified", {"confirmed": True}),
+                ):
+                    response = client.post(path + "/" + operation, headers=studio, json=payload)
+                    self.assertEqual(response.status_code, 200, response.text)
+                    self.assertNotIn("private-", response.text)
+                    self.assertEqual(response.json()["state"], "failed")
+                self.assertIn("private-userinfo", app.state.jobs.get(job_id)["prometheus_url"])
+                persisted = app.state.jobs.directory / f"{job_id}.json"
+                self.assertIn("private-userinfo", persisted.read_text())
+
+    def test_studio_run_event_stream_redacts_credentials_without_changing_admin_stream(
+        self,
+    ) -> None:
+        with (
+            TemporaryDirectory() as tmp,
+            patch.dict("os.environ", {"AMPULE_CHAMBER_STUDIO_TOKEN": STUDIO}),
+        ):
+            workspace = Path(tmp)
+            app = create_app(workspace, admin_token=ADMIN)
+            directory = new_run_directory(workspace / "runs", "events")
+            initialize_run_record(directory)
+            record = json.loads((directory / "run.json").read_text())
+            record["state"] = "completed"
+            write_json_atomic(directory / "run.json", record)
+            event = {
+                "state": "completed",
+                "privateKey": "private-key-material",
+                "message": (
+                    "Metrics https://operator:private-url@metrics.test?auth=private-query failed."
+                ),
+            }
+            (directory / "events.jsonl").write_text(
+                json.dumps(event) + "\ninvalid private-record\n"
+            )
+            with TestClient(app) as client:
+                path = f"/api/v1/runs/{directory.name}/events"
+                response = client.get(path, headers={"Authorization": f"Bearer {STUDIO}"})
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertNotIn("private-", response.text)
+                self.assertIn("id: 1", response.text)
+                self.assertIn("completed", response.text)
+                admin = client.get(path, headers={"Authorization": f"Bearer {ADMIN}"})
+                self.assertIn("private-key-material", admin.text)
+                self.assertIn("invalid private-record", admin.text)
 
     def test_run_summary_bounds_large_task_events_http_views_and_preserves_default(self) -> None:
         with TemporaryDirectory() as tmp:

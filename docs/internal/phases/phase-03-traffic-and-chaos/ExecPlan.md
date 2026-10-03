@@ -959,3 +959,31 @@ statements, 3356 branches). Every formatting, lint, type, scenario, deployment,
 release, strict docs and build gate passed. The 96% floor and source scope are
 unchanged. The final pushed URL/chamber fixes require host CI and Codex review
 acceptance before landing; the linked PR records the final decision.
+
+
+The fifth Codex pass on `b9c7ada` identified raw Prometheus credentials in job
+responses/events and key-material fields outside headers. Apply the existing
+Studio projection to start/status/cancel/cleanup job responses and job/run SSE,
+including credential URLs embedded in output/errors. Malformed run-event JSON
+is omitted only from Studio streams, preserving original resume IDs and trusted
+administrator streams. Redact private/access/signing/secret/encryption key
+fields and passphrases while preserving ordinary request headers and environment
+references. Endpoint regressions cover job mutations, streams, administrator
+compatibility, persisted credentials and advanced document/run key material.
+
+The first focused run exposed an assertion matching the `privateKey` field name
+rather than its embedded secret value. Corrected it to check secret values and
+explicitly assert redacted key fields. The user instructed that no further
+Codex review is required after this pass: complete local gates and final host
+CI, resolve the current findings, then land PR #43 without another review call.
+
+
+Final stable local acceptance for job/event and key-material fixes: `make check`
+passed 402 tests (43.558s), the 402-test coverage rerun (50.872s), and 97.79%
+whole-package statement/branch coverage (9264 statements, 3360 branches).
+Every formatting, lint, type, scenario, deployment, release, strict docs and
+source/wheel build gate passed. The 96% coverage floor and source scope remain
+unchanged. The corrected focused suite passed 44 tests. Final acceptance is
+host CI on the pushed commit and resolution of the two existing review threads;
+no further Codex review will be requested per the user's explicit instruction.
+The linked PR records final CI evidence and the merge result.

@@ -620,6 +620,12 @@ report configuration. Header and URL-query names share the same credential
 matching rule, including custom authentication and credential parameters.
 URL userinfo is removed, including uppercase HTTP/HTTPS schemes; malformed
 HTTP/HTTPS URLs are withheld rather than breaking the projection.
+Job start/status, cancellation, cleanup confirmation and job/run event streams
+apply the same projection rules, including HTTP/HTTPS credential URLs embedded
+in output or error messages. Studio run streams omit malformed JSON event rows
+while retaining original event IDs for resume; administrator streams are unchanged.
+Private/access/signing/secret/encryption key material and passphrases are redacted
+by field name, including camelCase, snake_case and hyphenated spellings.
 Archive and tag responses apply the same redaction in full and bounded modes.
 Redacted JSON-pointer paths and warnings disclose changes; stored artifacts and
 administrator responses retain their existing contracts. Studio comparison

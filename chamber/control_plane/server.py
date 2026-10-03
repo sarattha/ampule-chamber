@@ -8,6 +8,7 @@ import hashlib
 import hmac
 import json
 import math
+import re
 import secrets
 import shutil
 import threading
@@ -955,7 +956,7 @@ def create_app(
                     origin = CallerOrigin.model_validate(
                         json.loads(origin_path.read_text())
                     ).model_dump(exclude_none=True)
-            return jobs.start(
+            result = jobs.start(
                 config_path,
                 origin=origin,
                 mode=payload.mode,
@@ -963,6 +964,7 @@ def create_app(
                 prometheus_url=payload.prometheus_url,
                 idempotency_key=key,
             )
+            return _studio_response(request, result)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="plan not found") from exc
         except ValueError as exc:
@@ -1092,29 +1094,31 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail="Invalid Last-Event-ID") from exc
         return StreamingResponse(
-            _run_event_stream(run_dir, after=after), media_type="text/event-stream"
+            _run_event_stream(run_dir, after=after, request=request), media_type="text/event-stream"
         )
 
     @app.get("/api/v1/jobs/{job_id}")
-    async def job_api(job_id: str) -> dict[str, Any]:
+    async def job_api(request: Request, job_id: str) -> dict[str, Any]:
         try:
-            return jobs.get(job_id)
+            return _studio_response(request, jobs.get(job_id))
         except KeyError:
             raise HTTPException(status_code=404, detail="job not found") from None
 
     @app.get("/api/v1/jobs/{job_id}/events")
-    async def job_events_api(job_id: str) -> StreamingResponse:
+    async def job_events_api(request: Request, job_id: str) -> StreamingResponse:
         try:
             jobs.get(job_id)
         except KeyError:
             raise HTTPException(status_code=404, detail="job not found") from None
-        return StreamingResponse(_job_event_stream(jobs, job_id), media_type="text/event-stream")
+        return StreamingResponse(
+            _job_event_stream(jobs, job_id, request=request), media_type="text/event-stream"
+        )
 
     @app.post("/api/v1/jobs/{job_id}/cancel")
     async def cancel_job_api(request: Request, job_id: str) -> dict[str, Any]:
         _check_csrf(request, request.headers.get("X-CSRF-Token"))
         try:
-            return jobs.cancel(job_id)
+            return _studio_response(request, jobs.cancel(job_id))
         except KeyError:
             raise HTTPException(status_code=404, detail="job not found") from None
 
@@ -1129,7 +1133,7 @@ def create_app(
             )
         try:
             jobs.acknowledge_cleanup(job_id)
-            return jobs.get(job_id)
+            return _studio_response(request, jobs.get(job_id))
         except KeyError:
             raise HTTPException(status_code=404, detail="job not found") from None
         except ValueError as exc:
@@ -1891,21 +1895,53 @@ def _redact_document_credentials(document: dict[str, Any]) -> tuple[dict[str, An
 
     def credential_name(key: Any) -> bool:
         normalized = str(key).lower().replace("_", "").replace("-", "")
-        return normalized in secret_keys or any(
-            marker in normalized
-            for marker in ("auth", "credential", "token", "secret", "password", "apikey", "cookie")
+        return (
+            normalized in secret_keys
+            or key_material_name(normalized)
+            or any(
+                marker in normalized
+                for marker in (
+                    "auth",
+                    "credential",
+                    "token",
+                    "secret",
+                    "password",
+                    "apikey",
+                    "cookie",
+                )
+            )
+        )
+
+    def key_material_name(key: str) -> bool:
+        return any(
+            marker in key
+            for marker in (
+                "privatekey",
+                "accesskey",
+                "signingkey",
+                "secretkey",
+                "encryptionkey",
+                "keymaterial",
+                "passphrase",
+            )
         )
 
     def redact(value: Any, path: str = "", declared: frozenset[str] = frozenset()) -> Any:
         if isinstance(value, list | tuple):
             return [redact(item, f"{path}/{index}", declared) for index, item in enumerate(value)]
         if not isinstance(value, dict):
-            if isinstance(value, str) and value.lower().startswith(("http://", "https://")):
+            if not isinstance(value, str):
+                return value
+
+            def redact_url(match: re.Match[str]) -> str:
+                original = match.group()
+                selected_url = original.rstrip(".,;)]}")
+                suffix = original[len(selected_url) :]
                 try:
-                    parts = urlsplit(value)
+                    parts = urlsplit(selected_url)
                 except ValueError:
                     fields.append(path)
-                    return "[redacted]"
+                    return "[redacted]" + suffix
                 query = parse_qsl(parts.query, keep_blank_values=True)
                 hidden_query = [
                     (
@@ -1916,16 +1952,21 @@ def _redact_document_credentials(document: dict[str, Any]) -> tuple[dict[str, An
                 ]
                 if parts.username is not None or hidden_query != query:
                     fields.append(path)
-                    return urlunsplit(
-                        (
-                            parts.scheme,
-                            parts.netloc.rsplit("@", 1)[-1],
-                            parts.path,
-                            urlencode(hidden_query),
-                            parts.fragment,
+                    return (
+                        urlunsplit(
+                            (
+                                parts.scheme,
+                                parts.netloc.rsplit("@", 1)[-1],
+                                parts.path,
+                                urlencode(hidden_query),
+                                parts.fragment,
+                            )
                         )
+                        + suffix
                     )
-            return value
+                return original
+
+            return re.sub(r"""https?://[^\s<>"']+""", redact_url, value, flags=re.IGNORECASE)
         declared = declared | frozenset(
             str(name) for name in _mapping(value.get("runtime")).get("secretEnv", [])
         )
@@ -1937,6 +1978,7 @@ def _redact_document_credentials(document: dict[str, Any]) -> tuple[dict[str, An
                 result[key] = copy.deepcopy(item)
             elif (
                 normalized in secret_keys
+                or key_material_name(normalized)
                 or key in declared
                 or (path.endswith("/headers") and credential_name(key))
             ):
@@ -2349,10 +2391,14 @@ def _apply_security_headers(response: Response) -> Response:
     return response
 
 
-async def _job_event_stream(jobs: AssessmentJobManager, job_id: str) -> Any:
+async def _job_event_stream(
+    jobs: AssessmentJobManager, job_id: str, *, request: Request | None = None
+) -> Any:
     previous = None
     while True:
         job = jobs.get(job_id)
+        if request is not None:
+            job = _studio_response(request, job)
         rendered = json.dumps(job, sort_keys=True)
         if rendered != previous:
             yield f"event: job\ndata: {rendered}\n\n"
@@ -2362,12 +2408,20 @@ async def _job_event_stream(jobs: AssessmentJobManager, job_id: str) -> Any:
         await asyncio.sleep(0.5)
 
 
-async def _run_event_stream(run_dir: Path, *, after: int = 0) -> Any:
+async def _run_event_stream(
+    run_dir: Path, *, after: int = 0, request: Request | None = None
+) -> Any:
     path = run_dir / "events.jsonl"
     emitted = after
     while True:
         lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
         for index, line in enumerate(lines[emitted:], start=emitted + 1):
+            if request is not None and request.state.studio_authenticated:
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                line = json.dumps(_studio_response(request, _mapping(event)))
             yield f"id: {index}\nevent: run\ndata: {line}\n\n"
         emitted = max(emitted, len(lines))
         run = _json_file(run_dir / "run.json")
