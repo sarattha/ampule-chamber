@@ -3,28 +3,32 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import hmac
 import json
+import math
+import re
 import secrets
 import shutil
 import threading
 import uuid
 import webbrowser
 from dataclasses import asdict
+from importlib.metadata import version
 from pathlib import Path
 from typing import Annotated, Any, cast
-from urllib.parse import urlencode
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import yaml
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 from starlette.responses import StreamingResponse
 
-from chamber.application.service import ChamberApplication
+from chamber.application.service import ChamberApplication, _task_projection
 from chamber.chaos.experiments import FAMILIES, validate_experiment
 from chamber.control_plane.discovery import (
     DiscoveryError,
@@ -43,12 +47,14 @@ from chamber.control_plane.scenarios import (
 from chamber.control_plane.security import (
     SESSION_COOKIE,
     load_admin_auth,
+    load_studio_auth,
     safe_next_path,
+    studio_api_allowed,
 )
 from chamber.environment.chambers import ChamberProfile, ChamberStore, target_key
 from chamber.load import validate_relayna_journey
 from chamber.load.suite import validate_suite
-from chamber.runs import registered_evidence
+from chamber.runs import registered_evidence, write_json_atomic
 
 PACKAGE_DIR = Path(__file__).resolve().parent
 TEMPLATE_DIR = PACKAGE_DIR / "templates"
@@ -62,11 +68,36 @@ class InspectRequest(BaseModel):
     repo: str
 
 
+class CallerOrigin(BaseModel):
+    """Safe caller identifiers; credentials and arbitrary caller metadata are excluded."""
+
+    studio_service_id: str = Field(min_length=1, max_length=200, pattern=r"^[^\x00-\x1f\x7f]+$")
+    studio_environment: str = Field(min_length=1, max_length=100, pattern=r"^[^\x00-\x1f\x7f]+$")
+    studio_reference: str = Field(min_length=1, max_length=200, pattern=r"^[^\x00-\x1f\x7f]+$")
+    actor: str | None = Field(default=None, max_length=200, pattern=r"^[^\x00-\x1f\x7f]+$")
+
+
+class CleanupVerificationRequest(BaseModel):
+    confirmed: bool = Field(default=False, strict=True)
+
+
+class ArchiveRequest(BaseModel):
+    archived: bool
+
+
+class TagsRequest(BaseModel):
+    tags: list[Annotated[str, Field(max_length=100, pattern=r"^[^\x00-\x1f\x7f]*$")]] = Field(
+        max_length=20
+    )
+
+
 class PlanRequest(BaseModel):
     config: dict[str, Any]
+    origin: CallerOrigin | None = None
 
 
 class RunStartRequest(BaseModel):
+    origin: CallerOrigin | None = None
     config_path: str | None = None
     plan_id: str | None = None
     mode: str = Field(pattern="^(local|kubernetes)$")
@@ -116,6 +147,13 @@ def create_app(
     """Create the local control-plane application."""
 
     auth = load_admin_auth(admin_token)
+    studio_auth = load_studio_auth()
+    if (
+        auth.enabled
+        and studio_auth.enabled
+        and hmac.compare_digest(auth.token_digest or b"", studio_auth.token_digest or b"")
+    ):
+        raise ValueError("AMPULE_CHAMBER_STUDIO_TOKEN must differ from AMPULE_CHAMBER_ADMIN_TOKEN")
     kubernetes_discovery = discovery or KubernetesDiscovery(DiscoverySettings.from_environment())
     application = ChamberApplication(workspace)
     application.initialize()
@@ -144,6 +182,18 @@ def create_app(
         scheme, _, candidate = request.headers.get("Authorization", "").partition(" ")
         request.state.bearer_authenticated = (
             scheme.lower() == "bearer" and auth.authenticates_token(candidate.strip())
+        )
+        integration_authenticated = (
+            scheme.lower() == "bearer"
+            and studio_auth.authenticates_token(candidate.strip())
+            and studio_api_allowed(request.method, request.url.path)
+        )
+        request.state.studio_authenticated = (
+            integration_authenticated and not request.state.bearer_authenticated
+        )
+        request.state.authenticated = request.state.authenticated or integration_authenticated
+        request.state.bearer_authenticated = (
+            request.state.bearer_authenticated or integration_authenticated
         )
         if not request.state.authenticated and not _public_path(request.url.path):
             if request.url.path.startswith("/api/"):
@@ -292,7 +342,7 @@ def create_app(
         )
 
     @app.get("/api/v1/chambers")
-    async def chambers_api() -> dict[str, Any]:
+    async def chambers_api(request: Request) -> dict[str, Any]:
         profiles = chambers.list()
         for profile in profiles:
             profile["jobs"] = [job for job in jobs.list() if job.get("chamber_id") == profile["id"]]
@@ -328,12 +378,12 @@ def create_app(
                 job for job in namespace_jobs if job.get("cleanup_required")
             ]
             profile["readiness"] = "not checked"
-        return {"chambers": profiles}
+        return _studio_response(request, {"chambers": profiles})
 
     @app.post("/api/v1/chambers", status_code=201)
     async def create_chamber_api(request: Request, payload: ChamberProfile) -> dict[str, Any]:
         _check_csrf(request, request.headers.get("X-CSRF-Token"))
-        return chambers.create(payload)
+        return _studio_response(request, chambers.create(payload))
 
     @app.get("/chambers", response_class=HTMLResponse, include_in_schema=False)
     async def chambers_page(request: Request, clone: str = "") -> Response:
@@ -347,7 +397,7 @@ def create_app(
             context={
                 "active_nav": "chambers",
                 "csrf_token": request.state.csrf_token,
-                "profiles": (await chambers_api())["chambers"],
+                "profiles": (await chambers_api(request))["chambers"],
                 "selected": selected,
             },
         )
@@ -694,7 +744,9 @@ def create_app(
         return {"scenarios": scenarios.list(_ui_journeys)}
 
     @app.get("/api/v1/scenarios/{source}/{scenario_id}")
-    async def scenario_api(source: str, scenario_id: str, service_name: str = "") -> dict[str, Any]:
+    async def scenario_api(
+        request: Request, source: str, scenario_id: str, service_name: str = ""
+    ) -> dict[str, Any]:
         try:
             normalized = scenarios.read(source, scenario_id, _ui_journeys)
         except FileNotFoundError:
@@ -703,7 +755,42 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         normalized["warnings"] = compatibility_warnings(normalized, service_name=service_name)
         _authorize_multipart_paths(normalized, multipart_path_secret, multipart_upload_root)
-        return normalized
+        return _studio_response(request, normalized)
+
+    @app.get("/api/v1/scenarios/{source}/{scenario_id}/document")
+    async def scenario_document_api(source: str, scenario_id: str) -> dict[str, Any]:
+        try:
+            result = scenarios.document(source, scenario_id, _ui_journeys)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="scenario not found") from None
+        except (OSError, ScenarioCatalogError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _document_response(result, multipart_path_secret, multipart_upload_root)
+
+    @app.post("/api/v1/scenarios/validate-document")
+    async def validate_scenario_document_api(
+        request: Request, payload: ScenarioValidateRequest
+    ) -> dict[str, Any]:
+        _check_csrf(request, request.headers.get("X-CSRF-Token"))
+        try:
+            document = parse_scenario_document(payload.content)
+            normalized = normalize_document(
+                document, source="imported", validate_journeys=_ui_journeys
+            )
+        except (ScenarioCatalogError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        normalized["warnings"] = compatibility_warnings(
+            normalized, service_name=payload.service_name
+        )
+        result = {
+            "schema_version": "chamber.ampule.dev/scenario-document/v1",
+            "document": document,
+            "normalized": normalized,
+            "source": "imported",
+            "revision": normalized["revision"],
+            "warnings": normalized["warnings"],
+        }
+        return _document_response(result, multipart_path_secret, multipart_upload_root)
 
     @app.post("/api/v1/scenarios/validate")
     async def validate_scenario_api(
@@ -722,17 +809,18 @@ def create_app(
             normalized, service_name=payload.service_name
         )
         _authorize_multipart_paths(normalized, multipart_path_secret, multipart_upload_root)
-        return normalized
+        return _studio_response(request, normalized)
 
     @app.post("/api/v1/scenarios", status_code=201)
     async def create_scenario_api(request: Request, payload: ScenarioSaveRequest) -> dict[str, Any]:
         _check_csrf(request, request.headers.get("X-CSRF-Token"))
         try:
-            return scenarios.save(
+            result = scenarios.save(
                 payload.document,
                 replace=payload.replace,
                 validate_journeys=_ui_journeys,
             )
+            return _studio_response(request, result)
         except FileExistsError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except (ScenarioCatalogError, ValueError) as exc:
@@ -778,10 +866,21 @@ def create_app(
     async def plans_api(request: Request, payload: PlanRequest) -> dict[str, str]:
         _check_csrf(request, request.headers.get("X-CSRF-Token"))
         try:
+            config = copy.deepcopy(payload.config)
+            _redeem_api_uploads(
+                config,
+                multipart_path_secret,
+                multipart_upload_root,
+                require_managed_paths=request.state.studio_authenticated,
+            )
             if payload.config.get("chamber"):
-                chambers.bind(payload.config, payload.config["chamber"]["id"])
-            config_path = _write_draft(workspace, payload.config)
+                chambers.bind(config, config["chamber"]["id"])
+            config_path = _write_draft(workspace, config)
             run_dir = application.plan(config_path)
+            if payload.origin:
+                write_json_atomic(
+                    run_dir / "caller-origin.json", payload.origin.model_dump(exclude_none=True)
+                )
         except (OSError, ValueError, RuntimeError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"run_id": run_dir.name, "run_dir": str(run_dir)}
@@ -833,27 +932,124 @@ def create_app(
                 if payload.plan_id
                 else _safe_config_path(workspace, payload.config_path or "")
             )
+            if request.state.studio_authenticated:
+                config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+                if not isinstance(config, dict):
+                    raise ValueError("Studio execution configuration must be an object")
+                journeys = _mapping(config.get("traffic")).get("journeys", [])
+                if not isinstance(journeys, list):
+                    raise ValueError("Traffic journeys must be an array")
+                # Persisted plans have redeemed tokens; reauthorize only managed files.
+                _authorize_multipart_paths(
+                    {"journeys": journeys}, multipart_path_secret, multipart_upload_root
+                )
+                _redeem_api_uploads(
+                    config, multipart_path_secret, multipart_upload_root, require_managed_paths=True
+                )
             key = request.headers.get("Idempotency-Key")
             if key is not None and (not key.strip() or len(key) > 200):
                 raise HTTPException(status_code=400, detail="Invalid Idempotency-Key")
-            return jobs.start(
+            origin = payload.origin.model_dump(exclude_none=True) if payload.origin else None
+            if origin is None and payload.plan_id:
+                origin_path = config_path.parent / "caller-origin.json"
+                if origin_path.exists():
+                    origin = CallerOrigin.model_validate(
+                        json.loads(origin_path.read_text())
+                    ).model_dump(exclude_none=True)
+            result = jobs.start(
                 config_path,
+                origin=origin,
                 mode=payload.mode,
                 context=payload.context,
                 prometheus_url=payload.prometheus_url,
                 idempotency_key=key,
             )
+            return _studio_response(request, result)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="plan not found") from exc
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.get("/api/v1/runs/{run_id}")
-    async def run_api(run_id: str) -> dict[str, Any]:
+    async def run_api(
+        request: Request, run_id: str, include_task_details: bool = True
+    ) -> dict[str, Any]:
         try:
-            return application.get_run(run_id)
+            run = application.get_run(run_id, include_task_details=include_task_details)
+            run = _studio_response(request, run)
+            return run if include_task_details else _bounded_run_summary(run)
         except (FileNotFoundError, ValueError):
             raise HTTPException(status_code=404, detail="run not found") from None
+
+    @app.post("/api/v1/runs/{run_id}/archive")
+    async def archive_run_api(
+        request: Request, run_id: str, payload: ArchiveRequest, include_task_details: bool = True
+    ) -> dict[str, Any]:
+        _check_csrf(request, request.headers.get("X-CSRF-Token"))
+        try:
+            application.set_run_archived(run_id, archived=payload.archived)
+            run = application.get_run(run_id, include_task_details=include_task_details)
+            run = _studio_response(request, run)
+            return run if include_task_details else _bounded_run_summary(run)
+        except (FileNotFoundError, ValueError):
+            raise HTTPException(status_code=404, detail="run not found") from None
+
+    @app.post("/api/v1/runs/{run_id}/tags")
+    async def run_tags_api(
+        request: Request, run_id: str, payload: TagsRequest, include_task_details: bool = True
+    ) -> dict[str, Any]:
+        _check_csrf(request, request.headers.get("X-CSRF-Token"))
+        try:
+            application.set_run_tags(run_id, tags=tuple(payload.tags))
+            run = application.get_run(run_id, include_task_details=include_task_details)
+            run = _studio_response(request, run)
+            return run if include_task_details else _bounded_run_summary(run)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="run not found") from None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/v1/runs/{run_id}/tasks")
+    async def run_tasks_api(
+        run_id: str,
+        page: int = Query(default=1, ge=1),
+        page_size: int = Query(default=25, ge=1, le=100),
+        search: str = Query(default="", max_length=256),
+        status: str = Query(default="", max_length=80),
+        failed_first: bool = False,
+    ) -> dict[str, Any]:
+        try:
+            run_dir = application.run_path(run_id)
+        except (FileNotFoundError, ValueError):
+            raise HTTPException(status_code=404, detail="run not found") from None
+        artifact = _json_file(run_dir / "evidence/relayna-summary.json")
+        tasks = _mapping(artifact).get("tasks", [])
+        tasks = tasks if isinstance(tasks, list) else []
+        items = [
+            _task_projection(task)
+            for task in tasks
+            if isinstance(task, dict)
+            and isinstance(task.get("task_id"), str)
+            and 0 < len(task["task_id"]) <= 256
+            and not any(ord(char) < 32 or ord(char) == 127 for char in task["task_id"])
+            and search.casefold() in str(task.get("task_id", "")).casefold()
+            and (not status or task.get("terminal_status") == status)
+        ]
+        if failed_first:
+            items.sort(key=lambda task: bool(task.get("success")))
+        total = len(items)
+        pages = max(1, (total + page_size - 1) // page_size)
+        page = min(page, pages)
+        return {
+            "items": items[(page - 1) * page_size : page * page_size],
+            "total_count": total,
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total_items": total,
+                "total_pages": pages,
+            },
+        }
 
     @app.get("/api/v1/runs/{run_id}/evidence-explorer")
     async def evidence_explorer_api(request: Request, run_id: str) -> dict[str, Any]:
@@ -898,31 +1094,74 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail="Invalid Last-Event-ID") from exc
         return StreamingResponse(
-            _run_event_stream(run_dir, after=after), media_type="text/event-stream"
+            _run_event_stream(run_dir, after=after, request=request), media_type="text/event-stream"
         )
 
     @app.get("/api/v1/jobs/{job_id}")
-    async def job_api(job_id: str) -> dict[str, Any]:
+    async def job_api(request: Request, job_id: str) -> dict[str, Any]:
         try:
-            return jobs.get(job_id)
+            return _studio_response(request, jobs.get(job_id))
         except KeyError:
             raise HTTPException(status_code=404, detail="job not found") from None
 
     @app.get("/api/v1/jobs/{job_id}/events")
-    async def job_events_api(job_id: str) -> StreamingResponse:
+    async def job_events_api(request: Request, job_id: str) -> StreamingResponse:
         try:
             jobs.get(job_id)
         except KeyError:
             raise HTTPException(status_code=404, detail="job not found") from None
-        return StreamingResponse(_job_event_stream(jobs, job_id), media_type="text/event-stream")
+        return StreamingResponse(
+            _job_event_stream(jobs, job_id, request=request), media_type="text/event-stream"
+        )
 
     @app.post("/api/v1/jobs/{job_id}/cancel")
     async def cancel_job_api(request: Request, job_id: str) -> dict[str, Any]:
         _check_csrf(request, request.headers.get("X-CSRF-Token"))
         try:
-            return jobs.cancel(job_id)
+            return _studio_response(request, jobs.cancel(job_id))
         except KeyError:
             raise HTTPException(status_code=404, detail="job not found") from None
+
+    @app.post("/api/v1/jobs/{job_id}/cleanup-verified")
+    async def cleanup_job_api(
+        request: Request, job_id: str, payload: CleanupVerificationRequest
+    ) -> dict[str, Any]:
+        _check_csrf(request, request.headers.get("X-CSRF-Token"))
+        if not payload.confirmed:
+            raise HTTPException(
+                status_code=400, detail="Verify target cleanup before releasing admission"
+            )
+        try:
+            jobs.acknowledge_cleanup(job_id)
+            return _studio_response(request, jobs.get(job_id))
+        except KeyError:
+            raise HTTPException(status_code=404, detail="job not found") from None
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/api/v1/uploads", status_code=201)
+    async def upload_api(
+        request: Request,
+        file: Annotated[UploadFile, File()],
+        field: Annotated[str, Form(min_length=1, max_length=100, pattern=r"^[^\x00-\x1f\x7f]+$")],
+    ) -> dict[str, Any]:
+        _check_csrf(request, request.headers.get("X-CSRF-Token"))
+        raw = json.dumps([{"multipart": {"files": [{"field": field, "uploadIndex": 0}]}}])
+        try:
+            saved, _ = await _persist_journey_files(
+                workspace, raw, [file], path_secret=multipart_path_secret
+            )
+            descriptor = json.loads(saved)[0]["multipart"]["files"][0]
+            path = Path(descriptor["path"])
+            descriptor.update(
+                pathToken=_multipart_path_token(path, multipart_path_secret),
+                size=path.stat().st_size,
+            )
+            return {"file": descriptor}
+        except (OSError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        finally:
+            await file.close()
 
     @app.get("/api/v1/runs/{run_id}/evidence/{evidence_id}")
     async def evidence_api(run_id: str, evidence_id: str) -> FileResponse:
@@ -951,6 +1190,7 @@ def create_app(
             run_dir = application.run_path(run_id)
             report_path = None
             run = application.get_run(run_id)
+            run = _studio_response(request, run)
         except (FileNotFoundError, ValueError):
             raise HTTPException(status_code=404, detail="run not found") from None
         if format == "markdown":
@@ -989,7 +1229,20 @@ def create_app(
     async def compare_api(request: Request, payload: CompareRequest) -> dict[str, Any]:
         _check_csrf(request, request.headers.get("X-CSRF-Token"))
         try:
-            return asdict(application.compare(payload.baseline_run_id, payload.candidate_run_id))
+            result = asdict(application.compare(payload.baseline_run_id, payload.candidate_run_id))
+            if request.state.studio_authenticated:
+                for reason in result["compatibility_reasons"]:
+                    if reason["dimension"] in {"load contract", "experiment contract"}:
+                        reason["baseline"] = reason["candidate"] = "[redacted configuration]"
+                    reason["detail"] = f"{reason['dimension'].title()} " + (
+                        "matches." if reason["compatible"] else "differs or is unavailable."
+                    )
+                result["notes"] = [
+                    reason["detail"]
+                    for reason in result["compatibility_reasons"]
+                    if not reason["compatible"]
+                ]
+            return _studio_response(request, result)
         except (FileNotFoundError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -1576,6 +1829,334 @@ async def _persist_journey_files(
     return json.dumps(journeys), upload_dir
 
 
+def _document_response(result: dict[str, Any], secret: bytes, upload_root: Path) -> dict[str, Any]:
+    """Share upload authorization and credential redaction for complete document reads."""
+
+    document = result["document"]
+    traffic = _mapping(document.get("traffic"))
+    _authorize_multipart_paths({"journeys": traffic.get("journeys", [])}, secret, upload_root)
+    document, redacted_fields = _redact_document_credentials(document)
+    result.update(document=document)
+    normalized = result.get("normalized")
+    if isinstance(normalized, dict):
+        _authorize_multipart_paths(normalized, secret, upload_root)
+        normalized, normalized_redactions = _redact_document_credentials(normalized)
+        redacted_fields.extend(f"/normalized{path}" for path in normalized_redactions)
+        result["normalized"] = normalized
+    result["redacted_fields"] = redacted_fields
+    if redacted_fields:
+        result["warnings"] = [
+            *result["warnings"],
+            "Embedded credentials were redacted. Supply approved credentials "
+            "through environment references before execution.",
+        ]
+    if isinstance(result.get("normalized"), dict):
+        result["normalized"]["warnings"] = result["warnings"]
+    return result
+
+
+def _studio_response(request: Request, result: dict[str, Any]) -> dict[str, Any]:
+    """Protect Studio projections without changing trusted administrator responses."""
+
+    if not request.state.studio_authenticated:
+        return result
+    result, fields = _redact_document_credentials(result)
+    if fields:
+        result["redacted_fields"] = fields
+        result["warnings"] = [
+            *result.get("warnings", []),
+            "Embedded credentials were redacted. Supply approved credentials "
+            "through environment references before execution.",
+        ]
+    return result
+
+
+def _redact_document_credentials(document: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """Preserve configuration and environment references, omit embedded credentials."""
+
+    fields: list[str] = []
+    secret_keys = {
+        "authorization",
+        "proxyauthorization",
+        "xauthtoken",
+        "cookie",
+        "setcookie",
+        "password",
+        "secret",
+        "token",
+        "apikey",
+        "xapikey",
+        "accesstoken",
+        "clientsecret",
+        "auth",
+        "credential",
+        "credentials",
+    }
+
+    def credential_name(key: Any) -> bool:
+        normalized = str(key).lower().replace("_", "").replace("-", "")
+        return (
+            normalized in secret_keys
+            or key_material_name(normalized)
+            or any(
+                marker in normalized
+                for marker in (
+                    "auth",
+                    "credential",
+                    "token",
+                    "secret",
+                    "password",
+                    "apikey",
+                    "cookie",
+                )
+            )
+        )
+
+    def key_material_name(key: str) -> bool:
+        return any(
+            marker in key
+            for marker in (
+                "privatekey",
+                "accesskey",
+                "signingkey",
+                "secretkey",
+                "encryptionkey",
+                "keymaterial",
+                "passphrase",
+            )
+        )
+
+    def redact(value: Any, path: str = "", declared: frozenset[str] = frozenset()) -> Any:
+        if isinstance(value, list | tuple):
+            return [redact(item, f"{path}/{index}", declared) for index, item in enumerate(value)]
+        if not isinstance(value, dict):
+            if not isinstance(value, str):
+                return value
+
+            def redact_url(match: re.Match[str]) -> str:
+                original = match.group()
+                selected_url = original.rstrip(".,;)]}")
+                suffix = original[len(selected_url) :]
+                try:
+                    parts = urlsplit(selected_url)
+                except ValueError:
+                    fields.append(path)
+                    return "[redacted]" + suffix
+                query = parse_qsl(parts.query, keep_blank_values=True)
+                hidden_query = [
+                    (
+                        key,
+                        "[redacted]" if credential_name(key) else selected,
+                    )
+                    for key, selected in query
+                ]
+                if parts.username is not None or hidden_query != query:
+                    fields.append(path)
+                    return (
+                        urlunsplit(
+                            (
+                                parts.scheme,
+                                parts.netloc.rsplit("@", 1)[-1],
+                                parts.path,
+                                urlencode(hidden_query),
+                                parts.fragment,
+                            )
+                        )
+                        + suffix
+                    )
+                return original
+
+            return re.sub(r"""https?://[^\s<>"']+""", redact_url, value, flags=re.IGNORECASE)
+        declared = declared | frozenset(
+            str(name) for name in _mapping(value.get("runtime")).get("secretEnv", [])
+        )
+        result = {}
+        for key, item in value.items():
+            selected = f"{path}/{str(key).replace('~', '~0').replace('/', '~1')}"
+            normalized = str(key).lower().replace("_", "").replace("-", "")
+            if key == "headersFromEnv":
+                result[key] = copy.deepcopy(item)
+            elif (
+                normalized in secret_keys
+                or key_material_name(normalized)
+                or key in declared
+                or (path.endswith("/headers") and credential_name(key))
+            ):
+                result[key] = "[redacted]"
+                fields.append(selected)
+            else:
+                result[key] = redact(item, selected, declared)
+        return result
+
+    return redact(document), fields
+
+
+def _bounded_run_summary(run: dict[str, Any]) -> dict[str, Any]:
+    """Bound every rendered view and disclose truncation without changing full reads."""
+
+    truncations: list[dict[str, Any]] = []
+    omitted = 0
+    priority = [
+        "schema_version",
+        "run_id",
+        "status",
+        "state",
+        "conclusive",
+        "readiness_score",
+        "evidence_coverage_percent",
+        "summary",
+        "verdict",
+        "tested_scope",
+        "limitations",
+        "evidence_requirements",
+        "next_actions",
+        "origin",
+        "service_name",
+        "stage",
+        "error",
+        "success",
+        "task_count",
+        "total_task_count",
+        "tasks_truncated",
+        "available",
+        "service",
+        "runtime",
+        "deployment",
+        "scenario",
+        "agents",
+        "entrypoint",
+        "pagination",
+        "filters",
+        "window",
+    ]
+
+    def record(path: str, reason: str, total: int, shown: int) -> None:
+        nonlocal omitted
+        if len(truncations) < 100:
+            truncations.append(
+                {"path": path[:256], "reason": reason, "total": total, "shown": shown}
+            )
+        else:
+            omitted += 1
+
+    def encoded(value: Any) -> int:
+        return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode())
+
+    def bounded(value: Any, path: str, budget: list[int], depth: int = 0) -> Any:
+        if isinstance(value, str):
+            limit = min(len(value), 16384)
+            while limit and encoded(value[:limit]) > budget[0]:
+                limit //= 2
+            selected = value[:limit]
+            budget[0] -= encoded(selected)
+            if limit < len(value):
+                record(path, "string_limit", len(value), limit)
+            return selected
+        if isinstance(value, list | tuple | dict):
+            budget[0] -= 2
+            if depth >= 12:
+                record(path, "depth_limit", len(value), 0)
+                return [] if isinstance(value, list | tuple) else {}
+            if isinstance(value, list | tuple):
+                items = []
+                for index, item in enumerate(value[:100]):
+                    if budget[0] < 8:
+                        break
+                    budget[0] -= 1
+                    items.append(bounded(item, f"{path}/{index}", budget, depth + 1))
+                if len(items) < len(value):
+                    record(path, "collection_limit", len(value), len(items))
+                return items
+            result = {}
+            ordered = sorted(
+                value.items(),
+                key=lambda pair: priority.index(pair[0]) if pair[0] in priority else len(priority),
+            )
+            for key, item in ordered[:100]:
+                overhead = encoded(str(key)) + 2
+                if budget[0] < overhead + 8:
+                    break
+                budget[0] -= overhead
+                result[key] = bounded(
+                    item,
+                    f"{path}/{str(key).replace('~', '~0').replace('/', '~1')}",
+                    budget,
+                    depth + 1,
+                )
+            if len(result) < len(value):
+                record(path, "collection_limit", len(value), len(result))
+            return result
+        if isinstance(value, float) and not math.isfinite(value):
+            record(path, "invalid_number", 1, 0)
+            value = None
+        budget[0] -= encoded(value)
+        return value
+
+    limits = {
+        "config": 256 * 1024,
+        "result": 256 * 1024,
+        "evidence_explorer": 128 * 1024,
+        "prometheus": 128 * 1024,
+    }
+    result = {
+        key: bounded(value, f"/{key}", [limits.get(key, 64 * 1024)]) for key, value in run.items()
+    }
+    relayna = _mapping(result.get("relayna"))
+    result.update(
+        total_task_count=relayna.get("total_task_count", 0),
+        tasks_truncated=relayna.get("tasks_truncated", False),
+    )
+    result["summary"] = {
+        "include_task_details": False,
+        "truncated_fields": truncations,
+        "omitted_truncation_count": omitted,
+        "limits": {
+            "task_preview": 25,
+            "collection_items": 100,
+            "string_characters": 16384,
+            "default_view_bytes": 65536,
+            **limits,
+        },
+        "full_detail_query": "include_task_details=true",
+    }
+    return result
+
+
+def _redeem_api_uploads(
+    config: dict[str, Any], secret: bytes, upload_root: Path, *, require_managed_paths: bool = False
+) -> None:
+    """Redeem signed descriptors; preserve trusted admin API paths without tokens."""
+
+    total = 0
+    traffic = config.get("traffic", {})
+    if not isinstance(traffic, dict) or not isinstance(traffic.get("journeys", []), list):
+        raise ValueError("Traffic journeys must be an array")
+    for journey in traffic.get("journeys", []):
+        if not isinstance(journey, dict):
+            raise ValueError("Traffic journey must be an object")
+        multipart = journey.get("multipart", {})
+        if not isinstance(multipart, dict) or not isinstance(multipart.get("files", []), list):
+            raise ValueError("Multipart files must be an array")
+        for item in multipart.get("files", []):
+            if not isinstance(item, dict):
+                raise ValueError("Multipart file must be an object")
+            if "pathToken" not in item:
+                if require_managed_paths and item.get("path"):
+                    raise ValueError("Studio multipart paths require a managed upload path token")
+                continue
+            path = _redeem_multipart_path(
+                item.get("path"), item.pop("pathToken"), secret, upload_root
+            )
+            if path is None:
+                raise ValueError("Invalid managed upload path token")
+            size = path.stat().st_size
+            total += size
+            if size > MAX_UI_UPLOAD_BYTES or total > MAX_UI_TOTAL_UPLOAD_BYTES:
+                raise ValueError("Managed upload request exceeds file or total size limits")
+            item["path"] = str(path)
+            item.pop("size", None)
+
+
 def _authorize_multipart_paths(
     projection: dict[str, Any], secret: bytes, upload_root: Path
 ) -> None:
@@ -1760,6 +2341,29 @@ def _capabilities(settings: DiscoverySettings | None = None) -> dict[str, Any]:
     tools = {name: bool(shutil.which(name)) for name in ("kubectl", "kind", "k6", "docker")}
     return {
         "schema_version": "chamber.ampule.dev/capabilities/v1",
+        "product": "ampule-chamber",
+        "version": version("ampule-chamber"),
+        "api_features": [
+            "cleanup_verification",
+            "run_metadata",
+            "managed_uploads",
+            "task_pagination",
+            "caller_provenance",
+            "scoped_integration_token",
+            "scenario_document",
+            "run_summary",
+            "validate_document",
+        ],
+        "goals": goal_catalog(),
+        "experiment_families": dict(FAMILIES),
+        "load_models": ["journeys", "arrival", "capacity", "soak"],
+        "integration_auth": {"studio_token_configured": load_studio_auth().enabled},
+        "readiness": {
+            "api": "available",
+            "cluster": "unchecked",
+            "target": "unchecked",
+            "telemetry": "unchecked",
+        },
         "tools": tools,
         "runtime_modes": ["local", "kubernetes-deploy", "kubernetes-attach"],
         "traffic_adapters": ["k6", "relayna"],
@@ -1787,10 +2391,14 @@ def _apply_security_headers(response: Response) -> Response:
     return response
 
 
-async def _job_event_stream(jobs: AssessmentJobManager, job_id: str) -> Any:
+async def _job_event_stream(
+    jobs: AssessmentJobManager, job_id: str, *, request: Request | None = None
+) -> Any:
     previous = None
     while True:
         job = jobs.get(job_id)
+        if request is not None:
+            job = _studio_response(request, job)
         rendered = json.dumps(job, sort_keys=True)
         if rendered != previous:
             yield f"event: job\ndata: {rendered}\n\n"
@@ -1800,12 +2408,20 @@ async def _job_event_stream(jobs: AssessmentJobManager, job_id: str) -> Any:
         await asyncio.sleep(0.5)
 
 
-async def _run_event_stream(run_dir: Path, *, after: int = 0) -> Any:
+async def _run_event_stream(
+    run_dir: Path, *, after: int = 0, request: Request | None = None
+) -> Any:
     path = run_dir / "events.jsonl"
     emitted = after
     while True:
         lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
         for index, line in enumerate(lines[emitted:], start=emitted + 1):
+            if request is not None and request.state.studio_authenticated:
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                line = json.dumps(_studio_response(request, _mapping(event)))
             yield f"id: {index}\nevent: run\ndata: {line}\n\n"
         emitted = max(emitted, len(lines))
         run = _json_file(run_dir / "run.json")

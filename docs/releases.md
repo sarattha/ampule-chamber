@@ -1,5 +1,54 @@
 # Releases
 
+## 1.11.0 - 2026-10-03
+
+Native Relayna Studio clients can use the private Chamber API for the complete
+planning, execution and evidence flow without a browser hostname.
+
+- Optional separate Studio integration credential restricted to explicit API
+  routes, with existing admin login and browser CSRF protection preserved.
+  Both Helm and raw Kubernetes deployments support an optional Secret-backed
+  Studio credential while retaining admin-only installations. Startup rejects
+  identical admin and Studio credentials to preserve the API scope boundary.
+- Versioned capability discovery separates installed tools from unchecked
+  cluster, target and telemetry readiness.
+- Signed managed multipart upload descriptors are redeemed during planning
+  under the existing per-file and total-request limits. Studio plans require
+  signed paths; trusted administrator paths remain compatible.
+- Caller service/environment/reference metadata survives asynchronous execution
+  and appears in job summaries, run metadata and Chamber detail pages.
+- Full validated scenario documents and YAML/JSON previews retain advanced settings during native imports, while embedded credentials, including custom authentication headers, are redacted and managed upload paths remain authorized.
+- Studio legacy scenario, run and HTML report projections also redact embedded
+  credentials. Comparison responses omit serialized load/experiment credentials
+  while retaining authoritative compatibility decisions; administrator responses
+  and persisted artifacts remain compatible.
+- Studio chamber listings and creation responses redact Prometheus URL
+  credentials. Header and URL-query credential names use the same matching
+  rule, including custom authentication and credential parameters.
+- Studio job summaries, mutation responses and job/run event streams redact
+  credential URLs, including URLs embedded in messages. Private, access and
+  signing key material is redacted across document and run projections.
+- Optional bounded run summaries retain result views and disclose rendering truncation, while default full reads remain compatible. Setup reruns retain caller provenance.
+- All available Relayna tasks can be paged and filtered, including tasks after
+  the first 200. Terminal cleanup confirmation, archive and tags have native
+  JSON endpoints.
+- Archive and tag mutations support the same optional bounded response as run
+  reads, with explicit truncation and complete default responses preserved.
+- Refresh locked AnyIO, PyJWT and urllib3 dependencies to resolve fixed
+  HIGH/CRITICAL security findings without scanner exclusions.
+- Add 86 regression tests across runtime, API, load, evidence, reporting and
+  deployment; enforce a 96% whole-package statement/branch coverage floor. The
+  final 402-test acceptance run measured 97.79% coverage.
+
+The existing runner, target admission, named chambers, faults, result artifacts
+and trusted administrator configuration paths remain compatible.
+
+The native API acceptance smoke exercised 23 operations through Studio's actual
+client and Chamber's ASGI app with isolated fixtures. Execution supervision was
+stubbed; live Kubernetes traffic and fault validation remain an operational
+acceptance step. See [the integration contract](control-plane.md#relayna-studio-api-integration)
+for private connectivity, credential scope and endpoint details.
+
 ## 1.9.0 - 2026-08-08
 
 Ampule Chamber `1.9.0` makes the control plane an accessible operational

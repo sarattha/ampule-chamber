@@ -17,6 +17,8 @@ metadata:
 type: Opaque
 stringData:
   admin-token: op_live_replace_with_a_long_random_value
+  # Optional Studio integration credential; replace before enabling.
+  # studio-token: op_live_replace_with_a_separate_random_value
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -146,7 +148,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: control-plane
-          image: ghcr.io/sarattha/ampule-chamber:1.10.0
+          image: ghcr.io/sarattha/ampule-chamber:1.11.0
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -157,6 +159,12 @@ spec:
                 secretKeyRef:
                   name: ampule-chamber-auth
                   key: admin-token
+            - name: AMPULE_CHAMBER_STUDIO_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: ampule-chamber-auth
+                  key: studio-token
+                  optional: true
             - name: AMPULE_CHAMBER_KUBERNETES_CONTEXT
               valueFrom:
                 configMapKeyRef:

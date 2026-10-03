@@ -379,7 +379,7 @@
         scenarioMetadata.textContent = "Select a scenario to inspect its metadata.";
         return;
       }
-      scenarioMetadata.textContent = `${item.description || "No description"}\n${item.journeyCount} journey(s) · ${item.trafficAdapters.join(", ")} · max ${item.maxVirtualUsers} VUs · ${item.expectedDuration}\nFaults: ${(item.faults || []).join(", ") || "none"} · Signals: ${(item.requiredSignals || []).join(", ") || "default"}\nTags: ${(item.tags || []).join(", ") || "none"} · revision ${item.revision}`;
+      scenarioMetadata.textContent = `${item.description || "No description"}\n${item.journeyCount} journey(s) · ${item.trafficAdapters.join(", ")} · max ${item.maxVirtualUsers} VUs · ${item.expectedDuration}\nFaults: ${(item.faults || []).join(", ") || "none"} · Signals: ${(item.requiredSignals || []).join(", ") || "default"}\nTags: ${(item.tags || []).join(", ") || "none"} · revision ${item.revision}\nStudio API compatible · target binding and admission are checked during planning`;
     };
     const loadScenarioCatalog = async () => {
       if (scenarioCatalog.length) return;
@@ -540,6 +540,7 @@
       repo.required = !attached;
       serviceName.required = false;
       workloadName.required = false;
+      form.elements.namespace.placeholder = attached ? "Existing target namespace" : "Generated for deploy";
       if (!attached) return;
       const kubernetes = form.querySelector('input[name="execution_mode"][value="kubernetes"]');
       kubernetes.checked = true;

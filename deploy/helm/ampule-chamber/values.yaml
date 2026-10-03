@@ -2,7 +2,7 @@ replicaCount: 1
 
 image:
   repository: ghcr.io/sarattha/ampule-chamber
-  tag: "1.10.0"
+  tag: "1.11.0"
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
@@ -11,8 +11,10 @@ fullnameOverride: ""
 
 auth:
   adminToken: ""
+  studioToken: ""
   existingSecret: ""
   secretKey: admin-token
+  studioSecretKey: studio-token
   secureCookies: false
 
 kubernetes:

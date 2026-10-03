@@ -701,3 +701,289 @@ the linked artifact. This final update changes documentation only.
 Implementation and review are complete. The authoritative landing record is
 [PR #42](https://github.com/sarattha/ampule-chamber/pull/42); merge is gated on the
 final documentation commit's CI checks.
+
+## Studio API workspace completion — 2026-10-03
+
+The user explicitly requested complete Studio access to Chamber without a browser hostname. Extend existing authenticated APIs with versioned integration capabilities, managed-upload planning, caller references, cleanup verification, archive and tags. Preserve the existing runner, target admission and evidence contracts. Studio implements native pages; no public Chamber ingress is required. Companion plan: `/Users/jobz/Works/relayna/docs/internal/ampule-studio-api-execplan.md`.
+
+### Progress
+
+- [x] Added scoped Studio integration authentication, explicit versioned API capabilities, managed upload/token redemption, caller provenance, task pagination, archive/tags and terminal cleanup confirmation.
+- [x] Preserved trusted administrator plan paths, existing runner/admission checks, browser authentication and CSRF enforcement.
+- [x] Added origin context to Chamber job/run views and corrected API-versus-target readiness wording and attach namespace guidance.
+- [x] Added focused authorization, browser CSRF, bounded upload, token containment, malformed configuration, all-task pagination, cleanup confirmation and idempotency regression tests.
+- [x] Bumped package, templates, deployment and public version metadata to 1.11.0; documented native API and private Service/port-forward access.
+- [x] Completed `make check`: 311 tests, 90% combined branch/line coverage, format/lint/typecheck, scenario/deployment/release validation, strict docs and wheel/source builds.
+
+### Decisions And Discoveries
+
+Use additive JSON endpoints over existing application/job operations; no parallel runner, ingress or public Chamber browser hostname is introduced. Caller origin is stored in a dedicated run artifact, so child-written execution metadata cannot erase it. Existing idempotency digests remain unchanged when origin is absent; supplied origin participates in request identity. Exact admitted task IDs and numeric durations remain available through all pages rather than an implicit 200-row cap.
+
+Installed executables indicate availability only: cluster, target and telemetry readiness are explicitly unchecked. The separate Studio credential is an operational API credential, with an explicit method/path allowlist and no browser session/login privilege. Configure it alongside the administrator credential, using Kubernetes Secrets. Managed upload signing retains the existing control-plane process lifetime and limits; redeem descriptors during planning instead of treating signed tokens as permanent reusable credentials.
+
+### Acceptance Evidence And Remaining Integration
+
+`make check` passed twice; the final runtime patch passed 311 tests (42.236s), coverage verification passed the same 311 tests (48.287s), and combined coverage was 90%. `node --check chamber/control_plane/static/app.js` passed. Task pagination regression retrieves every valid record in a 306-task fixture, including the final page, and preserves exact IDs/durations. Unsafe artifact fields are excluded from the task projection. Browser-CSRF checks and API-only token scope pass.
+
+Relayna owns the native Studio UI and Computer Use acceptance in the companion plan. No live Kubernetes traffic or fault was initiated by this API implementation. Preserve the unrelated untracked `docs/internal/studio-integration-audit-2026-09-12/` directory.
+
+### Outcomes
+
+The API extensions and Chamber-side UI context are complete. Public result artifacts, target admission, approved fault behavior and administrator configuration-path semantics remain compatible. Cross-repository native Studio integration and final UI validation are being completed in Relayna.
+
+
+### Full advanced scenario import follow-up
+
+Integration review showed the legacy normalized scenario projection omits
+experiments, named bindings, deployment/runtime details and complete agent
+settings. Add `GET /api/v1/scenarios/{source}/{id}/document`, a validated full
+source-document envelope with explicit revision, warnings and JSON-pointer
+credential redaction paths. Preserve environment credential references and
+issue the existing signed path tokens for managed multipart descriptors.
+`scenario_document` advertises support; the scoped Studio token permits this
+read operation. Focused tests cover advanced field preservation, authorization,
+missing/invalid sources, bundled Scenario reads, auth redaction and redeemed
+managed file descriptors. Final `make check` passed: 313 tests (41.772s), a second 313-test coverage run (47.295s), 90% combined coverage, format/lint/typecheck, scenario/deployment/release validation, strict docs and source/wheel builds at the unreleased 1.11.0 version. Generated `site/` is retained until the parent PR workflow performs its required clean.
+
+
+### Large-run rendering and rerun provenance follow-up
+
+Studio's bounded JSON transport cannot render full retained events for hundreds
+of tasks. Add the optional `include_task_details=false` run read: preserve every
+view, replace per-task details with at most 25 safe task previews and exact
+available/reported task counts, and disclose task and rendered-view truncation.
+Bound large HTTP/load windows, Prometheus, agent, report and configuration views
+with explicit per-view byte, collection and string limits; prioritize canonical
+result verdicts, caller, target and pagination metadata. Keep default full reads
+and authoritative artifact downloads unchanged. Advertise `run_summary`.
+
+The fixture uses 305 tasks with 200 retained events each and large HTTP/load
+windows/report text. It proves the summary response stays under Studio's 2 MiB
+JSON limit, preserves score/status/caller metadata, and exposes truncation,
+while default reads retain every task/event/window and the complete report.
+Setup rerun plans now inherit source caller metadata; a regression verifies
+that the subsequent asynchronous start receives that origin. Final `make check` passed: 315 tests (42.353s), coverage rerun 315 tests (48.133s), 90% combined coverage, format/lint/typecheck, scenario/deployment/release validation, strict docs and source/wheel builds. A separate 500-canonical-event regression verifies tuple-based event rendering is bounded; default reads preserve all 500 events. Generated `site/` remains available for the parent PR workflow clean.
+
+
+### Complete YAML/JSON validation follow-up
+
+Add `POST /api/v1/scenarios/validate-document` for arbitrary bounded YAML/JSON
+without reducing advanced fields to the legacy normalized form. Return the
+same safe full-document envelope and a `normalized` form projection; preserve
+experiments, bindings, load-suite, runtime and agents in the full document.
+Share managed path signing and embedded credential redaction with catalog
+document reads, including safe normalized previews and explicit warnings.
+Advertise `validate_document` and permit the scoped API credential. Legacy
+normalized-only validation remains unchanged.
+
+Focused tests verify advanced YAML fidelity and redaction, managed multipart
+descriptors in JSON previews, compatible legacy validation, authenticated
+read-only behavior, browser CSRF and invalid/oversized input rejection. Final
+`make check` passed: 316 tests (42.320s), coverage rerun 316 tests (48.538s),
+90% combined coverage, formatting, linting, type checking, scenario/deployment/
+release validation, strict documentation and source/wheel builds. Generated
+`site/` remains available for the parent PR workflow clean.
+
+
+### Bounded mutation response follow-up
+
+The actual Studio-to-Chamber ASGI smoke confirmed read summaries work, but
+archive and tag mutations still return full retained task/evidence views. Add
+optional `include_task_details=false` query handling to both mutations, reusing
+the same safe summary builder as run reads. Preserve complete default responses
+for existing clients. Extend the 305-task/200-events/large-load fixture to verify
+both changes persist, summary responses stay below 2 MiB with disclosed
+truncation, and default mutation responses preserve full records. Final
+`make check` passed all 316 tests and the coverage rerun, with 90% combined
+coverage, formatting, linting, type checking, scenario/deployment/release
+validation, strict docs and source/wheel builds. No push has been performed.
+
+An isolated real ASGI integration smoke uses Studio's actual `_Chamber` client
+and workspace router with Chamber's `create_app`, a synthetic scoped credential
+and fake Redis. All 23 operations passed: authenticated connection/capabilities,
+complete advanced YAML validation and source save/read/document, managed upload,
+planning directly from the validated document (including safe environment-name
+references), caller provenance, idempotent start, bounded 305-task summaries and
+all exact task pages, evidence explorer, archive/tags, comparison, three report
+formats, registered evidence download, cancellation and explicit cleanup
+verification. Only execution supervision was stubbed to prevent process or
+Kubernetes traffic; authentication, planning, job persistence and admission were
+real. The smoke script/result remain under `/tmp` and modify no Studio source.
+
+
+### Draft PR CI repair
+
+GitHub run `37114976693` (draft PR 43) failed the repository security job
+`111179918182` and image scan in deployment job `111179918347`. Job logs and
+annotations show the same nine fixed HIGH/CRITICAL dependency findings:
+AnyIO 4.13.0 (CVE-2026-63374), PyJWT 2.13.0 (CVE-2026-102266/102267/102268/
+102271/102272/102273), and urllib3 2.7.0 (CVE-2026-97687/97689). The branch-push
+run `37114921883` confirms the same diagnosis; builds and Python quality jobs
+passed. Refresh only those three lock entries to the scanner's fixed versions
+4.14.2, 2.14.0 and 2.8.0 respectively. Runtime sources, scanner policy and
+application/deployment contracts remain unchanged. Local Trivy repository scan
+reports zero fixed HIGH/CRITICAL findings after the lock refresh. `make check`
+passed: 316 tests (43.210s), coverage rerun 316 tests (49.310s), 90% combined
+coverage and all format/lint/type/schema/deployment/release/docs/build gates.
+Replacement GitHub CI acceptance will be checked after the fix is pushed.
+
+
+### Regression coverage above 95 percent
+
+The user requires measured global coverage strictly above 95 percent in both
+repositories. Retain the existing whole-package statement and branch measurement
+(`source = ["chamber"]`, `branch = true`) and add meaningful regression tests
+without exclusions or suppression changes. Tests cover corrupted evidence,
+scoped API and multipart boundaries, planning/runtime validation, process
+supervision, failed attach preflight/rollback, load-suite decision gates,
+report fidelity and safe run-history projections. New independent test files
+avoid edits to existing scenarios or runtime behavior. Enforce `fail_under = 96`
+with two-decimal reporting so `make check` prevents regression below the
+requested target. Fresh `make check` passed 394 tests (42.768s), the coverage
+rerun passed 394 tests (49.578s), and global statement/branch coverage measured
+97.79% (9205 statements, 3336 branches). All formatting, lint, type, schema,
+deployment, release, strict docs and source/wheel gates passed. The 78 new
+regression tests introduce no production-code or coverage-scope changes.
+Replacement PR CI will verify the pushed commit.
+
+### Review and landing preparation — 2026-10-03
+
+The user authorized marking PR #43 ready for review, monitoring checks and
+review feedback, and merging after acceptance. The existing SemVer bump from
+1.10.0 to 1.11.0 already covers this unreleased feature; retain it across package,
+deployment, template and public metadata. Complete the 1.11.0 changelog and
+release notes with locked dependency security fixes, bounded mutation responses,
+the 78 new regression tests and the enforced 96% coverage floor. Document the
+23-operation fixture smoke's execution limitation explicitly.
+
+Initial host inspection: PR #43 is mergeable, all current CI checks pass, and
+there are no submitted reviews or inline review threads. A fresh local full
+quality gate and final-commit GitHub CI/review remain required before merge.
+Preserve the unrelated untracked audit directory throughout this workflow.
+
+Fresh local acceptance passed: `make check` completed with 394 tests (42.903s),
+a second 394-test coverage run (49.500s), and 97.79% whole-package statement/
+branch coverage (9205 statements, 3336 branches). Formatting, lint, type checks,
+scenario/deployment/release validation, strict docs and 1.11.0 source/wheel
+builds all passed. `git diff --check` and the phase-directory structural check
+also passed. PR #43 is now ready for review; Codex review was requested and
+reports running on runtime commit `d1bda43`. The release-note follow-up changes
+documentation only; final GitHub checks and review must pass before landing.
+
+### PR #43 review follow-up
+
+Codex reviewed `d1bda43` and identified two P1 issues: tokenless multipart paths
+gave Studio callers the trusted administrator file-path behavior, and shipped
+deployment forms omitted the Studio credential. Require managed path tokens
+for Studio-authenticated plans while retaining administrator paths and pathless
+optional files. Add optional Secret-backed Studio credentials to Helm and raw
+Kubernetes deployments, preserving existing admin-only Secrets. Regressions
+must prove signed Studio uploads work, tokenless managed and external paths are
+rejected, and administrator compatibility remains. Validate rendered Helm
+output with generated, absent and externally managed Studio credentials.
+
+Execution rechecks persisted multipart paths against the managed upload root,
+preventing bypass through an older administrator plan or configuration-path
+start. The focused 17-test API/release suite passed. Helm lint passed, and real
+Helm rendering passed admin-only, generated Studio Secret and external Secret
+with a custom key cases. Deployment validation now rejects missing, literal,
+ConfigMap-backed or nonoptional Studio credentials in raw and rendered forms.
+
+An intermediate coverage run overlapped source edits and reported 94.69%; it
+is not acceptance evidence. A fresh stable `make check` passed all 396 tests
+(43.236s), the 396-test coverage rerun (50.182s), and 97.77% whole-package
+statement/branch coverage (9217 statements, 3344 branches). Every formatting,
+lint, type, scenario, deployment, release, strict docs and build gate passed;
+the 96% floor and coverage scope remain unchanged. Final host CI and a new
+Codex review must verify the pushed review fixes before merge. The authoritative
+landing and review record is [PR #43](https://github.com/sarattha/ampule-chamber/pull/43).
+
+The second Codex pass on `72c4f4a` found equal-token privilege overlap and custom
+credential headers escaping document redaction. Reject identical configured
+admin/Studio digests before constructing the app, with explicit-token and
+environment-token startup regressions. Broaden static header redaction by
+authentication/credential/token/secret/password/API-key/cookie name markers.
+Endpoint tests verify custom headers are redacted in complete reads and both
+validation projections while ordinary request headers and environment-name
+references remain intact. No administrator credential or browser contract is
+changed for distinct tokens.
+
+Fresh acceptance for the second review fixes: `make check` passed 397 tests
+(43.593s), the 397-test coverage rerun (49.891s), and 97.76% whole-package
+statement/branch coverage (9219 statements, 3346 branches), with every format,
+lint, type, scenario, deployment, release, strict docs and build gate passing.
+The focused Studio API suite passed 12 tests. Final CI and another Codex review
+must verify the pushed credential fixes before landing.
+
+The third Codex pass on `04fdfd1` identified credential retrieval through
+allowlisted legacy scenario reads and run configurations. Apply conditional
+Studio redaction to normalized scenario reads, validation/save responses, full
+and bounded run reads, archive/tag responses and HTML reports. Preserve
+administrator responses and stored artifacts. Nested configurations retain
+their own declared secret-environment redaction context. Also omit serialized
+load/experiment contracts and raw comparison reason text from Studio responses
+without changing the original compatibility decision or measured deltas.
+Endpoint regressions prove redaction, disclosed paths/warnings, environment
+reference preservation, administrator compatibility and nonmutation of stored
+files. A comparison regression proves different embedded credentials still
+produce incompatibility after response redaction. All 14 focused API tests pass.
+
+Final stable local acceptance for projection fixes: `make check` passed 399
+tests (43.569s), the 399-test coverage rerun (50.380s), and 97.78% whole-package
+statement/branch coverage (9239 statements, 3356 branches). Every formatting,
+lint, type, scenario, deployment, release, strict docs and build gate passed.
+Comparison tests include credential-bearing metrics URLs in tuple-based
+compatibility reasons, and redaction traverses both tuples and lists. All
+reported compatibility flags remain unchanged. Final host CI/review acceptance
+and merge status are recorded in the linked PR before landing.
+
+The fourth Codex pass on `4664b59` found custom URL query credentials and raw
+Prometheus URLs in chamber listings. Share the credential-name predicate across
+headers and URL queries, include explicit auth/credential fields, and apply
+Studio redaction to chamber listing/creation responses. Preserve administrator
+API/browser views and stored profiles. Regressions cover URL userinfo, uppercase
+HTTP/HTTPS schemes, custom auth/credential/token/secret parameters, ordinary
+query preservation, and malformed URLs withheld without breaking a listing.
+Expanded document/run regressions cover the same query boundary. The focused
+15-test Studio API suite passed.
+
+The initial browser compatibility assertion expected the saved URL on the
+unselected creation form. Corrected the test to inspect that profile's clone
+form, where the released administrator UI exposes its settings. The earlier
+full test attempt retained the old assertion and failed; the corrected focused
+suite passed all 15 tests before a fresh stable full gate.
+
+Fresh stable `make check` passed 400 tests (43.596s), the 400-test coverage
+rerun (50.601s), and 97.79% whole-package statement/branch coverage (9246
+statements, 3356 branches). Every formatting, lint, type, scenario, deployment,
+release, strict docs and build gate passed. The 96% floor and source scope are
+unchanged. The final pushed URL/chamber fixes require host CI and Codex review
+acceptance before landing; the linked PR records the final decision.
+
+
+The fifth Codex pass on `b9c7ada` identified raw Prometheus credentials in job
+responses/events and key-material fields outside headers. Apply the existing
+Studio projection to start/status/cancel/cleanup job responses and job/run SSE,
+including credential URLs embedded in output/errors. Malformed run-event JSON
+is omitted only from Studio streams, preserving original resume IDs and trusted
+administrator streams. Redact private/access/signing/secret/encryption key
+fields and passphrases while preserving ordinary request headers and environment
+references. Endpoint regressions cover job mutations, streams, administrator
+compatibility, persisted credentials and advanced document/run key material.
+
+The first focused run exposed an assertion matching the `privateKey` field name
+rather than its embedded secret value. Corrected it to check secret values and
+explicitly assert redacted key fields. The user instructed that no further
+Codex review is required after this pass: complete local gates and final host
+CI, resolve the current findings, then land PR #43 without another review call.
+
+
+Final stable local acceptance for job/event and key-material fixes: `make check`
+passed 402 tests (43.558s), the 402-test coverage rerun (50.872s), and 97.79%
+whole-package statement/branch coverage (9264 statements, 3360 branches).
+Every formatting, lint, type, scenario, deployment, release, strict docs and
+source/wheel build gate passed. The 96% coverage floor and source scope remain
+unchanged. The corrected focused suite passed 44 tests. Final acceptance is
+host CI on the pushed commit and resolution of the two existing review threads;
+no further Codex review will be requested per the user's explicit instruction.
+The linked PR records final CI evidence and the merge result.

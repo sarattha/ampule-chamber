@@ -41,9 +41,11 @@ def main(argv: list[str] | None = None) -> int:
         rendered = list(yaml.safe_load_all(Path(args[0]).read_text(encoding="utf-8")))
         _require_resources(rendered, label="rendered Helm manifest", require_namespace=False)
         _require_target_metrics_access(rendered, label="rendered Helm manifest")
+        _require_studio_secret(rendered, label="rendered Helm manifest")
 
     _require_resources(manifests, label="raw manifest", require_namespace=True)
     _require_target_metrics_access(manifests, label="raw manifest")
+    _require_studio_secret(manifests, label="raw manifest")
 
     deployment = next(
         item for item in manifests if isinstance(item, dict) and item.get("kind") == "Deployment"
@@ -119,6 +121,27 @@ def _require_target_metrics_access(manifests: list[Any], *, label: str) -> None:
             raise SystemExit(
                 f"{label} target-reader Role in {namespace} must read pods.metrics.k8s.io"
             )
+
+
+def _require_studio_secret(manifests: list[Any], *, label: str) -> None:
+    deployment = next(item for item in manifests if item and item.get("kind") == "Deployment")
+    containers = deployment["spec"]["template"]["spec"]["containers"]
+    env = next(
+        (
+            item
+            for item in containers[0].get("env", [])
+            if item.get("name") == "AMPULE_CHAMBER_STUDIO_TOKEN"
+        ),
+        {},
+    )
+    reference = env.get("valueFrom", {}).get("secretKeyRef", {})
+    if (
+        not reference.get("name")
+        or not reference.get("key")
+        or reference.get("optional") is not True
+        or "value" in env
+    ):
+        raise SystemExit(f"{label} Studio token must use an optional Secret key reference")
 
 
 def _project_version() -> str:
