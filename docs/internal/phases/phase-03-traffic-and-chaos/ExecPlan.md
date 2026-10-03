@@ -809,3 +809,20 @@ formats, registered evidence download, cancellation and explicit cleanup
 verification. Only execution supervision was stubbed to prevent process or
 Kubernetes traffic; authentication, planning, job persistence and admission were
 real. The smoke script/result remain under `/tmp` and modify no Studio source.
+
+
+### Draft PR CI repair
+
+GitHub run `37114976693` (draft PR 43) failed the repository security job
+`111179918182` and image scan in deployment job `111179918347`. Job logs and
+annotations show the same nine fixed HIGH/CRITICAL dependency findings:
+AnyIO 4.13.0 (CVE-2026-63374), PyJWT 2.13.0 (CVE-2026-102266/102267/102268/
+102271/102272/102273), and urllib3 2.7.0 (CVE-2026-97687/97689). The branch-push
+run `37114921883` confirms the same diagnosis; builds and Python quality jobs
+passed. Refresh only those three lock entries to the scanner's fixed versions
+4.14.2, 2.14.0 and 2.8.0 respectively. Runtime sources, scanner policy and
+application/deployment contracts remain unchanged. Local Trivy repository scan
+reports zero fixed HIGH/CRITICAL findings after the lock refresh. `make check`
+passed: 316 tests (43.210s), coverage rerun 316 tests (49.310s), 90% combined
+coverage and all format/lint/type/schema/deployment/release/docs/build gates.
+Replacement GitHub CI acceptance will be checked after the fix is pushed.
