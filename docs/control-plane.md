@@ -638,8 +638,19 @@ Additional native operations:
   paths remain compatible.
 - `POST /api/v1/plans` and `POST /api/v1/runs`: optional bounded `origin` fields
   `studio_service_id`, `studio_environment`, `studio_reference` and `actor`.
-  Run starts inherit the plan origin when omitted; job summaries and run
+  Run starts inherit the plan origin when omitted; setup rerun plans inherit
+  their source caller origin. Job summaries and run
   metadata expose it. The idempotency digest includes origin when supplied.
+- `GET /api/v1/runs/{run_id}?include_task_details=false`: a bounded rendered
+  summary retaining all result/config/metadata/evidence views. Relayna tasks are
+  limited to 25 safe previews without per-task events; `total_task_count` and
+  `tasks_truncated` appear both at the top level and under `relayna`. Other
+  large collections, report text, load windows, agent output and Prometheus
+  views have explicit rendering limits reported in `summary.limits`;
+  `summary.truncated_fields` discloses omitted data. Canonical status/score,
+  caller, target and pagination fields receive priority. Use task pagination
+  and authoritative report/evidence downloads for detailed investigation. The
+  default `include_task_details=true` retains the released full response.
 - `GET /api/v1/runs/{run_id}/tasks`: `page`, `page_size` (1–100), `search`,
   `status` and `failed_first`; returns `items`, `pagination` and `total_count`.
   All available task records are pageable, including tasks beyond 200.

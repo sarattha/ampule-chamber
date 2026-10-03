@@ -744,3 +744,22 @@ issue the existing signed path tokens for managed multipart descriptors.
 read operation. Focused tests cover advanced field preservation, authorization,
 missing/invalid sources, bundled Scenario reads, auth redaction and redeemed
 managed file descriptors. Final `make check` passed: 313 tests (41.772s), a second 313-test coverage run (47.295s), 90% combined coverage, format/lint/typecheck, scenario/deployment/release validation, strict docs and source/wheel builds at the unreleased 1.11.0 version. Generated `site/` is retained until the parent PR workflow performs its required clean.
+
+
+### Large-run rendering and rerun provenance follow-up
+
+Studio's bounded JSON transport cannot render full retained events for hundreds
+of tasks. Add the optional `include_task_details=false` run read: preserve every
+view, replace per-task details with at most 25 safe task previews and exact
+available/reported task counts, and disclose task and rendered-view truncation.
+Bound large HTTP/load windows, Prometheus, agent, report and configuration views
+with explicit per-view byte, collection and string limits; prioritize canonical
+result verdicts, caller, target and pagination metadata. Keep default full reads
+and authoritative artifact downloads unchanged. Advertise `run_summary`.
+
+The fixture uses 305 tasks with 200 retained events each and large HTTP/load
+windows/report text. It proves the summary response stays under Studio's 2 MiB
+JSON limit, preserves score/status/caller metadata, and exposes truncation,
+while default reads retain every task/event/window and the complete report.
+Setup rerun plans now inherit source caller metadata; a regression verifies
+that the subsequent asynchronous start receives that origin. Final `make check` passed: 315 tests (42.353s), coverage rerun 315 tests (48.133s), 90% combined coverage, format/lint/typecheck, scenario/deployment/release validation, strict docs and source/wheel builds. A separate 500-canonical-event regression verifies tuple-based event rendering is bounded; default reads preserve all 500 events. Generated `site/` remains available for the parent PR workflow clean.

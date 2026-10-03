@@ -578,3 +578,118 @@ class StudioApiTests(unittest.TestCase):
                 )
                 planned = client.post("/api/v1/plans", headers=headers, json={"config": document})
                 self.assertEqual(planned.status_code, 200, planned.text)
+
+    def test_run_summary_bounds_large_task_events_http_views_and_preserves_default(self) -> None:
+        with TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            app = create_app(workspace, admin_token=ADMIN)
+            directory = new_run_directory(workspace / "runs", "large-run")
+            initialize_run_record(directory)
+            (directory / "evidence").mkdir(exist_ok=True)
+            tasks = [
+                {
+                    "task_id": f"task-{i:03d}",
+                    "success": i % 2 == 0,
+                    "terminal_status": "completed" if i % 2 == 0 else "failed",
+                    "total_duration_ms": i * 1.5,
+                    "events": [
+                        {
+                            "status": "processing",
+                            "timestamp": "2026-10-03T01:00:00+00:00",
+                            "worker_id": "worker-12345678",
+                            "sequence": n,
+                        }
+                        for n in range(200)
+                    ],
+                }
+                for i in range(305)
+            ]
+            write_json_atomic(
+                directory / "evidence/relayna-summary.json",
+                {"success": True, "task_count": 305, "tasks": tasks},
+            )
+            write_json_atomic(
+                directory / "result.json",
+                {
+                    "load": {"windows": [{"details": "w" * 30000, "index": n} for n in range(120)]},
+                    "status": "ready",
+                    "readiness_score": 100,
+                    "evidence_coverage_percent": 100,
+                },
+            )
+            write_json_atomic(directory / "caller-origin.json", ORIGIN)
+            (directory / "report.md").write_text("r" * 100000)
+            (directory / "events.jsonl").write_text(
+                "\n".join(
+                    json.dumps({"sequence": n, "state": "running", "details": "event" * 100})
+                    for n in range(500)
+                )
+            )
+            headers = {"Authorization": f"Bearer {ADMIN}"}
+            with TestClient(app) as client:
+                response = client.get(
+                    f"/api/v1/runs/{directory.name}?include_task_details=false", headers=headers
+                )
+                self.assertEqual(response.status_code, 200, response.text[:1000])
+                self.assertLess(len(response.content), 2 * 1024 * 1024)
+                summary = response.json()
+                self.assertEqual(summary["relayna"]["total_task_count"], 305)
+                self.assertEqual(summary["total_task_count"], 305)
+                self.assertTrue(summary["tasks_truncated"])
+                self.assertTrue(summary["relayna"]["tasks_truncated"])
+                self.assertEqual(len(summary["relayna"]["tasks"]), 25)
+                self.assertEqual(summary["relayna"]["tasks"][24]["task_id"], "task-024")
+                self.assertNotIn("events", summary["relayna"]["tasks"][0])
+                self.assertEqual(summary["result"]["status"], "ready")
+                self.assertEqual(summary["result"]["readiness_score"], 100)
+                self.assertEqual(summary["metadata"]["origin"], ORIGIN)
+                self.assertTrue(summary["summary"]["truncated_fields"])
+                self.assertLessEqual(len(summary["events"]), 100)
+                self.assertLess(len(summary["report_markdown"]), 100000)
+                self.assertTrue(
+                    any(
+                        item["path"].startswith("/result/load")
+                        for item in summary["summary"]["truncated_fields"]
+                    )
+                )
+                default = client.get(f"/api/v1/runs/{directory.name}", headers=headers).json()
+                self.assertEqual(len(default["relayna"]["tasks"]), 305)
+                self.assertEqual(len(default["relayna"]["tasks"][0]["events"]), 200)
+                self.assertEqual(len(default["result"]["load"]["windows"]), 120)
+                self.assertEqual(len(default["events"]), 500)
+                self.assertEqual(len(default["report_markdown"]), 100000)
+                self.assertNotIn("summary", default)
+                self.assertIn(
+                    "run_summary",
+                    client.get("/api/v1/capabilities", headers=headers).json()["api_features"],
+                )
+
+    def test_rerun_inherits_source_caller_origin(self) -> None:
+        with TemporaryDirectory() as tmp:
+            app = create_app(Path(tmp), admin_token=ADMIN)
+            config = yaml.safe_load(Path("examples/sample-service/chamber-attach.yaml").read_text())
+            headers = {"Authorization": f"Bearer {ADMIN}"}
+            with TestClient(app) as client:
+                plan = client.post(
+                    "/api/v1/plans", headers=headers, json={"config": config, "origin": ORIGIN}
+                ).json()["run_id"]
+                source = app.state.chamber.run_path(plan)
+                write_json_atomic(source / "result.json", {"status": "ready"})
+                rerun = client.post(f"/api/v1/runs/{plan}/rerun", headers=headers, json={})
+                self.assertEqual(rerun.status_code, 201, rerun.text)
+                run_id = rerun.json()["run_id"]
+                detail = client.get(
+                    f"/api/v1/runs/{run_id}?include_task_details=false", headers=headers
+                ).json()
+                self.assertEqual(detail["metadata"]["origin"], ORIGIN)
+                self.assertEqual(detail["run"]["parent_run_id"], plan)
+                self.assertEqual(detail["total_task_count"], 0)
+                self.assertFalse(detail["tasks_truncated"])
+                with patch.object(app.state.jobs, "_execute"):
+                    started = client.post(
+                        "/api/v1/runs",
+                        headers=headers,
+                        json={"plan_id": run_id, "mode": "kubernetes"},
+                    )
+                    self.assertEqual(started.status_code, 202, started.text)
+                    self.assertEqual(started.json()["origin"], ORIGIN)

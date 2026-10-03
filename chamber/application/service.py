@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import math
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from itertools import islice
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
@@ -243,6 +245,7 @@ class ChamberApplication:
         run_id: str,
         *,
         evidence_query: dict[str, str] | None = None,
+        include_task_details: bool = True,
     ) -> dict[str, Any]:
         run_dir = self.run_path(run_id)
         evidence = _evidence_entries(run_dir)
@@ -286,7 +289,9 @@ class ChamberApplication:
             "agent_execution": _json_or_default(run_dir / "agent-stage.json", {}),
             "report_markdown": _text_or_default(run_dir / "report.md"),
             "prometheus": _prometheus_view(run_dir / "evidence/prometheus-memory.json"),
-            "relayna": _relayna_view(run_dir / "evidence/relayna-summary.json"),
+            "relayna": (_relayna_view if include_task_details else _relayna_summary_view)(
+                run_dir / "evidence/relayna-summary.json"
+            ),
             "evidence_explorer": explorer,
         }
 
@@ -299,7 +304,7 @@ class ChamberApplication:
     ) -> Path:
         """Clone a terminal Kubernetes run with only recoverable setup overrides."""
 
-        source = self.get_run(run_id)
+        source = self.get_run(run_id, include_task_details=False)
         result = _mapping(source.get("result"))
         status = str(result.get("status", ""))
         if status not in {
@@ -329,6 +334,9 @@ class ChamberApplication:
         draft = drafts / f"rerun-{uuid4().hex}.yaml"
         draft.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
         planned = self.plan(draft)
+        origin = _mapping(source.get("metadata")).get("origin")
+        if isinstance(origin, dict) and origin:
+            write_json_atomic(planned / "caller-origin.json", origin)
         record_path = planned / "run.json"
         record = _json_or_default(record_path, {})
         if isinstance(record, dict):
@@ -643,6 +651,55 @@ def _instant_query_totals(value: Any) -> dict[str, float]:
         if number is not None:
             totals[pod_name] = totals.get(pod_name, 0.0) + number
     return totals
+
+
+def _task_projection(task: dict[str, Any]) -> dict[str, Any]:
+    duration = task.get("total_duration_ms")
+    iteration = task.get("iteration")
+    journey = task.get("journey")
+    status = task.get("terminal_status")
+    return {
+        "task_id": task["task_id"],
+        "iteration": iteration if type(iteration) is int and iteration >= 0 else None,
+        "journey": journey[:200] if isinstance(journey, str) else None,
+        "terminal_status": status[:80] if isinstance(status, str) else None,
+        "success": task.get("success") is True,
+        "total_duration_ms": duration
+        if isinstance(duration, int | float)
+        and not isinstance(duration, bool)
+        and math.isfinite(duration)
+        and duration >= 0
+        else None,
+    }
+
+
+def _relayna_summary_view(path: Path) -> dict[str, Any]:
+    artifact = _mapping(_json_or_default(path, {}))
+    tasks = artifact.get("tasks", [])
+    tasks = tasks if isinstance(tasks, list) else []
+    preview = list(
+        islice(
+            (
+                _task_projection(task)
+                for task in tasks
+                if isinstance(task, dict)
+                and isinstance(task.get("task_id"), str)
+                and 0 < len(task["task_id"]) <= 256
+                and not any(ord(char) < 32 or ord(char) == 127 for char in task["task_id"])
+            ),
+            25,
+        )
+    )
+    reported = artifact.get("task_count")
+    total = max(len(tasks), reported) if type(reported) is int and reported >= 0 else len(tasks)
+    return {
+        "available": bool(artifact),
+        "success": artifact.get("success") is True,
+        "task_count": total,
+        "tasks": preview,
+        "total_task_count": total,
+        "tasks_truncated": total > len(preview),
+    }
 
 
 def _relayna_view(path: Path) -> dict[str, Any]:

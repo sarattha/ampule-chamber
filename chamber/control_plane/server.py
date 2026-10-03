@@ -27,7 +27,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 from starlette.responses import StreamingResponse
 
-from chamber.application.service import ChamberApplication
+from chamber.application.service import ChamberApplication, _task_projection
 from chamber.chaos.experiments import FAMILIES, validate_experiment
 from chamber.control_plane.discovery import (
     DiscoveryError,
@@ -926,9 +926,10 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.get("/api/v1/runs/{run_id}")
-    async def run_api(run_id: str) -> dict[str, Any]:
+    async def run_api(run_id: str, include_task_details: bool = True) -> dict[str, Any]:
         try:
-            return application.get_run(run_id)
+            run = application.get_run(run_id, include_task_details=include_task_details)
+            return run if include_task_details else _bounded_run_summary(run)
         except (FileNotFoundError, ValueError):
             raise HTTPException(status_code=404, detail="run not found") from None
 
@@ -1822,24 +1823,135 @@ def _redact_document_credentials(document: dict[str, Any]) -> tuple[dict[str, An
     return redact(document), fields
 
 
-def _task_projection(task: dict[str, Any]) -> dict[str, Any]:
-    duration = task.get("total_duration_ms")
-    iteration = task.get("iteration")
-    journey = task.get("journey")
-    status = task.get("terminal_status")
-    return {
-        "task_id": task["task_id"],
-        "iteration": iteration if type(iteration) is int and iteration >= 0 else None,
-        "journey": journey[:200] if isinstance(journey, str) else None,
-        "terminal_status": status[:80] if isinstance(status, str) else None,
-        "success": task.get("success") is True,
-        "total_duration_ms": duration
-        if isinstance(duration, int | float)
-        and not isinstance(duration, bool)
-        and math.isfinite(duration)
-        and duration >= 0
-        else None,
+def _bounded_run_summary(run: dict[str, Any]) -> dict[str, Any]:
+    """Bound every rendered view and disclose truncation without changing full reads."""
+
+    truncations: list[dict[str, Any]] = []
+    omitted = 0
+    priority = [
+        "schema_version",
+        "run_id",
+        "status",
+        "state",
+        "conclusive",
+        "readiness_score",
+        "evidence_coverage_percent",
+        "summary",
+        "verdict",
+        "tested_scope",
+        "limitations",
+        "evidence_requirements",
+        "next_actions",
+        "origin",
+        "service_name",
+        "stage",
+        "error",
+        "success",
+        "task_count",
+        "total_task_count",
+        "tasks_truncated",
+        "available",
+        "service",
+        "runtime",
+        "deployment",
+        "scenario",
+        "agents",
+        "entrypoint",
+        "pagination",
+        "filters",
+        "window",
+    ]
+
+    def record(path: str, reason: str, total: int, shown: int) -> None:
+        nonlocal omitted
+        if len(truncations) < 100:
+            truncations.append(
+                {"path": path[:256], "reason": reason, "total": total, "shown": shown}
+            )
+        else:
+            omitted += 1
+
+    def encoded(value: Any) -> int:
+        return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode())
+
+    def bounded(value: Any, path: str, budget: list[int], depth: int = 0) -> Any:
+        if isinstance(value, str):
+            limit = min(len(value), 16384)
+            while limit and encoded(value[:limit]) > budget[0]:
+                limit //= 2
+            selected = value[:limit]
+            budget[0] -= encoded(selected)
+            if limit < len(value):
+                record(path, "string_limit", len(value), limit)
+            return selected
+        if isinstance(value, list | tuple | dict):
+            budget[0] -= 2
+            if depth >= 12:
+                record(path, "depth_limit", len(value), 0)
+                return [] if isinstance(value, list | tuple) else {}
+            if isinstance(value, list | tuple):
+                items = []
+                for index, item in enumerate(value[:100]):
+                    if budget[0] < 8:
+                        break
+                    budget[0] -= 1
+                    items.append(bounded(item, f"{path}/{index}", budget, depth + 1))
+                if len(items) < len(value):
+                    record(path, "collection_limit", len(value), len(items))
+                return items
+            result = {}
+            ordered = sorted(
+                value.items(),
+                key=lambda pair: priority.index(pair[0]) if pair[0] in priority else len(priority),
+            )
+            for key, item in ordered[:100]:
+                overhead = encoded(str(key)) + 2
+                if budget[0] < overhead + 8:
+                    break
+                budget[0] -= overhead
+                result[key] = bounded(
+                    item,
+                    f"{path}/{str(key).replace('~', '~0').replace('/', '~1')}",
+                    budget,
+                    depth + 1,
+                )
+            if len(result) < len(value):
+                record(path, "collection_limit", len(value), len(result))
+            return result
+        if isinstance(value, float) and not math.isfinite(value):
+            record(path, "invalid_number", 1, 0)
+            value = None
+        budget[0] -= encoded(value)
+        return value
+
+    limits = {
+        "config": 256 * 1024,
+        "result": 256 * 1024,
+        "evidence_explorer": 128 * 1024,
+        "prometheus": 128 * 1024,
     }
+    result = {
+        key: bounded(value, f"/{key}", [limits.get(key, 64 * 1024)]) for key, value in run.items()
+    }
+    relayna = _mapping(result.get("relayna"))
+    result.update(
+        total_task_count=relayna.get("total_task_count", 0),
+        tasks_truncated=relayna.get("tasks_truncated", False),
+    )
+    result["summary"] = {
+        "include_task_details": False,
+        "truncated_fields": truncations,
+        "omitted_truncation_count": omitted,
+        "limits": {
+            "task_preview": 25,
+            "collection_items": 100,
+            "string_characters": 16384,
+            "default_view_bytes": 65536,
+            **limits,
+        },
+        "full_detail_query": "include_task_details=true",
+    }
+    return result
 
 
 def _redeem_api_uploads(config: dict[str, Any], secret: bytes, upload_root: Path) -> None:
@@ -2067,6 +2179,7 @@ def _capabilities(settings: DiscoverySettings | None = None) -> dict[str, Any]:
             "caller_provenance",
             "scoped_integration_token",
             "scenario_document",
+            "run_summary",
         ],
         "goals": goal_catalog(),
         "experiment_families": dict(FAMILIES),
